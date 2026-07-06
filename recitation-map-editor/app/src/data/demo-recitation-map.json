@@ -1,0 +1,606 @@
+{
+  "meta": {
+    "title": "《面朝大海，春暖花开》情感图谱",
+    "work_title": "面朝大海，春暖花开",
+    "map_type": "student_practice",
+    "version": "v1.1",
+    "language": "zh-CN",
+    "created_by": "朗诵情感图谱编辑器",
+    "created_at": "2026-06-29"
+  },
+  "layout": {
+    "template": "illustrated_course_v1",
+    "page_size": "long_poster",
+    "theme": "watercolor_course",
+    "segment_count": 3,
+    "show_storyboard": true,
+    "show_legend": true
+  },
+  "global": {
+    "text_type": "抒情类",
+    "overall_tone": [
+      "安静",
+      "温暖",
+      "真诚",
+      "希望"
+    ],
+    "technique_summary": [
+      "轻重",
+      "停连",
+      "语势"
+    ],
+    "voice_level_axis": [
+      {
+        "value": "high",
+        "label": "高",
+        "rank": 5
+      },
+      {
+        "value": "mid_high",
+        "label": "中高",
+        "rank": 4
+      },
+      {
+        "value": "mid",
+        "label": "中",
+        "rank": 3
+      },
+      {
+        "value": "mid_low",
+        "label": "中低",
+        "rank": 2
+      },
+      {
+        "value": "low",
+        "label": "低",
+        "rank": 1
+      }
+    ]
+  },
+  "segments": [
+    {
+      "id": "01",
+      "theme": "安静开始",
+      "rhythm_type": "舒缓型",
+      "prosody_type": "波峰型",
+      "render_options": {
+        "show_pinyin": true,
+        "show_emphasis_method_layer": true,
+        "show_prosody_curve": true,
+        "show_illustration": true
+      },
+      "tokens": [
+        {
+          "text": "从",
+          "pinyin": "cóng",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "从明天起"
+        },
+        {
+          "text": "明",
+          "pinyin": "míng",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "从明天起"
+        },
+        {
+          "text": "天",
+          "pinyin": "tiān",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "从明天起"
+        },
+        {
+          "text": "起",
+          "pinyin": "qǐ",
+          "punct_after": "，",
+          "breath_after": true,
+          "pause_after": "/",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "从明天起"
+        },
+        {
+          "text": "做",
+          "pinyin": "zuò",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "做一个"
+        },
+        {
+          "text": "一",
+          "pinyin": "yí",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "做一个"
+        },
+        {
+          "text": "个",
+          "pinyin": "gè",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "做一个"
+        },
+        {
+          "text": "幸",
+          "pinyin": "xìng",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "light"
+          ],
+          "display_group": "幸福"
+        },
+        {
+          "text": "福",
+          "pinyin": "fú",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "light",
+            "extend"
+          ],
+          "display_group": "幸福"
+        },
+        {
+          "text": "的",
+          "pinyin": "de",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "的人"
+        },
+        {
+          "text": "人",
+          "pinyin": "rén",
+          "punct_after": "。",
+          "breath_after": false,
+          "pause_after": "//",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "的人"
+        }
+      ],
+      "prosody_curve": {
+        "type": "波峰型",
+        "input_mode": "level_sequence",
+        "render_style": "smooth_curve",
+        "points": [
+          {
+            "id": "p1",
+            "order": 1,
+            "level": "low",
+            "label": "低位"
+          },
+          {
+            "id": "p2",
+            "order": 2,
+            "level": "mid",
+            "label": "中位"
+          },
+          {
+            "id": "p3",
+            "order": 3,
+            "level": "high",
+            "label": "高位"
+          },
+          {
+            "id": "p4",
+            "order": 4,
+            "level": "mid_low",
+            "label": "下收"
+          }
+        ]
+      },
+      "story": {
+        "title": "清晨窗边，重新开始",
+        "description": "决定从明天起，把幸福放回日常。",
+        "image_prompt": "清晨窗边，阳光照进房间，桌上有书和茶杯，安静温暖的水彩插画",
+        "image_url": "/assets/themes/watercolor-course/segment-01.svg"
+      },
+      "prosody_type_source": "auto"
+    },
+    {
+      "id": "02",
+      "theme": "生活展开",
+      "rhythm_type": "轻快型",
+      "prosody_type": "起潮型",
+      "render_options": {
+        "show_pinyin": true,
+        "show_emphasis_method_layer": true,
+        "show_prosody_curve": true,
+        "show_illustration": true
+      },
+      "tokens": [
+        {
+          "text": "喂",
+          "pinyin": "wèi",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "strong"
+          ],
+          "display_group": "喂马"
+        },
+        {
+          "text": "马",
+          "pinyin": "mǎ",
+          "punct_after": "，",
+          "breath_after": true,
+          "pause_after": "/",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "strong"
+          ],
+          "display_group": "喂马"
+        },
+        {
+          "text": "劈",
+          "pinyin": "pī",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "strong"
+          ],
+          "display_group": "劈柴"
+        },
+        {
+          "text": "柴",
+          "pinyin": "chái",
+          "punct_after": "，",
+          "breath_after": true,
+          "pause_after": "/",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "strong"
+          ],
+          "display_group": "劈柴"
+        },
+        {
+          "text": "周",
+          "pinyin": "zhōu",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "周游世界"
+        },
+        {
+          "text": "游",
+          "pinyin": "yóu",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "周游世界"
+        },
+        {
+          "text": "世",
+          "pinyin": "shì",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "周游世界"
+        },
+        {
+          "text": "界",
+          "pinyin": "jiè",
+          "punct_after": "。",
+          "breath_after": false,
+          "pause_after": "//",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "周游世界"
+        }
+      ],
+      "prosody_curve": {
+        "type": "起潮型",
+        "input_mode": "level_sequence",
+        "render_style": "smooth_curve",
+        "points": [
+          {
+            "id": "p1",
+            "order": 1,
+            "level": "low",
+            "label": "低位"
+          },
+          {
+            "id": "p2",
+            "order": 2,
+            "level": "mid",
+            "label": "中位"
+          },
+          {
+            "id": "p3",
+            "order": 3,
+            "level": "high",
+            "label": "高位"
+          }
+        ]
+      },
+      "story": {
+        "title": "马、柴火、远方，自由生活",
+        "description": "喂马、劈柴、周游世界，心向远方，自由自在地生活。",
+        "image_prompt": "马、柴火和远方道路，开阔自然，轻快自由的水彩插画",
+        "image_url": "/assets/themes/watercolor-course/segment-02.svg"
+      },
+      "prosody_type_source": "auto"
+    },
+    {
+      "id": "03",
+      "theme": "日常温暖",
+      "rhythm_type": "凝重偏舒缓",
+      "prosody_type": "落潮型",
+      "render_options": {
+        "show_pinyin": true,
+        "show_emphasis_method_layer": true,
+        "show_prosody_curve": true,
+        "show_illustration": true
+      },
+      "tokens": [
+        {
+          "text": "关",
+          "pinyin": "guān",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "关心"
+        },
+        {
+          "text": "心",
+          "pinyin": "xīn",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "关心"
+        },
+        {
+          "text": "粮",
+          "pinyin": "liáng",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "strong"
+          ],
+          "display_group": "粮食"
+        },
+        {
+          "text": "食",
+          "pinyin": "shí",
+          "punct_after": "，",
+          "breath_after": true,
+          "pause_after": "/",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "strong"
+          ],
+          "display_group": "粮食"
+        },
+        {
+          "text": "和",
+          "pinyin": "hé",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": false,
+          "emphasis_method": [],
+          "display_group": "和"
+        },
+        {
+          "text": "蔬",
+          "pinyin": "shū",
+          "punct_after": "",
+          "breath_after": false,
+          "pause_after": "",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "light"
+          ],
+          "display_group": "蔬菜"
+        },
+        {
+          "text": "菜",
+          "pinyin": "cài",
+          "punct_after": "。",
+          "breath_after": false,
+          "pause_after": "//",
+          "is_emphasis": true,
+          "emphasis_method": [
+            "light",
+            "extend"
+          ],
+          "display_group": "蔬菜"
+        }
+      ],
+      "prosody_curve": {
+        "type": "落潮型",
+        "input_mode": "level_sequence",
+        "render_style": "smooth_curve",
+        "points": [
+          {
+            "id": "p1",
+            "order": 1,
+            "level": "mid_high",
+            "label": "中高位"
+          },
+          {
+            "id": "p2",
+            "order": 2,
+            "level": "mid",
+            "label": "中位"
+          },
+          {
+            "id": "p3",
+            "order": 3,
+            "level": "low",
+            "label": "低位"
+          }
+        ]
+      },
+      "story": {
+        "title": "粮食蔬菜餐桌，踏实日常",
+        "description": "认真关心每一天的饭菜，让生活充满温暖与踏实。",
+        "image_prompt": "餐桌上的粮食和蔬菜，日常生活，踏实温暖的水彩插画",
+        "image_url": "/assets/themes/watercolor-course/segment-03.svg"
+      },
+      "prosody_type_source": "auto"
+    }
+  ],
+  "legend": {
+    "text_marks": [
+      {
+        "symbol": "∨",
+        "label": "换气",
+        "description": "在此处换气，显示在对应文字右上角。"
+      },
+      {
+        "symbol": "/",
+        "label": "小停",
+        "description": "稍顿一下。"
+      },
+      {
+        "symbol": "//",
+        "label": "中停",
+        "description": "意思说完。"
+      },
+      {
+        "symbol": "///",
+        "label": "长停",
+        "description": "情绪留白。"
+      }
+    ],
+    "emphasis_methods": [
+      {
+        "symbol": "▲",
+        "label": "加大音量",
+        "description": "更有力地读。"
+      },
+      {
+        "symbol": "○",
+        "label": "重音轻读",
+        "description": "轻轻托住。"
+      },
+      {
+        "symbol": "——",
+        "label": "拖长读音",
+        "description": "延长该字读音。"
+      }
+    ],
+    "prosody_types": [
+      {
+        "symbol": "低 → 中 → 高 → 中低",
+        "label": "波峰型",
+        "description": "声音由低到高，再自然下收。"
+      },
+      {
+        "symbol": "低 → 中 → 高",
+        "label": "起潮型",
+        "description": "声音逐步展开并上行。"
+      },
+      {
+        "symbol": "中高 → 中 → 低",
+        "label": "落潮型",
+        "description": "声音由较高位置逐渐落下。"
+      }
+    ],
+    "voice_levels": [
+      {
+        "symbol": "高",
+        "label": "高",
+        "description": "声音位置最高，情绪或语势明显托起。"
+      },
+      {
+        "symbol": "中高",
+        "label": "中高",
+        "description": "高于中位，但不达到最高。"
+      },
+      {
+        "symbol": "中",
+        "label": "中",
+        "description": "自然中位，保持稳定表达。"
+      },
+      {
+        "symbol": "中低",
+        "label": "中低",
+        "description": "低于中位，声音开始下收。"
+      },
+      {
+        "symbol": "低",
+        "label": "低",
+        "description": "声音位置较低，适合安静、落下或收束。"
+      }
+    ]
+  },
+  "storyboard": [
+    {
+      "segment_id": "01",
+      "title": "清晨窗边，重新开始",
+      "description": "决定从明天起，把幸福放回日常。",
+      "image_prompt": "清晨窗边，阳光照进房间，桌上有书和茶杯，安静温暖的水彩插画",
+      "image_url": ""
+    },
+    {
+      "segment_id": "02",
+      "title": "马、柴火、远方，自由生活",
+      "description": "喂马、劈柴、周游世界，心向远方，自由自在地生活。",
+      "image_prompt": "马、柴火和远方道路，开阔自然，轻快自由的水彩插画",
+      "image_url": ""
+    },
+    {
+      "segment_id": "03",
+      "title": "粮食蔬菜餐桌，踏实日常",
+      "description": "认真关心每一天的饭菜，让生活充满温暖与踏实。",
+      "image_prompt": "餐桌上的粮食和蔬菜，日常生活，踏实温暖的水彩插画",
+      "image_url": ""
+    }
+  ],
+  "assets": {
+    "header": {
+      "mode": "svg_text",
+      "image_url": ""
+    },
+    "body_background": {
+      "mode": "none",
+      "image_url": ""
+    }
+  }
+}

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 190" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#efe2cc" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#efe2cc" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.1"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="190" fill="url(#fade)"/>
+  <g opacity="0.34" fill="none" stroke="#7d705f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#soft)">
+    <path d="M560 138 C612 92 650 70 692 132 C728 87 758 64 805 124 C864 60 923 45 1002 128 C1044 84 1092 76 1162 132"/>
+    <path d="M620 145 C675 112 722 110 774 142 C839 98 899 89 963 139 C1014 105 1069 106 1130 142" opacity="0.55"/>
+    <path d="M796 127 C822 102 845 98 876 126" opacity="0.5"/>
+  </g>
+  <g opacity="0.42" stroke="#5d5548" stroke-width="2.3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1025 30 C1085 48 1142 78 1196 120"/>
+    <path d="M1085 57 C1113 41 1140 33 1168 30"/>
+    <path d="M1090 60 C1118 58 1147 63 1176 74"/>
+    <path d="M1128 79 C1155 67 1178 64 1198 65"/>
+    <path d="M1129 82 C1155 85 1178 96 1198 109"/>
+  </g>
+  <g opacity="0.26" fill="#8b7a62">
+    <circle cx="86" cy="42" r="1.7"/><circle cx="126" cy="66" r="1.3"/><circle cx="190" cy="50" r="1.1"/>
+    <circle cx="1014" cy="146" r="1.2"/><circle cx="1055" cy="136" r="1.1"/>
+  </g>
+</svg>
