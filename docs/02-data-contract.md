@@ -1,4 +1,4 @@
-# 朗诵控制谱 v1.0 · 数据契约
+# 朗诵控制谱 v1.1 · 数据契约
 
 ## 1. 核心对象
 
@@ -25,6 +25,9 @@ interface Work {
   status: WorkStatus;
   currentSpecVersionId?: string;
   publishedRevisionId?: string;
+  referenceAudio?: AudioTrack;
+  aiDemoAudio?: AudioTrack;
+  controlSpec?: ControlSpec;
   createdAt: string;
   updatedAt: string;
 }
@@ -32,13 +35,11 @@ interface Work {
 
 ### Asset（素材）
 
-正文附件、参考朗诵、知识库、AI 示范音频都作为资产；字节存 R2，元数据存 D1。
+正式持久化时，参考朗诵和 AI 示范音频作为独立资产；字节存 R2，元数据存 D1。正文以 `Work.sourceText` 为唯一作品输入，不在当前创建流程重复上传文稿文件。知识库是系统级资产，不属于单篇作品的前台输入。
 
 ```ts
 type AssetKind =
-  | "manuscript"
   | "reference_audio"
-  | "knowledge_source"
   | "tts_audio";
 
 interface Asset {
@@ -60,7 +61,7 @@ interface Asset {
 
 ```ts
 interface ControlSpec {
-  schemaVersion: "1.0";
+  schemaVersion: "1.0" | "1.1";
   id: string;
   workId: string;
   version: number;
@@ -75,7 +76,7 @@ interface ControlSpec {
 interface DocumentProfile {
   deliveryMode: "natural_narration" | "lyrical_recitation" | "stage_recitation";
   recitationDegree: 1 | 2 | 3;
-  baseRhythm: "natural" | "relaxed" | "light" | "solemn" | "soaring";
+  baseRhythm: Rhythm;
   emotionalTone: string[];
   energy: "low" | "low_to_medium" | "medium" | "medium_to_high" | "high";
   control: "low" | "medium" | "high";
@@ -90,7 +91,7 @@ interface DocumentProfile {
 ```ts
 type ProsodyType = "crest" | "trough" | "rising" | "falling";
 type EndingTone = "rise" | "fall" | "level";
-type Rhythm = "natural" | "relaxed" | "light" | "solemn" | "soaring";
+type Rhythm = "light" | "solemn" | "relaxed" | "tense" | "soaring" | "low";
 type VoiceQuality =
   | "solid"
   | "breathy"
@@ -109,6 +110,9 @@ interface RecitationSentence {
   prosody: {
     type: ProsodyType;
     strength: 1 | 2 | 3;
+    anchorStart: number;
+    anchorEnd: number;
+    // v1.0 兼容字段；新渲染器不依赖 token id 数组定位。
     anchorTokenIds: string[];
   };
   endingTone: {
@@ -136,9 +140,10 @@ interface RecitationSentence {
 ```ts
 interface TimedToken {
   id: string;
+  index: number;
   char: string;
-  pinyin?: string;
-  tone?: 0 | 1 | 2 | 3 | 4;
+  machinePinyin?: string; // xiang3，供模型、词典和 TTS 使用
+  displayPinyin?: string; // xiǎng，只用于用户展示
   pronunciationSource?: "default" | "dictionary" | "human";
   startMs: number;
   endMs: number;
@@ -148,6 +153,7 @@ interface TimedToken {
 interface PauseMark {
   id: string;
   afterTokenId: string;
+  afterTokenIndex: number;
   type: "short" | "long";
   observedDurationMs?: number;
   source: "observed" | "inferred" | "human";
@@ -156,12 +162,13 @@ interface PauseMark {
 interface ProlongMark {
   id: string;
   tokenId: string;
+  tokenIndex: number;
   degree: 1 | 2 | 3;
   purpose?: string;
 }
 ```
 
-时间轴必须满足：同一句内 token 按顺序排列、不重叠、落在句级时间范围内；标点可以有零时长或与前字共享尾部时间，但不能制造倒序。
+`index` 是全文稳定索引，拼音层、正文层、语势锚点、焦点、停顿、拖音和播放时间轴都引用它。时间轴必须满足：同一句内 token 按顺序排列、不重叠、落在句级时间范围内；标点可以有零时长或与前字共享尾部时间，但不能制造倒序。
 
 ## 4. 表达焦点与实现方式
 
@@ -179,6 +186,7 @@ type FocusRealization =
 interface FocusTarget {
   id: string;
   tokenIds: string[];
+  tokenIndexes: number[];
   level: "primary" | "secondary";
   preferredRealization: FocusRealization;
   allowedRealizations: FocusRealization[];
@@ -194,6 +202,11 @@ interface FocusTarget {
 interface AnalysisProvenance {
   referenceAudioAssetId?: string;
   knowledgeAssetIds: string[];
+  knowledgeBase?: {
+    id: string;
+    version: string;
+    scope: "system";
+  };
   pipelineVersion: string;
   alignmentModel?: string;
   acousticModel?: string;
@@ -212,12 +225,53 @@ interface ValidationResult {
 }
 ```
 
-所有 AI 结果必须能追溯到参考音频、知识库、模型和流水线版本；人工修改生成新控制谱版本，不覆盖历史版本。
+所有 AI 结果必须能追溯到参考音频、系统知识库、模型和流水线版本；当前默认知识库为 `system-recitation-kb` v1.0。人工修改生成新控制谱版本，不覆盖历史版本。
 
-## 6. D1 最小表结构
+## 6. 两条音轨与独立时间轴
+
+```ts
+interface AudioTrack {
+  id: string;
+  kind: "reference" | "ai_demo";
+  url: string;
+  filename: string;
+  durationMs: number;
+  provider: "demo" | "eleven" | "fish" | "qwen" | "upload";
+  label: string;
+  timeline?: AudioTimeline;
+}
+
+interface AudioTimeline {
+  granularity: "character" | "word";
+  tokens: Array<{
+    tokenId: string;
+    tokenIndex: number;
+    startMs: number;
+    endMs: number;
+    confidence?: number;
+  }>;
+  sentences: Array<{
+    sentenceId: string;
+    startMs: number;
+    endMs: number;
+  }>;
+}
+```
+
+参考朗诵时间轴来自音频与正文对齐，负责分析和创作端试听；AI 示范时间轴来自最终生成结果，负责观看端跳转和高亮。即使当前演示临时复用同一段声音文件，两条音轨的身份和时间轴仍保持分离。
+
+## 7. 渲染对齐约束
+
+- 数据中只保存 `anchorStart` / `anchorEnd` 索引，不保存 `x = 430px` 一类坐标。
+- 拼音行和正文行按同一 token 数组、同一 CSS Grid 列模板渲染。
+- 页面渲染后读取锚点文字的实际 DOM 边界，再换算为 SVG 曲线坐标。
+- `ResizeObserver`、窗口/视觉视口变化和字体加载完成都会触发重新测量。
+- 页面缩放、字号变化和响应式换行不得改变“索引 → 文字 → 曲线锚点”的语义关系。
+
+## 8. D1 最小表结构
 
 - `works`：作品身份、正文、状态、当前草稿与发布版本指针。
-- `assets`：R2 对象的元数据、校验和、时长与来源。
+- `assets`：参考/示范音频等 R2 对象的元数据、校验和、时长与来源。
 - `control_spec_versions`：版本号、完整 JSON、来源、校验状态。
 - `audio_versions`：供应商、Voice、Prompt、音频资产、时间轴 JSON、候选状态。
 - `publications`：稳定 slug、冻结的控制谱版本和音频版本。

@@ -1,9 +1,13 @@
 import type {
+  AudioTimeline,
+  AudioTrack,
+  ControlSpec,
   FocusTarget,
   RecitationSentence,
   RecitationWork,
   TimedToken,
 } from "./recitation-schema";
+import { toDisplayPinyin } from "./pinyin";
 
 const punctuation = new Set(["，", "。", "！", "？", "、", "；", "：", " "]);
 
@@ -32,10 +36,15 @@ function makeTokens(
     const tokenPinyin = isPunctuation ? undefined : pinyin[pinyinIndex++];
     if (!isPunctuation) spokenIndex += 1;
 
+    const machinePinyin = tokenPinyin;
+
     return {
       id: `${sentenceId}-t${index + 1}`,
+      index: nextTokenIndex++,
       char,
-      pinyin: tokenPinyin?.replace(/[0-4]$/, ""),
+      machinePinyin,
+      displayPinyin: machinePinyin ? toDisplayPinyin(machinePinyin) : undefined,
+      pinyin: machinePinyin?.replace(/[0-5]$/, ""),
       tone: tokenPinyin ? toneFromPinyin(tokenPinyin) : undefined,
       pronunciationSource: tokenPinyin ? "human" : undefined,
       startMs: Math.round(tokenStart),
@@ -44,6 +53,8 @@ function makeTokens(
     };
   });
 }
+
+let nextTokenIndex = 0;
 
 function tokenIdsForText(tokens: TimedToken[], target: string): string[] {
   const plain = tokens.map((token) => token.char).join("");
@@ -61,6 +72,9 @@ function focus(
   return {
     id: `${sentenceId}-focus-1`,
     tokenIds: tokenIdsForText(tokens, target),
+    tokenIndexes: tokens
+      .filter((token) => tokenIdsForText(tokens, target).includes(token.id))
+      .map((token) => token.index),
     level: "primary",
     preferredRealization,
     allowedRealizations: [preferredRealization, "combined", "slower"],
@@ -87,9 +101,28 @@ function sentence(
     ...input,
     tokens,
     focus: [focus(input.id, tokens, input.focusText, input.focusRealization)],
+    pauses: input.pauses.map((pause) => ({
+      ...pause,
+      afterTokenIndex:
+        tokens.find((token) => token.id === pause.afterTokenId)?.index ??
+        pause.afterTokenIndex,
+    })),
+    prolongs: input.prolongs.map((prolong) => ({
+      ...prolong,
+      tokenIndex:
+        tokens.find((token) => token.id === prolong.tokenId)?.index ??
+        prolong.tokenIndex,
+    })),
     prosody: {
       ...input.prosody,
       anchorTokenIds: tokenIdsForText(tokens, input.focusText),
+      anchorStart:
+        tokens.find((token) => tokenIdsForText(tokens, input.focusText).includes(token.id))
+          ?.index ?? tokens[0]?.index ?? 0,
+      anchorEnd:
+        tokens
+          .filter((token) => tokenIdsForText(tokens, input.focusText).includes(token.id))
+          .at(-1)?.index ?? tokens.at(-1)?.index ?? 0,
     },
   };
 }
@@ -119,7 +152,7 @@ const sentences: RecitationSentence[] = [
     function: "入境与点题",
     rhythm: "relaxed",
     continuity: "connected",
-    prosody: { type: "crest", strength: 2, anchorTokenIds: [] },
+    prosody: { type: "crest", strength: 2, anchorStart: 0, anchorEnd: 0, anchorTokenIds: [] },
     endingTone: { type: "fall", strength: 1 },
     voiceQuality: { start: "breathy", transition: "mixed", end: "mixed" },
     pauses: [],
@@ -149,7 +182,7 @@ const sentences: RecitationSentence[] = [
     function: "建立宁静意象",
     rhythm: "relaxed",
     continuity: "connected",
-    prosody: { type: "falling", strength: 1, anchorTokenIds: [] },
+    prosody: { type: "falling", strength: 1, anchorStart: 0, anchorEnd: 0, anchorTokenIds: [] },
     endingTone: { type: "fall", strength: 1 },
     voiceQuality: { start: "breathy", end: "breathy" },
     pauses: [],
@@ -181,7 +214,7 @@ const sentences: RecitationSentence[] = [
     function: "情感推进",
     rhythm: "relaxed",
     continuity: "connected",
-    prosody: { type: "rising", strength: 2, anchorTokenIds: [] },
+    prosody: { type: "rising", strength: 2, anchorStart: 0, anchorEnd: 0, anchorTokenIds: [] },
     endingTone: { type: "fall", strength: 1 },
     voiceQuality: {
       start: "breathy",
@@ -215,7 +248,7 @@ const sentences: RecitationSentence[] = [
     function: "画面展开与收束",
     rhythm: "relaxed",
     continuity: "balanced",
-    prosody: { type: "falling", strength: 2, anchorTokenIds: [] },
+    prosody: { type: "falling", strength: 2, anchorStart: 0, anchorEnd: 0, anchorTokenIds: [] },
     endingTone: { type: "fall", strength: 2 },
     voiceQuality: { start: "mixed", transition: "breathy", end: "breathy" },
     pauses: [],
@@ -223,6 +256,7 @@ const sentences: RecitationSentence[] = [
       {
         id: "s004-prolong-1",
         tokenId: "s004-t11",
+        tokenIndex: 0,
         degree: 1,
         purpose: "留下画面余韵",
       },
@@ -236,6 +270,56 @@ const sentences: RecitationSentence[] = [
   }),
 ];
 
+const DEMO_CONTROL_SPEC: ControlSpec = {
+  schemaVersion: "1.1",
+  id: "spec-moonlight-v1",
+  workId: "work-moonlight-demo",
+  version: 1,
+  source: "ai",
+  documentProfile: {
+    deliveryMode: "lyrical_recitation",
+    recitationDegree: 2,
+    baseRhythm: "relaxed",
+    emotionalTone: ["宁静", "温暖", "克制"],
+    energy: "low_to_medium",
+    control: "high",
+    interactionDistance: "intimate",
+    voiceQuality: "breathy_to_mixed",
+    globalArc: ["入境", "展开", "增强", "收束"],
+  },
+  sentences,
+  analysisProvenance: {
+    referenceAudioAssetId: "asset-reference-demo",
+    knowledgeAssetIds: ["system-recitation-kb-v1.0"],
+    knowledgeBase: {
+      id: "system-recitation-kb",
+      version: "1.0",
+      scope: "system",
+    },
+    pipelineVersion: "vertical-slice-0.2",
+    alignmentModel: "demo-character-alignment",
+    acousticModel: "demo-features",
+    languageModel: "human-reviewed-example",
+    generatedAt: "2026-08-09T08:00:00.000Z",
+  },
+  validation: {
+    state: "valid",
+    issues: [],
+  },
+  createdAt: "2026-08-09T08:00:00.000Z",
+};
+
+export const DEMO_REFERENCE_AUDIO: AudioTrack = {
+  id: "asset-reference-demo",
+  kind: "reference",
+  url: "/demo-recitation.m4a",
+  filename: "月光下的中国-参考朗诵.m4a",
+  mimeType: "audio/mp4",
+  durationMs: 12438,
+  provider: "demo",
+  label: "优质参考朗诵 · 演示素材",
+};
+
 export const DEMO_WORK: RecitationWork = {
   id: "work-moonlight-demo",
   slug: "moonlight-china-sample",
@@ -244,52 +328,87 @@ export const DEMO_WORK: RecitationWork = {
   genre: "modern_poetry",
   language: "zh-CN",
   sourceText: sentences.map((item) => item.text).join("\n"),
-  status: "review",
-  currentSpecVersionId: "spec-moonlight-v1",
-  audio: {
-    id: "audio-demo-v1",
-    url: "/demo-recitation.m4a",
-    durationMs: 12438,
-    provider: "demo",
-    label: "本机中文声音 · 开发占位",
-  },
-  controlSpec: {
-    schemaVersion: "1.0",
-    id: "spec-moonlight-v1",
-    workId: "work-moonlight-demo",
-    version: 1,
-    source: "hybrid",
-    documentProfile: {
-      deliveryMode: "lyrical_recitation",
-      recitationDegree: 2,
-      baseRhythm: "relaxed",
-      emotionalTone: ["宁静", "温暖", "克制"],
-      energy: "low_to_medium",
-      control: "high",
-      interactionDistance: "intimate",
-      voiceQuality: "breathy_to_mixed",
-      globalArc: ["入境", "展开", "增强", "收束"],
-    },
-    sentences,
-    analysisProvenance: {
-      referenceAudioAssetId: "asset-reference-demo",
-      knowledgeAssetIds: ["asset-knowledge-demo"],
-      pipelineVersion: "vertical-slice-0.1",
-      alignmentModel: "demo-timeline",
-      acousticModel: "demo-features",
-      languageModel: "human-reviewed-example",
-      generatedAt: "2026-08-09T08:00:00.000Z",
-    },
-    validation: {
-      state: "valid",
-      issues: [],
-    },
-    createdAt: "2026-08-09T08:00:00.000Z",
-  },
+  status: "draft",
+  referenceAudio: DEMO_REFERENCE_AUDIO,
   createdAt: "2026-08-09T08:00:00.000Z",
   updatedAt: "2026-08-09T08:00:00.000Z",
 };
 
 export function cloneDemoWork(): RecitationWork {
   return structuredClone(DEMO_WORK);
+}
+
+export function createDemoControlSpec(
+  referenceAudioAssetId: string,
+  referenceDurationMs: number,
+): ControlSpec {
+  const spec = structuredClone(DEMO_CONTROL_SPEC);
+  spec.analysisProvenance.referenceAudioAssetId = referenceAudioAssetId;
+  spec.analysisProvenance.generatedAt = new Date().toISOString();
+  scaleSentenceTiming(spec.sentences, referenceDurationMs);
+  return spec;
+}
+
+export function createReferenceTimeline(spec: ControlSpec): AudioTimeline {
+  return timelineFromSpec(spec);
+}
+
+export function createDemoAiAudio(spec: ControlSpec): AudioTrack {
+  const cloned = structuredClone(spec);
+  scaleSentenceTiming(cloned.sentences, 12438);
+  return {
+    id: `audio-demo-${Date.now()}`,
+    kind: "ai_demo",
+    url: "/demo-recitation.m4a",
+    filename: "月光下的中国-AI示范.m4a",
+    mimeType: "audio/mp4",
+    durationMs: 12438,
+    provider: "demo",
+    label: "AI 标准朗诵 · 开发占位",
+    timeline: timelineFromSpec(cloned),
+  };
+}
+
+function timelineFromSpec(spec: ControlSpec): AudioTimeline {
+  return {
+    granularity: "character",
+    sentences: spec.sentences.map((sentence) => ({
+      sentenceId: sentence.id,
+      startMs: sentence.timeRange.startMs,
+      endMs: sentence.timeRange.endMs,
+    })),
+    tokens: spec.sentences.flatMap((sentence) =>
+      sentence.tokens
+        .filter((token) => !punctuation.has(token.char))
+        .map((token) => ({
+          tokenId: token.id,
+          tokenIndex: token.index,
+          startMs: token.startMs,
+          endMs: token.endMs,
+          confidence: token.confidence,
+        })),
+    ),
+  };
+}
+
+function scaleSentenceTiming(
+  targetSentences: RecitationSentence[],
+  durationMs: number,
+) {
+  const sourceDuration = Math.max(
+    1,
+    targetSentences.at(-1)?.timeRange.endMs ?? durationMs,
+  );
+  const scale = durationMs / sourceDuration;
+  for (const target of targetSentences) {
+    target.timeRange = {
+      startMs: Math.round(target.timeRange.startMs * scale),
+      endMs: Math.round(target.timeRange.endMs * scale),
+    };
+    target.tokens = target.tokens.map((token) => ({
+      ...token,
+      startMs: Math.round(token.startMs * scale),
+      endMs: Math.round(token.endMs * scale),
+    }));
+  }
 }

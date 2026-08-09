@@ -7,7 +7,13 @@ export type WorkStatus =
 
 export type ProsodyType = "crest" | "trough" | "rising" | "falling";
 export type EndingTone = "rise" | "fall" | "level";
-export type Rhythm = "natural" | "relaxed" | "light" | "solemn" | "soaring";
+export type Rhythm =
+  | "light"
+  | "solemn"
+  | "relaxed"
+  | "tense"
+  | "soaring"
+  | "low";
 export type VoiceQuality =
   | "solid"
   | "breathy"
@@ -28,8 +34,13 @@ export type FocusRealization =
 
 export interface TimedToken {
   id: string;
+  index: number;
   char: string;
+  machinePinyin?: string;
+  displayPinyin?: string;
+  /** @deprecated v1.0 compatibility; the UI uses displayPinyin. */
   pinyin?: string;
+  /** @deprecated v1.0 compatibility; the tone is encoded in machinePinyin. */
   tone?: 0 | 1 | 2 | 3 | 4;
   pronunciationSource?: "default" | "dictionary" | "human";
   startMs: number;
@@ -40,6 +51,7 @@ export interface TimedToken {
 export interface FocusTarget {
   id: string;
   tokenIds: string[];
+  tokenIndexes: number[];
   level: "primary" | "secondary";
   preferredRealization: FocusRealization;
   allowedRealizations: FocusRealization[];
@@ -49,6 +61,7 @@ export interface FocusTarget {
 export interface PauseMark {
   id: string;
   afterTokenId: string;
+  afterTokenIndex: number;
   type: "short" | "long";
   observedDurationMs?: number;
   source: "observed" | "inferred" | "human";
@@ -57,6 +70,7 @@ export interface PauseMark {
 export interface ProlongMark {
   id: string;
   tokenId: string;
+  tokenIndex: number;
   degree: 1 | 2 | 3;
   purpose?: string;
 }
@@ -71,6 +85,9 @@ export interface RecitationSentence {
   prosody: {
     type: ProsodyType;
     strength: 1 | 2 | 3;
+    anchorStart: number;
+    anchorEnd: number;
+    /** @deprecated v1.0 compatibility; renderers use anchorStart/anchorEnd. */
     anchorTokenIds: string[];
   };
   endingTone: {
@@ -108,7 +125,7 @@ export interface DocumentProfile {
 }
 
 export interface ControlSpec {
-  schemaVersion: "1.0";
+  schemaVersion: "1.0" | "1.1";
   id: string;
   workId: string;
   version: number;
@@ -118,6 +135,11 @@ export interface ControlSpec {
   analysisProvenance: {
     referenceAudioAssetId?: string;
     knowledgeAssetIds: string[];
+    knowledgeBase?: {
+      id: string;
+      version: string;
+      scope: "system";
+    };
     pipelineVersion: string;
     alignmentModel?: string;
     acousticModel?: string;
@@ -136,6 +158,38 @@ export interface ControlSpec {
   createdAt: string;
 }
 
+export interface TokenTimestamp {
+  tokenId: string;
+  tokenIndex: number;
+  startMs: number;
+  endMs: number;
+  confidence?: number;
+}
+
+export interface SentenceTimestamp {
+  sentenceId: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface AudioTimeline {
+  granularity: "character" | "word";
+  tokens: TokenTimestamp[];
+  sentences: SentenceTimestamp[];
+}
+
+export interface AudioTrack {
+  id: string;
+  kind: "reference" | "ai_demo";
+  url: string;
+  filename: string;
+  mimeType?: string;
+  durationMs: number;
+  provider: "demo" | "eleven" | "fish" | "qwen" | "upload";
+  label: string;
+  timeline?: AudioTimeline;
+}
+
 export interface RecitationWork {
   id: string;
   slug: string;
@@ -152,14 +206,9 @@ export interface RecitationWork {
   status: WorkStatus;
   currentSpecVersionId?: string;
   publishedRevisionId?: string;
-  audio: {
-    id: string;
-    url: string;
-    durationMs: number;
-    provider: "demo" | "eleven" | "fish" | "qwen" | "upload";
-    label: string;
-  };
-  controlSpec: ControlSpec;
+  referenceAudio?: AudioTrack;
+  aiDemoAudio?: AudioTrack;
+  controlSpec?: ControlSpec;
   createdAt: string;
   updatedAt: string;
 }
@@ -178,11 +227,12 @@ export const ENDING_LABELS: Record<EndingTone, string> = {
 };
 
 export const RHYTHM_LABELS: Record<Rhythm, string> = {
-  natural: "自然",
-  relaxed: "舒缓",
   light: "轻快",
   solemn: "凝重",
+  relaxed: "舒缓",
+  tense: "紧张",
   soaring: "高亢",
+  low: "低沉",
 };
 
 export const VOICE_LABELS: Record<VoiceQuality, string> = {

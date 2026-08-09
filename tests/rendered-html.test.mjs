@@ -33,10 +33,15 @@ test("server-renders the recitation product", async () => {
   const html = await response.text();
   assert.match(html, /<title>声图 · 朗诵情感图谱<\/title>/i);
   assert.match(html, /把一段好朗诵，变成一张能听的声音地图/);
-  assert.match(html, /生成控制谱/);
+  assert.match(html, /解析参考朗诵/);
+  assert.match(html, /完整正文/);
+  assert.match(html, /声音依据/);
   assert.match(html, /用户观看端/);
   assert.match(html, /demo-recitation\.m4a/);
   assert.match(html, /og\.png/);
+  assert.doesNotMatch(html, /上传完整文稿/);
+  assert.doesNotMatch(html, /选择朗诵知识库/);
+  assert.doesNotMatch(html, /朗诵导演台/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
@@ -52,6 +57,11 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(layout, /\/og\.png/);
   assert.match(schema, /interface ControlSpec/);
   assert.match(schema, /"crest" \| "trough" \| "rising" \| "falling"/);
+  assert.match(schema, /machinePinyin/);
+  assert.match(schema, /displayPinyin/);
+  assert.match(schema, /anchorStart/);
+  assert.match(schema, /referenceAudio/);
+  assert.match(schema, /aiDemoAudio/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
   await access(new URL("../public/demo-recitation.m4a", import.meta.url));
