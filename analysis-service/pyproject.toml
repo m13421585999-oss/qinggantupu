@@ -1,0 +1,30 @@
+[project]
+name = "recitation-analysis-service"
+version = "1.0.0"
+description = "Forced alignment and acoustic evidence service for 声图"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "fastapi==0.116.1",
+  "uvicorn[standard]==0.35.0",
+  "httpx==0.28.1",
+  "numpy==2.3.2",
+  "praat-parselmouth==0.4.6",
+  "pydantic==2.11.7",
+  "pydantic-settings==2.10.1",
+  "pypinyin==0.55.0",
+  "python-multipart==0.0.20"
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[project.optional-dependencies]
+test = ["pytest==8.4.1"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

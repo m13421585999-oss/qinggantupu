@@ -1,0 +1,30 @@
+{
+  "tokens": [
+    { "index": 0, "char": "面" },
+    { "index": 1, "char": "朝" },
+    { "index": 2, "char": "大" },
+    { "index": 3, "char": "海" },
+    { "index": 4, "char": "，" },
+    { "index": 5, "char": "春" },
+    { "index": 6, "char": "暖" },
+    { "index": 7, "char": "花" },
+    { "index": 8, "char": "开" },
+    { "index": 9, "char": "。" }
+  ],
+  "sentences": [{
+    "text": "面朝大海，春暖花开。",
+    "focus": [{ "token_indexes": [0, 3, 5, 8], "level": "primary" }],
+    "pauses": [{ "after_index": 3, "type": "short" }],
+    "prolongations": [{ "token_index": 8, "degree": 1 }],
+    "prosody": [{
+      "type": "valley",
+      "active_span": { "start": 0, "end": 8 },
+      "core_zone": { "start": 2, "end": 7 },
+      "strength": 2,
+      "confidence": 0.86
+    }],
+    "ending_intonation": { "type": "falling", "strength": 1 },
+    "rhythm": { "type": "relaxed" },
+    "confidence": 0.84
+  }]
+}

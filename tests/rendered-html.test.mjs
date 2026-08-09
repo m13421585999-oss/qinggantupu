@@ -37,8 +37,8 @@ test("server-renders the recitation product", async () => {
   assert.match(html, /完整正文/);
   assert.match(html, /声音依据/);
   assert.match(html, /用户观看端/);
-  assert.match(html, /demo-recitation\.m4a/);
   assert.match(html, /og\.png/);
+  assert.doesNotMatch(html, /月光下的中国|demo-recitation|createDemoControlSpec/);
   assert.doesNotMatch(html, /上传完整文稿/);
   assert.doesNotMatch(html, /选择朗诵知识库/);
   assert.doesNotMatch(html, /朗诵导演台/);
@@ -46,25 +46,36 @@ test("server-renders the recitation product", async () => {
 });
 
 test("keeps one control schema and removes starter preview residue", async () => {
-  const [page, layout, schema, packageJson] = await Promise.all([
+  const [page, layout, schema, packageJson, studio, worker] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/recitation-schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../components/RecitationStudio.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /RecitationStudio/);
   assert.match(layout, /\/og\.png/);
   assert.match(schema, /interface ControlSpec/);
-  assert.match(schema, /"crest" \| "trough" \| "rising" \| "falling"/);
+  assert.match(schema, /"peak" \| "valley" \| "rising" \| "falling"/);
   assert.match(schema, /machinePinyin/);
   assert.match(schema, /displayPinyin/);
-  assert.match(schema, /anchorStart/);
+  assert.match(schema, /activeSpan/);
+  assert.match(schema, /coreZone/);
   assert.match(schema, /referenceAudio/);
   assert.match(schema, /aiDemoAudio/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  assert.doesNotMatch(studio, /cloneDemoWork|createDemoControlSpec|createDemoAiAudio|demo-recitation/);
+  assert.match(studio, /复制分析结果/);
+  assert.match(studio, /导入控制谱/);
+  assert.match(worker, /ANALYSIS_SERVICE_URL/);
+  assert.match(worker, /AUDIO_BUCKET/);
+  assert.match(worker, /with-timestamps/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
-  await access(new URL("../public/demo-recitation.m4a", import.meta.url));
+  await access(new URL("../analysis-service/app/acoustics/parselmouth_analyzer.py", import.meta.url));
+  await assert.rejects(access(new URL("../public/demo-recitation.m4a", import.meta.url)));
+  await access(new URL("./fixtures/demo-recitation.m4a", import.meta.url));
   await access(new URL("../drizzle/0000_unusual_wendell_rand.sql", import.meta.url));
   await access(new URL("../public/og.png", import.meta.url));
   await access(new URL("../docs/01-mvp-plan.md", import.meta.url));

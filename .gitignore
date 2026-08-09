@@ -16,6 +16,12 @@
 # next.js
 /.next/
 /.vinext/
+.venv/
+analysis-service/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
 /out/
 
 # misc
@@ -30,6 +36,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+.dev.vars
+!.dev.vars.example
 
 # vercel
 .vercel

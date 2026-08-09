@@ -1,12 +1,13 @@
 export type WorkStatus =
   | "draft"
   | "analyzing"
+  | "analysis_ready"
   | "review"
   | "audio_ready"
   | "published";
 
-export type ProsodyType = "crest" | "trough" | "rising" | "falling";
-export type EndingTone = "rise" | "fall" | "level";
+export type ProsodyType = "peak" | "valley" | "rising" | "falling";
+export type EndingTone = "rising" | "falling" | "level";
 export type Rhythm =
   | "light"
   | "solemn"
@@ -75,6 +76,20 @@ export interface ProlongMark {
   purpose?: string;
 }
 
+export interface TokenSpan {
+  start: number;
+  end: number;
+}
+
+export interface ProsodyEvent {
+  id: string;
+  type: ProsodyType;
+  activeSpan: TokenSpan;
+  coreZone: TokenSpan;
+  strength: 1 | 2 | 3;
+  confidence?: number;
+}
+
 export interface RecitationSentence {
   id: string;
   order: number;
@@ -82,15 +97,8 @@ export interface RecitationSentence {
   function: string;
   rhythm: Rhythm;
   continuity: "connected" | "balanced" | "segmented";
-  prosody: {
-    type: ProsodyType;
-    strength: 1 | 2 | 3;
-    anchorStart: number;
-    anchorEnd: number;
-    /** @deprecated v1.0 compatibility; renderers use anchorStart/anchorEnd. */
-    anchorTokenIds: string[];
-  };
-  endingTone: {
+  prosody: ProsodyEvent[];
+  endingIntonation: {
     type: EndingTone;
     strength: 1 | 2 | 3;
   };
@@ -101,7 +109,7 @@ export interface RecitationSentence {
     end: VoiceQuality;
   };
   pauses: PauseMark[];
-  prolongs: ProlongMark[];
+  prolongations: ProlongMark[];
   tokens: TimedToken[];
   teachingCue: string;
   avoid: string[];
@@ -125,12 +133,13 @@ export interface DocumentProfile {
 }
 
 export interface ControlSpec {
-  schemaVersion: "1.0" | "1.1";
+  schemaVersion: "1.0" | "1.1" | "2.0";
   id: string;
   workId: string;
   version: number;
   source: "ai" | "human" | "hybrid";
   documentProfile: DocumentProfile;
+  tokens: TimedToken[];
   sentences: RecitationSentence[];
   analysisProvenance: {
     referenceAudioAssetId?: string;
@@ -208,21 +217,84 @@ export interface RecitationWork {
   publishedRevisionId?: string;
   referenceAudio?: AudioTrack;
   aiDemoAudio?: AudioTrack;
+  analysisJobId?: string;
+  analysisPackage?: RecitationAnalysisPackage;
   controlSpec?: ControlSpec;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface AnalysisPause {
+  after_index: number;
+  gap_ms: number;
+  relative_level: "short" | "long";
+}
+
+export interface AnalysisElongation {
+  token_index: number;
+  duration_ms: number;
+  local_duration_ratio: number;
+}
+
+export interface AnalysisToken {
+  index: number;
+  char: string;
+  machine_pinyin?: string;
+  display_pinyin?: string;
+  start_ms: number;
+  end_ms: number;
+  duration_ms: number;
+  confidence?: number;
+}
+
+export interface AnalysisSentenceSummary {
+  id: string;
+  order: number;
+  text: string;
+  start_index: number;
+  end_index: number;
+  start_ms: number;
+  end_ms: number;
+  speaking_rate: number;
+  pause_summary: unknown;
+  duration_summary: unknown;
+  pitch_summary: unknown;
+  energy_summary: unknown;
+  macro_pitch_contour: unknown;
+}
+
+export interface RecitationAnalysisPackage {
+  schema_version: "1.0";
+  generated_at: string;
+  work: {
+    title: string;
+    author?: string;
+    full_text: string;
+  };
+  alignment_quality: Record<string, unknown>;
+  tokens: AnalysisToken[];
+  words: Array<Record<string, unknown>>;
+  pauses: AnalysisPause[];
+  elongations: AnalysisElongation[];
+  pitch: Array<Record<string, unknown>>;
+  energy: Array<Record<string, unknown>>;
+  sentences: AnalysisSentenceSummary[];
+  audio: {
+    duration_ms: number;
+    sample_rate?: number;
+  };
+}
+
 export const PROSODY_LABELS: Record<ProsodyType, string> = {
-  crest: "波峰",
-  trough: "波谷",
+  peak: "波峰",
+  valley: "波谷",
   rising: "起潮",
   falling: "落潮",
 };
 
 export const ENDING_LABELS: Record<EndingTone, string> = {
-  rise: "上扬 ↗",
-  fall: "下抑 ↘",
+  rising: "上扬 ↗",
+  falling: "下抑 ↘",
   level: "平收 →",
 };
 

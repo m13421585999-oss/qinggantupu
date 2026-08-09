@@ -9,20 +9,18 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import {
-  cloneDemoWork,
-  createDemoAiAudio,
-  createDemoControlSpec,
-  createReferenceTimeline,
-} from "@/lib/demo-work";
+import { buildChatGptAnalysisPrompt } from "@/lib/analysis-package";
+import { importControlSpec, parseControlSpecText } from "@/lib/control-spec-import";
 import {
   ENDING_LABELS,
   PROSODY_LABELS,
   RHYTHM_LABELS,
   type AudioTimeline,
   type AudioTrack,
+  type ControlSpec,
   type EndingTone,
   type ProsodyType,
+  type ProsodyEvent,
   type RecitationSentence,
   type RecitationWork,
   type Rhythm,
@@ -30,7 +28,7 @@ import {
 } from "@/lib/recitation-schema";
 
 type ProductMode = "studio" | "viewer";
-type WorkflowStep = 1 | 2 | 3 | 4;
+type WorkflowStep = 1 | 2 | 3 | 4 | 5;
 type AudioSource = "reference" | "ai_demo";
 
 const workflowSteps: Array<{
@@ -39,9 +37,10 @@ const workflowSteps: Array<{
   subtitle: string;
 }> = [
   { id: 1, title: "准备作品", subtitle: "作品信息 · 正文 · 参考朗诵" },
-  { id: 2, title: "编辑图谱", subtitle: "AI 初稿 · 单句修正" },
-  { id: 3, title: "生成示范", subtitle: "AI 标准朗诵 · 时间戳" },
-  { id: 4, title: "预览发布", subtitle: "观看端 · 同步高亮" },
+  { id: 2, title: "声音分析", subtitle: "复制结果 · 导入控制谱" },
+  { id: 3, title: "编辑图谱", subtitle: "人工复核 · 单句修正" },
+  { id: 4, title: "生成示范", subtitle: "Eleven v3 · 时间戳" },
+  { id: 5, title: "预览发布", subtitle: "观看端 · 同步高亮" },
 ];
 
 const prosodyOptions = Object.keys(PROSODY_LABELS) as ProsodyType[];
@@ -68,7 +67,11 @@ function pauseAfter(sentence: RecitationSentence, tokenIndex: number) {
 }
 
 function prolongFor(sentence: RecitationSentence, tokenIndex: number) {
-  return sentence.prolongs.find((prolong) => prolong.tokenIndex === tokenIndex);
+  return sentence.prolongations.find((prolong) => prolong.tokenIndex === tokenIndex);
+}
+
+function primaryProsody(sentence: RecitationSentence): ProsodyEvent | undefined {
+  return sentence.prosody[0];
 }
 
 function sentenceTiming(
@@ -92,8 +95,9 @@ function activeSentenceAt(
 }
 
 function highestAvailableStep(work: RecitationWork): WorkflowStep {
-  if (work.aiDemoAudio?.timeline && work.controlSpec) return 4;
-  if (work.controlSpec) return 3;
+  if (work.aiDemoAudio?.timeline && work.controlSpec) return 5;
+  if (work.controlSpec) return 4;
+  if (work.analysisPackage) return 2;
   return 1;
 }
 
@@ -113,13 +117,42 @@ function readAudioDuration(url: string): Promise<number> {
   });
 }
 
+function createEmptyWork(): RecitationWork {
+  const createdAt = new Date().toISOString();
+  return {
+    id: `draft-${crypto.randomUUID()}`,
+    slug: "",
+    title: "",
+    author: "",
+    genre: "other",
+    language: "zh-CN",
+    sourceText: "",
+    status: "draft",
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+async function apiJson<T>(response: Response): Promise<T> {
+  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    const error = payload.error && typeof payload.error === "object"
+      ? payload.error as Record<string, unknown>
+      : {};
+    throw new Error(String(error.message ?? `请求失败（HTTP ${response.status}）`));
+  }
+  return payload as T;
+}
+
 interface CurveMetrics {
   width: number;
   height: number;
   trackStart: number;
   trackEnd: number;
-  anchorStart: number;
-  anchorEnd: number;
+  activeStart: number;
+  activeEnd: number;
+  coreStart: number;
+  coreEnd: number;
 }
 
 function ProsodyCurve({
@@ -142,29 +175,31 @@ function ProsodyCurve({
   const amplitude = 8 + strength * 7;
   const left = Math.max(4, metrics.trackStart);
   const right = Math.min(width - 4, metrics.trackEnd);
-  const anchorLeft = Math.max(left, Math.min(right, metrics.anchorStart));
-  const anchorRight = Math.max(anchorLeft, Math.min(right, metrics.anchorEnd));
-  const anchor = (anchorLeft + anchorRight) / 2;
-  const leftControl = left + (anchor - left) * 0.58;
-  const rightControl = anchor + (right - anchor) * 0.42;
+  const activeLeft = Math.max(left, Math.min(right, metrics.activeStart));
+  const activeRight = Math.max(activeLeft, Math.min(right, metrics.activeEnd));
+  const coreLeft = Math.max(activeLeft, Math.min(activeRight, metrics.coreStart));
+  const coreRight = Math.max(coreLeft, Math.min(activeRight, metrics.coreEnd));
+  const anchor = (coreLeft + coreRight) / 2;
+  const leftControl = activeLeft + (coreLeft - activeLeft) * 0.65;
+  const rightControl = activeRight - (activeRight - coreRight) * 0.65;
 
   let dotX = anchor;
   let dotY = middle;
   let path = "";
-  if (type === "crest") {
+  if (type === "peak") {
     dotY = Math.max(top, middle - amplitude);
-    path = `M ${left} ${middle + 7} C ${leftControl} ${middle + 5}, ${anchorLeft} ${dotY}, ${anchor} ${dotY} C ${anchorRight} ${dotY}, ${rightControl} ${middle + 8}, ${right} ${middle + 10}`;
-  } else if (type === "trough") {
+    path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${leftControl} ${middle}, ${coreLeft} ${dotY}, ${anchor} ${dotY} C ${coreRight} ${dotY}, ${rightControl} ${middle}, ${activeRight} ${middle} L ${right} ${middle}`;
+  } else if (type === "valley") {
     dotY = Math.min(bottom, middle + amplitude);
-    path = `M ${left} ${middle - 6} C ${leftControl} ${middle - 4}, ${anchorLeft} ${dotY}, ${anchor} ${dotY} C ${anchorRight} ${dotY}, ${rightControl} ${middle - 7}, ${right} ${middle - 8}`;
+    path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${leftControl} ${middle}, ${coreLeft} ${dotY}, ${anchor} ${dotY} C ${coreRight} ${dotY}, ${rightControl} ${middle}, ${activeRight} ${middle} L ${right} ${middle}`;
   } else if (type === "rising") {
-    dotX = anchorRight;
+    dotX = coreRight;
     dotY = Math.max(top, middle - amplitude);
-    path = `M ${left} ${bottom - 2} C ${anchorLeft} ${bottom - 4}, ${anchorRight} ${dotY + 5}, ${right} ${dotY}`;
+    path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${coreLeft} ${middle + amplitude * 0.35}, ${coreRight} ${dotY + 5}, ${activeRight} ${dotY} L ${right} ${dotY}`;
   } else {
-    dotX = anchorRight;
+    dotX = coreRight;
     dotY = Math.min(bottom, middle + amplitude);
-    path = `M ${left} ${top + 2} C ${anchorLeft} ${top + 4}, ${anchorRight} ${dotY - 5}, ${right} ${dotY}`;
+    path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${coreLeft} ${middle - amplitude * 0.35}, ${coreRight} ${dotY - 5}, ${activeRight} ${dotY} L ${right} ${dotY}`;
   }
 
   const gradientId = `curve-${type}-${active ? "active" : "idle"}`;
@@ -209,7 +244,7 @@ function ProsodyCurve({
 function ToneArrow({ type }: { type: EndingTone }) {
   return (
     <span className={`tone-arrow tone-${type}`} aria-label={ENDING_LABELS[type]}>
-      {type === "rise" ? "↗" : type === "fall" ? "↘" : "→"}
+      {type === "rising" ? "↗" : type === "falling" ? "↘" : "→"}
     </span>
   );
 }
@@ -230,9 +265,12 @@ function IndexedGraphTrack({
     height: 64,
     trackStart: 0,
     trackEnd: 0,
-    anchorStart: 0,
-    anchorEnd: 0,
+    activeStart: 0,
+    activeEnd: 0,
+    coreStart: 0,
+    coreEnd: 0,
   });
+  const prosody = primaryProsody(sentence);
   const focused = focusSet(sentence);
   const spokenTokens = useMemo(
     () => sentence.tokens.filter((token) => !punctuationOnly(token.char)),
@@ -244,24 +282,30 @@ function IndexedGraphTrack({
     const track = trackRef.current;
     const first = spokenTokens[0] && tokenRefs.current.get(spokenTokens[0].index);
     const last = lastSpokenIndex === undefined ? undefined : tokenRefs.current.get(lastSpokenIndex);
-    const anchorStart = tokenRefs.current.get(sentence.prosody.anchorStart);
-    const anchorEnd = tokenRefs.current.get(sentence.prosody.anchorEnd);
-    if (!track || !first || !last || !anchorStart || !anchorEnd) return;
+    const activeStart = prosody && tokenRefs.current.get(prosody.activeSpan.start);
+    const activeEnd = prosody && tokenRefs.current.get(prosody.activeSpan.end);
+    const coreStart = prosody && tokenRefs.current.get(prosody.coreZone.start);
+    const coreEnd = prosody && tokenRefs.current.get(prosody.coreZone.end);
+    if (!track || !first || !last || !activeStart || !activeEnd || !coreStart || !coreEnd) return;
 
     const trackRect = track.getBoundingClientRect();
     const firstRect = first.getBoundingClientRect();
     const lastRect = last.getBoundingClientRect();
-    const anchorStartRect = anchorStart.getBoundingClientRect();
-    const anchorEndRect = anchorEnd.getBoundingClientRect();
+    const activeStartRect = activeStart.getBoundingClientRect();
+    const activeEndRect = activeEnd.getBoundingClientRect();
+    const coreStartRect = coreStart.getBoundingClientRect();
+    const coreEndRect = coreEnd.getBoundingClientRect();
     setMetrics({
       width: trackRect.width,
       height: 64,
       trackStart: firstRect.left - trackRect.left + firstRect.width / 2,
       trackEnd: lastRect.left - trackRect.left + lastRect.width / 2,
-      anchorStart: anchorStartRect.left - trackRect.left,
-      anchorEnd: anchorEndRect.right - trackRect.left,
+      activeStart: activeStartRect.left - trackRect.left,
+      activeEnd: activeEndRect.right - trackRect.left,
+      coreStart: coreStartRect.left - trackRect.left,
+      coreEnd: coreEndRect.right - trackRect.left,
     });
-  }, [lastSpokenIndex, sentence.prosody.anchorEnd, sentence.prosody.anchorStart, spokenTokens]);
+  }, [lastSpokenIndex, prosody, spokenTokens]);
 
   useLayoutEffect(() => {
     const track = trackRef.current;
@@ -352,19 +396,21 @@ function IndexedGraphTrack({
                     </span>
                   ) : null}
                   {token.index === lastSpokenIndex ? (
-                    <ToneArrow type={sentence.endingTone.type} />
+                    <ToneArrow type={sentence.endingIntonation.type} />
                   ) : null}
                 </span>
               );
             })}
           </div>
           <div className="curve-layer">
-            <ProsodyCurve
-              type={sentence.prosody.type}
-              strength={sentence.prosody.strength}
-              metrics={metrics}
-              active={active}
-            />
+            {prosody ? (
+              <ProsodyCurve
+                type={prosody.type}
+                strength={prosody.strength}
+                metrics={metrics}
+                active={active}
+              />
+            ) : null}
           </div>
         </div>
       </div>
@@ -461,9 +507,9 @@ function ReferenceAudioPanel({
               <small>{formatTime(audio.durationMs)} · {audio.label}</small>
             </div>
           </div>
-          <audio className="reference-preview" controls preload="metadata" src={audio.url}>
-            <track kind="captions" src="/demo-captions.vtt" srcLang="zh" label="中文" />
-          </audio>
+          {/* Reference recitation has no separate caption asset; the exact transcript is shown beside it. */}
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio className="reference-preview" controls preload="metadata" src={audio.url} />
           <div className="reference-actions">
             <label className="secondary-button replace-audio">
               替换音频
@@ -645,8 +691,8 @@ function WorkflowRail({
       <div className="rail-note">
         <span aria-hidden="true">◎</span>
         <p>
-          <strong>当前为纵向切片</strong>
-          真实 AI 接入后，这套编辑器和观看端无需重做。
+          <strong>正式创作流程</strong>
+          声音分析只提供事实；控制谱由你确认并导入，不会回退固定示例。
         </p>
       </div>
     </nav>
@@ -680,7 +726,7 @@ function MaterialStage({
           <p className="eyebrow">01 · 准备作品</p>
           <h1>把一段好朗诵，变成一张能听的声音地图</h1>
           <p className="stage-lead">
-            填写准确正文并提供对应参考朗诵。系统会从实际声音中提取停顿、重音和语势，生成可编辑初稿。
+            填写准确正文并提供对应参考朗诵。系统会真实保存音频，对齐文字并提取精简的声音事实包。
           </p>
         </div>
         <span className="version-chip">控制谱 v1.1</span>
@@ -750,7 +796,7 @@ function MaterialStage({
                 {isAnalyzing
                   ? "正在把声音表现转换为可编辑的情感图谱。"
                   : work.referenceAudio
-                    ? "将对齐正文与声音，提取字符时间轴、停顿、语势和表达焦点。"
+                    ? "将对齐正文与声音，提取字符时间轴、停顿、时值、宏观音高与能量事实。"
                     : "请先提供与正文对应的优质朗诵音频。"}
               </p>
             </div>
@@ -775,6 +821,115 @@ function MaterialStage({
           ) : null}
         </div>
       </div>
+    </section>
+  );
+}
+
+function AnalysisResultStage({
+  work,
+  onImport,
+  onBack,
+  onNotify,
+}: {
+  work: RecitationWork;
+  onImport: (jsonText: string) => Promise<void>;
+  onBack: () => void;
+  onNotify: (message: string) => void;
+}) {
+  const analysis = work.analysisPackage;
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  if (!analysis) return null;
+
+  const copyAnalysis = async () => {
+    try {
+      await navigator.clipboard.writeText(buildChatGptAnalysisPrompt(analysis));
+      onNotify("分析结果与控制谱要求已复制，可直接粘贴给 ChatGPT");
+    } catch {
+      onNotify("浏览器未允许复制，请使用“下载分析 JSON”保存结果");
+    }
+  };
+
+  const downloadAnalysis = () => {
+    const blob = new Blob([JSON.stringify(analysis, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${work.title || "朗诵"}-声音分析.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const submitImport = async () => {
+    setImportError(null);
+    setIsImporting(true);
+    try {
+      await onImport(importText);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  return (
+    <section className="stage analysis-result-stage">
+      <div className="stage-heading">
+        <div>
+          <p className="eyebrow">02 · 声音分析完成</p>
+          <h1>声音事实已提取，等待导入控制谱</h1>
+          <p className="stage-lead">
+            将分析结果交给 ChatGPT 解释；拿到 control_spec JSON 后粘贴回来。网站会校验正文和每个 token index，绝不会擅自改写文稿。
+          </p>
+        </div>
+        <span className="ready-badge"><i /> 分析完成</span>
+      </div>
+
+      <div className="analysis-result-grid">
+        <div className="paper-card analysis-package-card">
+          <div className="card-title-row">
+            <div><p className="eyebrow">朗诵分析包</p><h2>{work.title}</h2></div>
+            <span className="json-chip">JSON v{analysis.schema_version}</span>
+          </div>
+          <div className="analysis-facts">
+            <span><strong>{analysis.tokens.length}</strong><small>字符时间戳</small></span>
+            <span><strong>{analysis.pauses.length}</strong><small>明显停顿</small></span>
+            <span><strong>{analysis.elongations.length}</strong><small>相对延长</small></span>
+            <span><strong>{analysis.sentences.length}</strong><small>句段摘要</small></span>
+          </div>
+          <p className="analysis-package-note">
+            已包含 Eleven 对齐质量、局部时值比、平滑宏观音高、明显能量变化与逐句摘要；不含逐帧 F0，也没有自动生成教学标签。
+          </p>
+          <div className="analysis-package-actions">
+            <button type="button" className="primary-button" onClick={copyAnalysis}>复制分析结果</button>
+            <button type="button" className="secondary-button" onClick={downloadAnalysis}>下载分析 JSON</button>
+          </div>
+        </div>
+
+        <div className="paper-card control-import-card">
+          <div className="card-title-row compact-title-row">
+            <div><p className="eyebrow">导入控制谱</p><h2>粘贴 ChatGPT 返回的 JSON</h2></div>
+          </div>
+          <textarea
+            aria-label="control spec JSON"
+            value={importText}
+            onChange={(event) => setImportText(event.target.value)}
+            placeholder={'可直接粘贴纯 JSON，或包含在 ```json 代码块中的 JSON'}
+            rows={12}
+          />
+          {importError ? <p className="import-error" role="alert">{importError}</p> : null}
+          <button
+            type="button"
+            className="primary-button import-button"
+            disabled={!importText.trim() || isImporting}
+            onClick={submitImport}
+          >
+            {isImporting ? "正在校验并保存" : "导入控制谱"}
+          </button>
+        </div>
+      </div>
+      <button type="button" className="text-button analysis-back" onClick={onBack}>← 返回准备作品</button>
     </section>
   );
 }
@@ -904,17 +1059,9 @@ function SentenceEditDrawer({
         }
       }
 
-      const indexes = nextFocus.flatMap((target) => target.tokenIndexes);
       return {
         ...current,
         focus: nextFocus,
-        prosody: indexes.length
-          ? {
-              ...current.prosody,
-              anchorStart: Math.min(...indexes),
-              anchorEnd: Math.max(...indexes),
-            }
-          : current.prosody,
       };
     });
   };
@@ -958,15 +1105,15 @@ function SentenceEditDrawer({
   const toggleProlong = (token: TimedToken) => {
     setDraft((current) => {
       if (!current) return current;
-      const existing = current.prolongs.find(
+      const existing = current.prolongations.find(
         (prolong) => prolong.tokenIndex === token.index,
       );
       return {
         ...current,
-        prolongs: existing
-          ? current.prolongs.filter((prolong) => prolong.id !== existing.id)
+        prolongations: existing
+          ? current.prolongations.filter((prolong) => prolong.id !== existing.id)
           : [
-              ...current.prolongs,
+              ...current.prolongations,
               {
                 id: `${current.id}-prolong-${token.index}`,
                 tokenId: token.id,
@@ -976,6 +1123,49 @@ function SentenceEditDrawer({
             ],
       };
     });
+  };
+
+  const spokenIndexes = draft.tokens
+    .filter((token) => !punctuationOnly(token.char))
+    .map((token) => token.index);
+  const sentenceMin = spokenIndexes[0] ?? draft.tokens[0]?.index ?? 0;
+  const sentenceMax = spokenIndexes.at(-1) ?? draft.tokens.at(-1)?.index ?? sentenceMin;
+  const currentProsody = primaryProsody(draft) ?? {
+    id: `${draft.id}-prosody-manual`,
+    type: "peak" as const,
+    activeSpan: { start: sentenceMin, end: sentenceMax },
+    coreZone: { start: sentenceMin, end: sentenceMax },
+    strength: 2 as const,
+  };
+  const updateProsody = (change: Partial<ProsodyEvent>) => {
+    const next = { ...currentProsody, ...change };
+    setDraft({ ...draft, prosody: [next, ...draft.prosody.slice(1)] });
+  };
+  const updateSpan = (
+    field: "activeSpan" | "coreZone",
+    edge: "start" | "end",
+    value: number,
+  ) => {
+    const span = { ...currentProsody[field], [edge]: value };
+    if (span.start > span.end) {
+      if (edge === "start") span.end = value;
+      else span.start = value;
+    }
+    if (field === "activeSpan") {
+      const coreZone = {
+        start: Math.max(span.start, currentProsody.coreZone.start),
+        end: Math.min(span.end, currentProsody.coreZone.end),
+      };
+      if (coreZone.start > coreZone.end) coreZone.start = coreZone.end = span.start;
+      updateProsody({ activeSpan: span, coreZone });
+    } else {
+      updateProsody({
+        coreZone: {
+          start: Math.max(currentProsody.activeSpan.start, span.start),
+          end: Math.min(currentProsody.activeSpan.end, span.end),
+        },
+      });
+    }
   };
 
   return (
@@ -1024,11 +1214,11 @@ function SentenceEditDrawer({
                   <button
                     type="button"
                     key={option}
-                    className={draft.endingTone.type === option ? "chosen" : ""}
+                    className={draft.endingIntonation.type === option ? "chosen" : ""}
                     onClick={() =>
                       setDraft({
                         ...draft,
-                        endingTone: { ...draft.endingTone, type: option },
+                        endingIntonation: { ...draft.endingIntonation, type: option },
                       })
                     }
                   >
@@ -1049,13 +1239,8 @@ function SentenceEditDrawer({
                 <button
                   type="button"
                   key={option}
-                  className={draft.prosody.type === option ? "chosen" : ""}
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      prosody: { ...draft.prosody, type: option },
-                    })
-                  }
+                  className={currentProsody.type === option ? "chosen" : ""}
+                  onClick={() => updateProsody({ type: option })}
                 >
                   <span className={`mini-curve mini-${option}`} aria-hidden="true" />
                   {PROSODY_LABELS[option]}
@@ -1069,16 +1254,34 @@ function SentenceEditDrawer({
                   <button
                     type="button"
                     key={strength}
-                    className={draft.prosody.strength === strength ? "chosen" : ""}
-                    onClick={() =>
-                      setDraft({
-                        ...draft,
-                        prosody: { ...draft.prosody, strength },
-                      })
-                    }
+                    className={currentProsody.strength === strength ? "chosen" : ""}
+                    onClick={() => updateProsody({ strength })}
                   >
                     {strength === 1 ? "轻" : strength === 2 ? "中" : "强"}
                   </button>
+                ))}
+              </div>
+            </div>
+            <div className="prosody-span-editor">
+              <div className="drawer-label-row">
+                <span>语势区间</span>
+                <small>按 token index 设置局部变化与核心区，曲线会按文字真实位置重算</small>
+              </div>
+              <div className="span-select-grid">
+                {([
+                  ["变化开始", "activeSpan", "start", currentProsody.activeSpan.start],
+                  ["变化结束", "activeSpan", "end", currentProsody.activeSpan.end],
+                  ["核心开始", "coreZone", "start", currentProsody.coreZone.start],
+                  ["核心结束", "coreZone", "end", currentProsody.coreZone.end],
+                ] as const).map(([label, field, edge, value]) => (
+                  <label key={`${field}-${edge}`}>
+                    <span>{label}</span>
+                    <select value={value} onChange={(event) => updateSpan(field, edge, Number(event.target.value))}>
+                      {draft.tokens.filter((token) => !punctuationOnly(token.char)).map((token) => (
+                        <option key={token.id} value={token.index}>{token.index} · {token.char}</option>
+                      ))}
+                    </select>
+                  </label>
                 ))}
               </div>
             </div>
@@ -1159,7 +1362,7 @@ function EditorStage({
     <section className="stage editor-stage">
       <div className="stage-heading editor-heading">
         <div>
-          <p className="eyebrow">02 · 人工复核</p>
+          <p className="eyebrow">03 · 人工复核</p>
           <h1>图谱本身，就是编辑器</h1>
           <p className="stage-lead">
             点击任意一句图谱，在单句面板中修正节奏、语势、重音、停顿、句尾语调和拖音。
@@ -1235,7 +1438,7 @@ function AudioStage({
     <section className="stage audio-stage">
       <div className="stage-heading">
         <div>
-          <p className="eyebrow">03 · 示范声音</p>
+          <p className="eyebrow">04 · 示范声音</p>
           <h1>根据确认后的图谱，生成 AI 标准朗诵</h1>
           <p className="stage-lead">
             这一步读取已经确认的控制谱，单独生成 AI 示范音频及其字符时间轴。参考朗诵不会被覆盖。
@@ -1294,7 +1497,7 @@ function AudioStage({
             {isGenerating ? "正在生成声音与时间轴" : aiDemo ? "重新生成 AI 示范" : "生成 AI 示范"}
           </button>
           <p className="demo-disclaimer">
-            当前仍使用项目已有占位声音验证流程；生成动作、音频身份和时间轴已与参考朗诵完全分开。
+            正式调用 Eleven v3 TTS with timestamps；生成失败会显示错误，不会使用占位音频。
           </p>
         </div>
       </div>
@@ -1332,7 +1535,7 @@ function PublishStage({
     <section className="stage publish-stage">
       <div className="stage-heading">
         <div>
-          <p className="eyebrow">04 · 发布作品</p>
+          <p className="eyebrow">05 · 发布作品</p>
           <h1>把创作参数收起来，只把“看得懂、听得到”交给用户</h1>
           <p className="stage-lead">
             发布会冻结当前控制谱、示范音频和时间轴。后续修改草稿，不会改变已经分享的版本。
@@ -1408,6 +1611,7 @@ function StudioView({
   onReferenceFile,
   onDeleteReference,
   onAnalyze,
+  onImportControlSpec,
   onEditSentence,
   onCloseEditor,
   onSaveSentence,
@@ -1418,6 +1622,7 @@ function StudioView({
   onPublishStage,
   onPreview,
   onPublish,
+  onNotify,
 }: {
   work: RecitationWork;
   step: WorkflowStep;
@@ -1434,6 +1639,7 @@ function StudioView({
   onReferenceFile: (file: File) => void;
   onDeleteReference: () => void;
   onAnalyze: () => void;
+  onImportControlSpec: (jsonText: string) => Promise<void>;
   onEditSentence: (id: string) => void;
   onCloseEditor: () => void;
   onSaveSentence: (sentence: RecitationSentence) => void;
@@ -1444,12 +1650,13 @@ function StudioView({
   onPublishStage: () => void;
   onPreview: () => void;
   onPublish: () => void;
+  onNotify: (message: string) => void;
 }) {
   return (
     <div className="studio-shell">
       <aside className="studio-sidebar">
         <div className="work-summary">
-          <span className="work-monogram">月</span>
+          <span className="work-monogram">{Array.from(work.title.trim())[0] ?? "声"}</span>
           <div>
             <small>正在创作</small>
             <strong>{work.title}</strong>
@@ -1476,6 +1683,14 @@ function StudioView({
           />
         ) : null}
         {step === 2 ? (
+          <AnalysisResultStage
+            work={work}
+            onImport={onImportControlSpec}
+            onBack={() => onStep(1)}
+            onNotify={onNotify}
+          />
+        ) : null}
+        {step === 3 ? (
           <EditorStage
             work={work}
             editingSentenceId={editingSentenceId}
@@ -1490,19 +1705,19 @@ function StudioView({
             onContinue={onGenerateStage}
           />
         ) : null}
-        {step === 3 ? (
+        {step === 4 ? (
           <AudioStage
             work={work}
             isGenerating={isGenerating}
             onGenerate={onGenerate}
             onContinue={onPublishStage}
-            onBack={() => onStep(2)}
+            onBack={() => onStep(3)}
           />
         ) : null}
-        {step === 4 ? (
+        {step === 5 ? (
           <PublishStage
             work={work}
-            onBack={() => onStep(3)}
+            onBack={() => onStep(4)}
             onPreview={onPreview}
             onPublish={onPublish}
           />
@@ -1609,12 +1824,13 @@ function ViewerView({
 
 export function RecitationStudio() {
   const [mode, setMode] = useState<ProductMode>("studio");
-  const [work, setWork] = useState<RecitationWork>(() => cloneDemoWork());
+  const [work, setWork] = useState<RecitationWork>(() => createEmptyWork());
+  const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [step, setStep] = useState<WorkflowStep>(1);
   const [editingSentenceId, setEditingSentenceId] = useState<string | null>(null);
   const [audioSource, setAudioSource] = useState<AudioSource>("reference");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisStatus, setAnalysisStatus] = useState("正在读取音频");
+  const [analysisStatus, setAnalysisStatus] = useState("等待提交");
   const [isGenerating, setIsGenerating] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
@@ -1622,19 +1838,42 @@ export function RecitationStudio() {
   const [segmentEndMs, setSegmentEndMs] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const activeTrack =
-    audioSource === "reference" ? work.referenceAudio : work.aiDemoAudio;
+  const activeTrack = audioSource === "reference" ? work.referenceAudio : work.aiDemoAudio;
   const highestStep = highestAvailableStep(work);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
-    window.setTimeout(() => setToast(null), 2800);
+    window.setTimeout(() => setToast(null), 4200);
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const workId = params.get("work");
+    if (!workId) return;
+    let cancelled = false;
+    void fetch(`/api/works/${encodeURIComponent(workId)}`)
+      .then((response) => apiJson<{ work: RecitationWork }>(response))
+      .then(({ work: stored }) => {
+        if (cancelled) return;
+        setWork(stored);
+        if (params.get("view") === "1") {
+          setMode("viewer");
+          setAudioSource("ai_demo");
+        } else if (stored.controlSpec) {
+          setStep(stored.aiDemoAudio ? 5 : 3);
+          setAudioSource(stored.aiDemoAudio ? "ai_demo" : "reference");
+        } else if (stored.analysisPackage) {
+          setStep(2);
+          setAudioSource("reference");
+        }
+      })
+      .catch((error) => !cancelled && showToast(error instanceof Error ? error.message : String(error)));
+    return () => { cancelled = true; };
+  }, [showToast]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
     const update = () => {
       const nextMs = audio.currentTime * 1000;
       setCurrentMs(nextMs);
@@ -1647,11 +1886,7 @@ export function RecitationStudio() {
     };
     const playing = () => setIsPlaying(true);
     const paused = () => setIsPlaying(false);
-    const ended = () => {
-      setIsPlaying(false);
-      setSegmentEndMs(null);
-    };
-
+    const ended = () => { setIsPlaying(false); setSegmentEndMs(null); };
     audio.addEventListener("timeupdate", update);
     audio.addEventListener("play", playing);
     audio.addEventListener("pause", paused);
@@ -1696,46 +1931,35 @@ export function RecitationStudio() {
   }, [activeTrack?.id]);
 
   const activeSentence = useMemo(
-    () =>
-      activeSentenceAt(
-        work.controlSpec?.sentences ?? [],
-        activeTrack?.timeline,
-        currentMs,
-      ),
+    () => activeSentenceAt(work.controlSpec?.sentences ?? [], activeTrack?.timeline, currentMs),
     [activeTrack?.timeline, currentMs, work.controlSpec?.sentences],
   );
-
-  const activeTokenId =
-    activeSentence && activeTrack?.timeline
-      ? activeTrack.timeline.tokens.find(
-          (token) => currentMs >= token.startMs && currentMs < token.endMs,
-        )?.tokenId
-      : undefined;
+  const activeTokenId = activeSentence && activeTrack?.timeline
+    ? activeTrack.timeline.tokens.find((token) => currentMs >= token.startMs && currentMs < token.endMs)?.tokenId
+    : undefined;
 
   const setWorkflowStep = (next: WorkflowStep) => {
+    if (next > highestStep) return;
     setStep(next);
     setEditingSentenceId(null);
-    if (next === 2) setAudioSource("reference");
-    if (next >= 3 && work.aiDemoAudio) setAudioSource("ai_demo");
+    if (next <= 3) setAudioSource("reference");
+    if (next >= 4 && work.aiDemoAudio) setAudioSource("ai_demo");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleWorkChange = (
-    field: "title" | "author" | "sourceText",
-    value: string,
-  ) => {
+  const handleWorkChange = (field: "title" | "author" | "sourceText", value: string) => {
     const sourceChanged = field === "sourceText" && value !== work.sourceText;
     setWork((current) => ({
       ...current,
       [field]: value,
-      ...(sourceChanged
-        ? {
-            status: "draft" as const,
-            controlSpec: undefined,
-            currentSpecVersionId: undefined,
-            aiDemoAudio: undefined,
-          }
-        : {}),
+      ...(sourceChanged ? {
+        status: "draft" as const,
+        analysisPackage: undefined,
+        analysisJobId: undefined,
+        controlSpec: undefined,
+        currentSpecVersionId: undefined,
+        aiDemoAudio: undefined,
+      } : {}),
       updatedAt: new Date().toISOString(),
     }));
     if (sourceChanged) {
@@ -1749,32 +1973,31 @@ export function RecitationStudio() {
     const url = URL.createObjectURL(file);
     try {
       const durationMs = await readAudioDuration(url);
-      if (work.referenceAudio?.url.startsWith("blob:")) {
-        URL.revokeObjectURL(work.referenceAudio.url);
-      }
-      const referenceAudio: AudioTrack = {
-        id: `reference-${crypto.randomUUID()}`,
-        kind: "reference",
-        url,
-        filename: file.name,
-        mimeType: file.type || undefined,
-        durationMs,
-        provider: "upload",
-        label: "上传的优质参考朗诵",
-      };
+      if (work.referenceAudio?.url.startsWith("blob:")) URL.revokeObjectURL(work.referenceAudio.url);
+      setReferenceFile(file);
       setWork((current) => ({
         ...current,
         status: "draft",
-        referenceAudio,
+        referenceAudio: {
+          id: `local-${crypto.randomUUID()}`,
+          kind: "reference",
+          url,
+          filename: file.name,
+          mimeType: file.type || undefined,
+          durationMs,
+          provider: "upload",
+          label: "待上传的优质参考朗诵",
+        },
+        analysisPackage: undefined,
+        analysisJobId: undefined,
         controlSpec: undefined,
         currentSpecVersionId: undefined,
         aiDemoAudio: undefined,
         updatedAt: new Date().toISOString(),
       }));
       setStep(1);
-      setEditingSentenceId(null);
       setAudioSource("reference");
-      showToast(`${file.name} 已设为参考朗诵`);
+      showToast(`${file.name} 已就绪；点击“解析参考朗诵”后会真实上传`);
     } catch {
       URL.revokeObjectURL(url);
       showToast("无法读取这段音频，请换用 WAV、M4A 或 MP3 文件");
@@ -1782,143 +2005,180 @@ export function RecitationStudio() {
   };
 
   const handleDeleteReference = () => {
-    if (work.referenceAudio?.url.startsWith("blob:")) {
-      URL.revokeObjectURL(work.referenceAudio.url);
-    }
+    if (work.referenceAudio?.url.startsWith("blob:")) URL.revokeObjectURL(work.referenceAudio.url);
     audioRef.current?.pause();
+    setReferenceFile(null);
     setWork((current) => ({
       ...current,
       status: "draft",
       referenceAudio: undefined,
+      analysisPackage: undefined,
+      analysisJobId: undefined,
       controlSpec: undefined,
       currentSpecVersionId: undefined,
       aiDemoAudio: undefined,
       updatedAt: new Date().toISOString(),
     }));
     setStep(1);
-    setEditingSentenceId(null);
     setAudioSource("reference");
-    showToast("参考朗诵已删除");
+    showToast("参考朗诵已从当前作品移除");
+  };
+
+  const obtainUploadFile = async () => {
+    if (referenceFile) return referenceFile;
+    if (!work.referenceAudio?.url.startsWith("/api/assets/")) return null;
+    const response = await fetch(work.referenceAudio.url);
+    if (!response.ok) throw new Error("无法从 R2 重新读取参考音频。");
+    const blob = await response.blob();
+    return new File([blob], work.referenceAudio.filename, { type: work.referenceAudio.mimeType || blob.type });
   };
 
   const handleAnalyze = async () => {
     if (isAnalyzing) return;
-    const referenceAudio = work.referenceAudio;
-    if (!referenceAudio) {
-      showToast("请先上传参考朗诵，系统将根据实际声音表现生成情感图谱");
-      return;
-    }
-    if (!work.title.trim() || !work.sourceText.trim()) {
-      showToast("请先填写作品名称和完整正文");
-      return;
-    }
+    if (!work.referenceAudio) { showToast("请先上传参考朗诵"); return; }
+    if (!work.title.trim() || !work.sourceText.trim()) { showToast("请先填写作品名称和完整正文"); return; }
     setIsAnalyzing(true);
+    setAnalysisStatus("正在上传正文与参考音频");
     setWork((current) => ({ ...current, status: "analyzing" }));
-    const stages = [
-      ["正在读取音频", 520],
-      ["对齐正文与声音", 720],
-      ["提取停顿与语势", 720],
-      ["生成情感图谱初稿", 820],
-    ] as const;
-    for (const [label, delay] of stages) {
-      setAnalysisStatus(label);
-      await new Promise((resolve) => window.setTimeout(resolve, delay));
-    }
-    const controlSpec = createDemoControlSpec(
-      referenceAudio.id,
-      referenceAudio.durationMs,
-    );
-    const timeline = createReferenceTimeline(controlSpec);
-    setWork((current) => {
-      if (current.referenceAudio?.id !== referenceAudio.id) return current;
-      return {
+    try {
+      const uploadFile = await obtainUploadFile();
+      if (!uploadFile) throw new Error("参考音频只存在于浏览器预览中，请重新选择文件。");
+      const form = new FormData();
+      if (!work.id.startsWith("draft-")) form.set("work_id", work.id);
+      form.set("title", work.title.trim());
+      form.set("author", work.author?.trim() ?? "");
+      form.set("full_text", work.sourceText);
+      form.set("duration_ms", String(work.referenceAudio.durationMs));
+      form.set("reference_audio_file", uploadFile);
+      const created = await apiJson<{
+        analysis_job_id: string;
+        work_id: string;
+        status: string;
+        reference_audio: AudioTrack;
+      }>(await fetch("/api/analysis-jobs", { method: "POST", body: form }));
+      setReferenceFile(null);
+      setWork((current) => ({
         ...current,
-        status: "review",
-        currentSpecVersionId: controlSpec.id,
-        controlSpec,
-        aiDemoAudio: undefined,
-        referenceAudio: { ...current.referenceAudio, timeline },
-        updatedAt: new Date().toISOString(),
-      };
-    });
-    setIsAnalyzing(false);
-    setAudioSource("reference");
-    setStep(2);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    showToast(`情感图谱初稿已生成：${controlSpec.sentences.length} 句等待复核`);
+        id: created.work_id,
+        analysisJobId: created.analysis_job_id,
+        referenceAudio: created.reference_audio,
+      }));
+      const url = new URL(window.location.href);
+      url.searchParams.set("work", created.work_id);
+      url.searchParams.delete("view");
+      window.history.replaceState({}, "", url);
+
+      const deadline = Date.now() + 20 * 60 * 1000;
+      while (Date.now() < deadline) {
+        const job = await apiJson<{
+          status: "queued" | "processing" | "succeeded" | "failed";
+          progress: number;
+          work?: RecitationWork;
+          error?: { message?: string };
+        }>(await fetch(`/api/analysis-jobs/${encodeURIComponent(created.analysis_job_id)}`));
+        if (job.status === "failed") throw new Error(job.error?.message || "声音分析失败。");
+        if (job.status === "succeeded" && job.work?.analysisPackage) {
+          setWork(job.work);
+          setAudioSource("reference");
+          setStep(2);
+          setAnalysisStatus("声音分析完成");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          showToast("声音分析完成；请复制结果到 ChatGPT 生成控制谱");
+          return;
+        }
+        setAnalysisStatus(job.status === "queued" ? "等待音频分析服务" : "正在执行 Eleven 对齐与声学分析");
+        await new Promise((resolve) => window.setTimeout(resolve, 1600));
+      }
+      throw new Error("声音分析等待超过 20 分钟，请稍后重新打开作品检查任务状态。");
+    } catch (error) {
+      setWork((current) => ({ ...current, status: "draft" }));
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
-  const saveSentence = (nextSentence: RecitationSentence) => {
-    setWork((current) => ({
-      ...current,
-      status: "review",
-      aiDemoAudio: undefined,
-      updatedAt: new Date().toISOString(),
-      controlSpec: current.controlSpec
-        ? {
-            ...current.controlSpec,
-            source: "hybrid",
-            sentences: current.controlSpec.sentences.map((sentence) =>
-              sentence.id === nextSentence.id ? nextSentence : sentence,
-            ),
-          }
-        : current.controlSpec,
-    }));
+  const handleImportControlSpec = async (jsonText: string) => {
+    if (!work.analysisPackage) throw new Error("当前作品还没有声音分析包。");
+    const parsed = parseControlSpecText(jsonText);
+    const controlSpec = importControlSpec(parsed, work.analysisPackage, work.id, work.referenceAudio?.id);
+    const result = await apiJson<{ work: RecitationWork; control_spec: ControlSpec }>(
+      await fetch(`/api/works/${encodeURIComponent(work.id)}/control-spec`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ control_spec: controlSpec, source: "chatgpt_import" }),
+      }),
+    );
+    setWork(result.work);
+    setAudioSource("reference");
+    setStep(3);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    showToast(`控制谱已校验并保存：${result.control_spec.sentences.length} 句`);
+  };
+
+  const persistControlSpec = async (controlSpec: ControlSpec, message?: string) => {
+    const result = await apiJson<{ work: RecitationWork }>(
+      await fetch(`/api/works/${encodeURIComponent(work.id)}/control-spec`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ control_spec: controlSpec, source: "human" }),
+      }),
+    );
+    setWork(result.work);
+    if (message) showToast(message);
+  };
+
+  const saveSentence = async (nextSentence: RecitationSentence) => {
+    if (!work.controlSpec) return;
+    const nextSpec: ControlSpec = {
+      ...work.controlSpec,
+      source: "hybrid",
+      sentences: work.controlSpec.sentences.map((sentence) => sentence.id === nextSentence.id ? nextSentence : sentence),
+    };
+    setWork((current) => ({ ...current, status: "review", controlSpec: nextSpec, aiDemoAudio: undefined }));
     setEditingSentenceId(null);
     setAudioSource("reference");
-    showToast(`第 ${nextSentence.order} 句图谱已更新`);
+    try {
+      await persistControlSpec(nextSpec, `第 ${nextSentence.order} 句图谱已保存`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const playAll = async () => {
     const audio = audioRef.current;
     if (!audio || !activeTrack) return;
     setSegmentEndMs(null);
-    if (isPlaying) {
-      audio.pause();
-      return;
-    }
+    if (isPlaying) { audio.pause(); return; }
     if (audio.currentTime * 1000 >= activeTrack.durationMs - 100) {
       audio.currentTime = 0;
       setCurrentMs(0);
     }
-    try {
-      await audio.play();
-    } catch {
-      showToast("浏览器暂时无法播放，请再点一次播放");
-    }
+    try { await audio.play(); } catch { showToast("浏览器暂时无法播放，请再点一次播放"); }
   };
 
   const playSentence = async (sentence: RecitationSentence) => {
     const audio = audioRef.current;
     const timing = sentenceTiming(activeTrack?.timeline, sentence.id);
-    if (!audio || !timing) {
-      showToast("当前音频还没有这句话的真实时间戳");
-      return;
-    }
+    if (!audio || !timing) { showToast("当前音频还没有这句话的真实时间戳"); return; }
     audio.currentTime = timing.startMs / 1000;
     setCurrentMs(timing.startMs);
     setSegmentEndMs(timing.endMs);
-    try {
-      await audio.play();
-    } catch {
-      showToast("浏览器暂时无法播放，请再点一次“听本句”");
-    }
+    try { await audio.play(); } catch { showToast("浏览器暂时无法播放，请再点一次“听本句”"); }
   };
 
   const seekSentence = (sentence: RecitationSentence) => {
     const timing = sentenceTiming(activeTrack?.timeline, sentence.id);
     if (!timing) return;
-    const audio = audioRef.current;
-    if (audio) audio.currentTime = timing.startMs / 1000;
+    if (audioRef.current) audioRef.current.currentTime = timing.startMs / 1000;
     setSegmentEndMs(null);
     setCurrentMs(timing.startMs);
   };
 
   const seek = (value: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    if (!audioRef.current) return;
     setSegmentEndMs(null);
-    audio.currentTime = value / 1000;
+    audioRef.current.currentTime = value / 1000;
     setCurrentMs(value);
   };
 
@@ -1929,105 +2189,81 @@ export function RecitationStudio() {
 
   const changeAudioSource = (source: AudioSource) => {
     const nextTrack = source === "reference" ? work.referenceAudio : work.aiDemoAudio;
-    if (!nextTrack) return;
-    setAudioSource(source);
+    if (nextTrack) setAudioSource(source);
   };
 
   const handleGenerate = async () => {
     if (isGenerating) return;
-    const spec = work.controlSpec;
-    if (!spec) {
-      showToast("请先解析并确认情感图谱");
-      return;
-    }
+    if (!work.controlSpec) { showToast("请先导入并确认情感图谱"); return; }
     setIsGenerating(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 2200));
-    const aiDemoAudio = createDemoAiAudio(spec);
-    setWork((current) => ({
-      ...current,
-      status: "audio_ready",
-      aiDemoAudio,
-      updatedAt: new Date().toISOString(),
-    }));
-    setIsGenerating(false);
-    setAudioSource("ai_demo");
-    showToast("AI 示范与字符时间轴已就绪");
+    try {
+      const result = await apiJson<{ work: RecitationWork }>(
+        await fetch(`/api/works/${encodeURIComponent(work.id)}/ai-demo`, { method: "POST" }),
+      );
+      setWork(result.work);
+      setAudioSource("ai_demo");
+      showToast("Eleven v3 AI 示范与真实字符时间戳已保存");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const handlePublish = () => {
-    setWork((current) => ({
-      ...current,
-      status: "published",
-      publishedRevisionId: "publication-moonlight-v1",
-    }));
-    setAudioSource("ai_demo");
-    setMode("viewer");
-    showToast("作品 v1 已发布，当前显示用户观看页");
+  const handlePublish = async () => {
+    try {
+      const result = await apiJson<{ work: RecitationWork; public_url: string }>(
+        await fetch(`/api/works/${encodeURIComponent(work.id)}/publish`, { method: "POST" }),
+      );
+      setWork(result.work);
+      window.history.replaceState({}, "", result.public_url);
+      setAudioSource("ai_demo");
+      setMode("viewer");
+      showToast("作品已发布，当前显示用户观看端");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const sentences = work.controlSpec?.sentences ?? [];
   const showPlayer = Boolean(
-    activeTrack?.timeline &&
-      work.controlSpec &&
-      (mode === "viewer" || step === 2 || step === 3 || step === 4),
+    activeTrack?.timeline && work.controlSpec && (mode === "viewer" || step >= 3),
   );
 
   return (
     <main className={`product-app mode-${mode}`}>
-      <audio ref={audioRef} src={activeTrack?.url} preload="metadata">
-        <track
-          kind="captions"
-          src="/demo-captions.vtt"
-          srcLang="zh"
-          label="中文"
-          default
-        />
-      </audio>
+      {/* The synchronized graph is the exact on-screen transcript for this audio. */}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <audio ref={audioRef} src={activeTrack?.url} preload="metadata" />
       <header className="app-header">
         <button
           type="button"
           className="brand"
-          onClick={() => {
-            setMode("studio");
-            setAudioSource("reference");
-            setWorkflowStep(1);
-          }}
+          onClick={() => { setMode("studio"); setAudioSource("reference"); setWorkflowStep(1); }}
           aria-label="声图首页"
         >
           <span className="brand-mark">声</span>
-          <span className="brand-copy">
-            <strong>声图</strong>
-            <small>朗诵情感图谱</small>
-          </span>
+          <span className="brand-copy"><strong>声图</strong><small>朗诵情感图谱</small></span>
         </button>
 
         <nav className="mode-switch" aria-label="产品端切换">
           <button
             type="button"
             className={mode === "studio" ? "active" : ""}
-            onClick={() => {
-              setMode("studio");
-              if (step === 2 || !work.aiDemoAudio) setAudioSource("reference");
-            }}
-          >
-            <span aria-hidden="true">✦</span> 创作端
-          </button>
+            onClick={() => { setMode("studio"); if (step <= 3 || !work.aiDemoAudio) setAudioSource("reference"); }}
+          ><span aria-hidden="true">✦</span> 创作端</button>
           <button
             type="button"
             className={mode === "viewer" ? "active" : ""}
-            onClick={() => {
-              setAudioSource("ai_demo");
-              setMode("viewer");
-            }}
-          >
-            <span aria-hidden="true">◉</span> 用户观看端
-          </button>
+            disabled={!work.aiDemoAudio?.timeline}
+            onClick={() => { setAudioSource("ai_demo"); setMode("viewer"); }}
+          ><span aria-hidden="true">◉</span> 用户观看端</button>
         </nav>
 
         <div className="header-status">
           <span className={`status-dot status-${work.status}`} />
-          <span>{work.status === "published" ? "已发布 v1" : "演示作品 · 自动保存"}</span>
-          <button type="button" className="avatar-button" aria-label="创作者账户">林</button>
+          <span>{work.status === "published" ? "已发布" : "正式创作 · 单人版"}</span>
+          <button type="button" className="avatar-button" aria-label="创作者账户">创</button>
         </div>
       </header>
 
@@ -2048,22 +2284,18 @@ export function RecitationStudio() {
           onReferenceFile={handleReferenceFile}
           onDeleteReference={handleDeleteReference}
           onAnalyze={handleAnalyze}
+          onImportControlSpec={handleImportControlSpec}
           onEditSentence={setEditingSentenceId}
           onCloseEditor={() => setEditingSentenceId(null)}
           onSaveSentence={saveSentence}
           onPlaySentence={playSentence}
-          onSave={() => showToast("控制谱草稿已保存")}
-          onGenerateStage={() => {
-            if (work.aiDemoAudio) setAudioSource("ai_demo");
-            setWorkflowStep(3);
-          }}
+          onSave={() => work.controlSpec && void persistControlSpec(work.controlSpec, "控制谱草稿已保存")}
+          onGenerateStage={() => setWorkflowStep(4)}
           onGenerate={handleGenerate}
-          onPublishStage={() => setWorkflowStep(4)}
-          onPreview={() => {
-            setAudioSource("ai_demo");
-            setMode("viewer");
-          }}
+          onPublishStage={() => setWorkflowStep(5)}
+          onPreview={() => { setAudioSource("ai_demo"); setMode("viewer"); }}
           onPublish={handlePublish}
+          onNotify={showToast}
         />
       ) : (
         <ViewerView
@@ -2097,7 +2329,7 @@ export function RecitationStudio() {
       ) : null}
 
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite">
-        <span>✓</span>{toast}
+        <span>{toast?.includes("失败") || toast?.includes("错误") ? "!" : "✓"}</span>{toast}
       </div>
     </main>
   );
