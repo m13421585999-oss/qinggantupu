@@ -1,7 +1,10 @@
 import type {
   ControlSpec,
   EndingTone,
+  FocusRealization,
+  FocusStyle,
   FocusTarget,
+  HiddenPerformanceProfile,
   MacroProsodyPath,
   PauseMark,
   ProlongMark,
@@ -11,6 +14,7 @@ import type {
   Rhythm,
   TimedToken,
   TokenSpan,
+  VoiceQuality,
 } from "./recitation-schema";
 
 type JsonObject = Record<string, unknown>;
@@ -58,6 +62,68 @@ const endingAliases: Record<string, EndingTone> = {
   "→": "level",
 };
 
+const deliveryModeAliases: Record<string, NonNullable<HiddenPerformanceProfile["deliveryMode"]>> = {
+  natural_narration: "natural_narration",
+  "自然叙述": "natural_narration",
+  lyrical_recitation: "lyrical_recitation",
+  "抒情朗诵": "lyrical_recitation",
+  stage_recitation: "stage_recitation",
+  "舞台朗诵": "stage_recitation",
+};
+
+const continuityAliases: Record<string, NonNullable<HiddenPerformanceProfile["continuity"]>> = {
+  connected: "connected",
+  "连贯": "connected",
+  balanced: "balanced",
+  "均衡": "balanced",
+  segmented: "segmented",
+  "分段": "segmented",
+};
+
+const voiceQualityAliases: Record<string, VoiceQuality> = {
+  neutral: "neutral",
+  solid: "solid",
+  slightly_breathy: "slightly_breathy",
+  breathy: "breathy",
+  mixed: "mixed",
+  breathy_to_supported: "breathy_to_supported",
+  breathy_to_mixed: "breathy_to_mixed",
+  mixed_to_solid: "mixed_to_solid",
+  solid_to_soft: "solid_to_soft",
+};
+
+const focusStyleAliases: Record<string, FocusStyle> = {
+  supported: "supported",
+  soft: "soft",
+  slower: "slower",
+  lower_weighted: "lower_weighted",
+  breathy: "breathy",
+  breathy_to_supported: "breathy_to_supported",
+};
+
+const expressionAmplitudeAliases: Record<string, NonNullable<HiddenPerformanceProfile["expressionAmplitude"]>> = {
+  low: "low",
+  "低": "low",
+  medium: "medium",
+  "中": "medium",
+  high: "high",
+  "高": "high",
+};
+
+const focusRealizationAliases: Record<string, FocusRealization> = {
+  free: "free",
+  stronger: "stronger",
+  supported: "stronger",
+  soft: "soft_emphasis",
+  soft_emphasis: "soft_emphasis",
+  slower: "slower",
+  lower_weighted: "lower_weighted",
+  breathy: "breathy",
+  voice_shift: "voice_shift",
+  combined: "combined",
+  breathy_to_supported: "combined",
+};
+
 function object(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonObject)
@@ -82,6 +148,76 @@ function parseStrength(value: unknown): 1 | 2 | 3 {
   const aliases: Record<string, 1 | 2 | 3> = { "轻": 1, "中": 2, "强": 3 };
   const parsed = aliases[String(value)] ?? integer(value) ?? 2;
   return clampIndex(parsed, 1, 3) as 1 | 2 | 3;
+}
+
+function normalizedKey(value: unknown) {
+  return String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function parseAliasedValue<T>(
+  value: unknown,
+  aliases: Record<string, T>,
+  label: string,
+): T | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = aliases[normalizedKey(value)] ?? aliases[String(value).trim()];
+  if (!parsed) throw new Error(`${label}包含不支持的值：${String(value)}`);
+  return parsed;
+}
+
+function stringList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean))];
+}
+
+function parsePerformanceProfile(value: unknown): HiddenPerformanceProfile | undefined {
+  const direct = object(value);
+  const nestedValue = direct.performance_profile ?? direct.performanceProfile;
+  const nested = object(nestedValue);
+  const source = Object.keys(nested).length ? { ...direct, ...nested } : direct;
+  const voiceValue = source.voice_quality ?? source.voiceQuality;
+
+  const profile: HiddenPerformanceProfile = {
+    deliveryMode: parseAliasedValue(
+      source.delivery_mode ?? source.deliveryMode,
+      deliveryModeAliases,
+      "delivery_mode",
+    ),
+    emotionTone: stringList(
+      source.emotion_tone ?? source.emotionTone ?? source.emotional_tone ?? source.emotionalTone,
+    ),
+    continuity: parseAliasedValue(source.continuity, continuityAliases, "continuity"),
+    voiceQuality: typeof voiceValue === "string"
+      ? parseAliasedValue(voiceValue, voiceQualityAliases, "voice_quality")
+      : undefined,
+    focusStyle: parseAliasedValue(
+      source.focus_style ?? source.focusStyle,
+      focusStyleAliases,
+      "focus_style",
+    ),
+    expressionAmplitude: parseAliasedValue(
+      source.expression_amplitude ?? source.expressionAmplitude,
+      expressionAmplitudeAliases,
+      "expression_amplitude",
+    ),
+    avoid: stringList(source.avoid),
+  };
+
+  return Object.values(profile).some((item) => item !== undefined) ? profile : undefined;
+}
+
+function voiceQualityRange(value: VoiceQuality | undefined): RecitationSentence["voiceQuality"] {
+  switch (value) {
+    case "breathy_to_supported": return { start: "breathy", transition: value, end: "solid" };
+    case "breathy_to_mixed": return { start: "breathy", transition: value, end: "mixed" };
+    case "mixed_to_solid": return { start: "mixed", transition: value, end: "solid" };
+    case "solid_to_soft": return { start: "solid", transition: value, end: "slightly_breathy" };
+    default: return { start: value ?? "neutral", end: value ?? "neutral" };
+  }
 }
 
 function parseSpan(value: unknown, fallback: TokenSpan, min: number, max: number): TokenSpan {
@@ -145,6 +281,24 @@ function parseFocus(
     const level = entry.level === "secondary" || entry.level === "次重音"
       ? "secondary"
       : "primary";
+    const realizationValue = entry.preferred_realization
+      ?? entry.preferredRealization
+      ?? entry.focus_style
+      ?? entry.focusStyle;
+    const preferredRealization = parseAliasedValue(
+      realizationValue,
+      focusRealizationAliases,
+      "focus preferred_realization",
+    ) ?? "free";
+    const rawAllowed = stringList(entry.allowed_realizations ?? entry.allowedRealizations) ?? [];
+    const allowedRealizations = [...new Set([
+      preferredRealization,
+      ...rawAllowed.map((item) => parseAliasedValue(
+        item,
+        focusRealizationAliases,
+        "focus allowed_realizations",
+      )!),
+    ])];
     return [{
       id: `${sentenceId}-focus-${position + 1}`,
       tokenIds: indexes.map((index) => tokensByIndex.get(index)?.id).filter(Boolean) as string[],
@@ -154,9 +308,9 @@ function parseFocus(
       level,
       confidence: number(entry.confidence),
       explanation: string(entry.explanation),
-      preferredRealization: "free" as const,
-      allowedRealizations: ["free", "combined"] as const,
-      avoid: [],
+      preferredRealization,
+      allowedRealizations,
+      avoid: stringList(entry.avoid) ?? [],
     }];
   });
 }
@@ -458,6 +612,7 @@ export function importControlSpec(
   const raw = Object.keys(object(envelope.control_spec)).length
     ? object(envelope.control_spec)
     : envelope;
+  const performanceProfile = parsePerformanceProfile(raw);
   const rawTokens = raw.tokens;
   if (!Array.isArray(rawTokens)) {
     throw new Error("控制谱必须包含 tokens 数组，并保留本地分析结果中的时间戳与拼音。");
@@ -541,13 +696,15 @@ export function importControlSpec(
     sentenceCursor = max + 1;
     const sentenceTokens = tokens.filter((token) => token.index >= min && token.index <= max);
     const id = `sentence-${sentenceNumber}`;
+    const sentencePerformanceProfile = parsePerformanceProfile(entry);
     return {
       id,
       order: sentenceNumber,
       text: exactText,
       function: "",
       rhythm: parseRhythm(entry.rhythm),
-      continuity: "connected",
+      continuity: sentencePerformanceProfile?.continuity ?? "connected",
+      performanceProfile: sentencePerformanceProfile,
       macroProsodyPath: parseMacroProsodyPath(
         entry.macro_prosody_path ?? entry.macroProsodyPath,
         min,
@@ -556,7 +713,7 @@ export function importControlSpec(
       prosody: parseProsody(entry.prosody, id, min, max),
       endingIntonation: parseEnding(entry.ending_intonation ?? entry.endingIntonation),
       focus: parseFocus(entry.focus, id, tokensByIndex, min, max),
-      voiceQuality: { start: "neutral", end: "neutral" },
+      voiceQuality: voiceQualityRange(sentencePerformanceProfile?.voiceQuality),
       pauses: parsePauses(entry.pauses, id, tokensByIndex, min, max),
       prolongations: parseProlongations(
         entry.prolongations ?? entry.prolongs,
@@ -567,7 +724,7 @@ export function importControlSpec(
       ),
       tokens: sentenceTokens,
       teachingCue: "",
-      avoid: [],
+      avoid: sentencePerformanceProfile?.avoid ?? [],
       confidence: number(entry.confidence) ?? 0,
       timeRange: {
         startMs: Math.min(...sentenceTokens.map((token) => token.startMs)),
@@ -592,16 +749,17 @@ export function importControlSpec(
     workId,
     version: 1,
     source: "hybrid",
+    performanceProfile,
     tokens,
     documentProfile: {
-      deliveryMode: "lyrical_recitation",
+      deliveryMode: performanceProfile?.deliveryMode ?? "lyrical_recitation",
       recitationDegree: 2,
       baseRhythm: sentences[0]?.rhythm ?? "relaxed",
-      emotionalTone: [],
+      emotionalTone: performanceProfile?.emotionTone ?? [],
       energy: "medium",
       control: "medium",
       interactionDistance: "conversational",
-      voiceQuality: "neutral",
+      voiceQuality: performanceProfile?.voiceQuality ?? "neutral",
       globalArc: [],
     },
     sentences,

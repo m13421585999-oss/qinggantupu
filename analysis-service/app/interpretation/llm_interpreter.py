@@ -175,6 +175,11 @@ def assemble_control_spec(
                         acoustics=acoustics,
                     ),
                     "level": "primary",
+                    **(
+                        {"focus_style": entry.focus_style}
+                        if entry.focus_style is not None
+                        else {}
+                    ),
                     "confidence": entry.confidence,
                     "explanation": entry.explanation,
                 }
@@ -206,6 +211,15 @@ def assemble_control_spec(
                     },
                 ),
                 "rhythm": {**rhythm, "confidence": sentence.confidence},
+                **(
+                    {
+                        "performance_profile": sentence.performance_profile.model_dump(
+                            mode="json", exclude_none=True
+                        )
+                    }
+                    if sentence.performance_profile is not None
+                    else {}
+                ),
                 "text_logic": sentence.text_logic,
                 "emotional_interpretation": sentence.emotional_interpretation,
                 "confidence": sentence.confidence,
@@ -223,7 +237,19 @@ def assemble_control_spec(
         }
         for token in analysis_package["tokens"]
     ]
-    return {"tokens": tokens, "sentences": sentences}
+    return {
+        **(
+            {
+                "performance_profile": interpretation.performance_profile.model_dump(
+                    mode="json", exclude_none=True
+                )
+            }
+            if interpretation.performance_profile is not None
+            else {}
+        ),
+        "tokens": tokens,
+        "sentences": sentences,
+    }
 
 
 def _response_format_for_provider(*, base_url: str, model: str, schema: dict[str, Any]) -> dict[str, Any]:
@@ -273,6 +299,11 @@ async def interpret_control_spec(
                     "你只负责 focus_spans、文本逻辑、情感解释、rhythm，以及把连续 macro_prosody_path 解释为教学语势事件。"
                     "停顿、拖音、句尾语调和基础声音路径由声学层直接生成，不要在输出中重复判断。"
                     "focus_spans 表示教学上整体标红的焦点词组；其内部声学核心由系统另算。"
+                    "可选的 performance_profile 只描述生成示范需要的隐藏表演状态：全篇提供宏观基调，"
+                    "句级只在确有变化时提供。允许 delivery_mode、emotion_tone、continuity、voice_quality、"
+                    "focus_style、expression_amplitude、avoid；不要为了填满字段强行输出。"
+                    "focus_style 也可写在单个 focus_span 中，用于说明焦点通过支撑、柔化、放慢、低位、"
+                    "气声或气声转支撑实现，绝不能把重音一律理解为增大音量。"
                     "prosody 可以为空或包含多个连续事件，不得为了填字段强行标注。"
                     "判断 prosody 时必须尊重路径的真实连续高度，综合音高、能量、时值、停连和语义，"
                     "不能让普通话单字声调或单个 F0 极值决定类型。证据不足时返回空数组或降低 confidence。"

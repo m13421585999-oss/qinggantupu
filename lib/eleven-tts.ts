@@ -60,86 +60,295 @@ function integer(value: unknown): number | undefined {
   return Number.isInteger(parsed) ? parsed : undefined;
 }
 
-function tokenIndexes(value: unknown): number[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => integer(item))
-    .filter((item): item is number => item !== undefined);
-}
-
 function rhythmKey(value: unknown) {
   const rhythm = object(value);
   return String(typeof value === "string" ? value : rhythm.type ?? rhythm.label ?? "relaxed");
 }
 
-function globalDeliveryDirection(spec: JsonObject) {
+type MinimalCue =
+  | "softly"
+  | "brightly"
+  | "solemnly"
+  | "restrained"
+  | "focused"
+  | "resonant"
+  | "quietly"
+  | "gentle"
+  | "thoughtful"
+  | "building"
+  | "settling"
+  | "slightly breathy";
+
+export const ELEVEN_V3_MINIMAL_AUDIO_TAGS: readonly MinimalCue[] = [
+  "softly",
+  "brightly",
+  "solemnly",
+  "restrained",
+  "focused",
+  "resonant",
+  "quietly",
+  "gentle",
+  "thoughtful",
+  "building",
+  "settling",
+  "slightly breathy",
+] as const;
+
+const GLOBAL_RHYTHM_CUES: Record<string, MinimalCue> = {
+  light: "brightly",
+  solemn: "solemnly",
+  relaxed: "softly",
+  tense: "focused",
+  soaring: "resonant",
+  low: "quietly",
+};
+
+const SENTENCE_RHYTHM_CUES: Record<string, MinimalCue> = {
+  light: "brightly",
+  solemn: "solemnly",
+  relaxed: "gentle",
+  tense: "focused",
+  soaring: "resonant",
+  low: "quietly",
+};
+
+const PROSODY_CUES: Record<string, MinimalCue> = {
+  peak: "building",
+  valley: "thoughtful",
+  rising: "building",
+  falling: "settling",
+};
+
+const FOCUS_REALIZATION_CUES: Record<string, MinimalCue> = {
+  stronger: "focused",
+  supported: "focused",
+  soft_emphasis: "gentle",
+  soft: "gentle",
+  slower: "thoughtful",
+  lower_weighted: "restrained",
+  breathy: "slightly breathy",
+  breathy_to_supported: "building",
+  voice_shift: "thoughtful",
+  combined: "focused",
+};
+
+const VOICE_QUALITY_CUES: Record<string, MinimalCue | undefined> = {
+  neutral: undefined,
+  solid: "focused",
+  slightly_breathy: "slightly breathy",
+  breathy: "slightly breathy",
+  mixed: "gentle",
+  breathy_to_supported: "building",
+  breathy_to_mixed: "gentle",
+  mixed_to_solid: "building",
+  solid_to_soft: "settling",
+};
+
+const DELIVERY_MODE_CUES: Record<string, MinimalCue> = {
+  natural_narration: "gentle",
+  lyrical_recitation: "softly",
+  stage_recitation: "resonant",
+};
+
+const EXPRESSION_AMPLITUDE_CUES: Record<string, MinimalCue | undefined> = {
+  low: "restrained",
+  medium: undefined,
+  high: "resonant",
+};
+
+const EMOTION_CUE_RULES: Array<{ pattern: RegExp; cue: MinimalCue }> = [
+  { pattern: /克制|含蓄|restrain|reserved/u, cue: "restrained" },
+  { pattern: /沉思|思索|内省|thoughtful|contemplative|reflective/u, cue: "thoughtful" },
+  { pattern: /庄重|凝重|肃穆|solemn/u, cue: "solemnly" },
+  { pattern: /温暖|温柔|亲切|warm|tender|gentle/u, cue: "gentle" },
+  { pattern: /轻柔|柔和|soft|delicate/u, cue: "softly" },
+  { pattern: /明亮|喜悦|欢快|bright|joy|cheerful/u, cue: "brightly" },
+  { pattern: /紧张|专注|坚定|focused|tense|firm/u, cue: "focused" },
+  { pattern: /开阔|高亢|昂扬|resonant|soaring|expansive/u, cue: "resonant" },
+  { pattern: /安静|低沉|静谧|quiet|low/u, cue: "quietly" },
+];
+
+function finiteNumber(value: unknown, fallback = 0) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function profile(value: unknown) {
+  const source = object(value);
+  return object(source.performanceProfile ?? source.performance_profile);
+}
+
+function stringArray(value: unknown): string[] {
+  return (Array.isArray(value) ? value : value === undefined || value === null ? [] : [value])
+    .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+    .map((item) => item.trim());
+}
+
+function cueForEmotion(value: string) {
+  return EMOTION_CUE_RULES.find((rule) => rule.pattern.test(value.toLowerCase()))?.cue;
+}
+
+function addCueScore(scores: Map<MinimalCue, number>, cue: MinimalCue | undefined, score: number) {
+  if (cue) scores.set(cue, (scores.get(cue) ?? 0) + score);
+}
+
+function cueIsAvoided(cue: MinimalCue, values: string[]) {
+  const avoid = values.join(" ").toLowerCase();
+  if (!avoid) return false;
+  if (cue === "slightly breathy" && /breathy|气声|虚声/u.test(avoid)) return true;
+  if (cue === "resonant" && /shout|喊|过度高亢|过度用力|too loud/u.test(avoid)) return true;
+  if (cue === "brightly" && /过亮|过度欢快|too bright/u.test(avoid)) return true;
+  if (cue === "building" && /过度推进|过度上扬|exaggerated rise/u.test(avoid)) return true;
+  return false;
+}
+
+function strongestAllowedCue(
+  scores: Map<MinimalCue, number>,
+  avoid: string[],
+): [MinimalCue, number] | undefined {
+  return [...scores.entries()]
+    .filter(([cue]) => !cueIsAvoided(cue, avoid))
+    .sort((left, right) => right[1] - left[1])[0];
+}
+
+function documentRhythm(spec: JsonObject, sentences: JsonObject[]) {
   const profile = object(spec.documentProfile ?? spec.document_profile);
-  const rhythm = rhythmKey(profile.baseRhythm ?? profile.base_rhythm);
-  const styles: Record<string, string> = {
-    light: "bright, natural and continuous",
-    solemn: "solemn, measured and continuous",
-    relaxed: "soft, warm and naturally continuous",
-    tense: "focused and connected, with controlled tension",
-    soaring: "open and resonant while keeping phrases connected",
-    low: "low, restrained and continuous",
-  };
-  return `[${styles[rhythm] ?? styles.relaxed}; no unnecessary pauses or restarts]`;
+  const explicit = profile.baseRhythm ?? profile.base_rhythm;
+  if (explicit !== undefined && explicit !== null) return rhythmKey(explicit);
+
+  const counts = new Map<string, number>();
+  sentences.forEach((sentence) => {
+    const rhythm = rhythmKey(sentence.rhythm);
+    counts.set(rhythm, (counts.get(rhythm) ?? 0) + 1);
+  });
+  return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? "relaxed";
 }
 
-function focusIndexes(value: JsonObject) {
-  const explicit = tokenIndexes(value.tokenIndexes ?? value.token_indexes);
-  if (explicit.length) return explicit;
-  const span = object(value.focusSpan ?? value.focus_span);
-  const start = integer(span.start ?? span.start_index);
-  const end = integer(span.end ?? span.end_index);
-  if (start === undefined || end === undefined || end < start) return [];
-  return Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
+function globalDeliveryCue(spec: JsonObject, sentences: JsonObject[]) {
+  const scores = new Map<MinimalCue, number>();
+  const hidden = profile(spec);
+  const document = object(spec.documentProfile ?? spec.document_profile);
+  const rhythmCue = GLOBAL_RHYTHM_CUES[documentRhythm(spec, sentences)] ?? "softly";
+  addCueScore(scores, rhythmCue, 3);
+
+  const deliveryMode = String(
+    hidden.deliveryMode ?? hidden.delivery_mode
+      ?? document.deliveryMode ?? document.delivery_mode
+      ?? "",
+  );
+  addCueScore(scores, DELIVERY_MODE_CUES[deliveryMode], 2);
+
+  const voiceQuality = String(
+    hidden.voiceQuality ?? hidden.voice_quality
+      ?? document.voiceQuality ?? document.voice_quality
+      ?? "",
+  );
+  addCueScore(scores, VOICE_QUALITY_CUES[voiceQuality], 5.2);
+
+  const emotionTone = stringArray(
+    hidden.emotionTone ?? hidden.emotion_tone
+      ?? document.emotionalTone ?? document.emotional_tone,
+  );
+  emotionTone.forEach((tone) => addCueScore(scores, cueForEmotion(tone), 4.8));
+
+  const focusStyle = String(hidden.focusStyle ?? hidden.focus_style ?? "");
+  addCueScore(scores, FOCUS_REALIZATION_CUES[focusStyle], 3.2);
+  const amplitude = String(hidden.expressionAmplitude ?? hidden.expression_amplitude ?? "");
+  addCueScore(scores, EXPRESSION_AMPLITUDE_CUES[amplitude], 3.5);
+
+  return strongestAllowedCue(scores, stringArray(hidden.avoid))?.[0] ?? rhythmCue;
 }
 
-function sentenceDeliveryDirection(
+function sentenceCueCandidate(
   sentence: JsonObject,
-  tokenByIndex: Map<number, { char: string }>,
+  baseRhythm: string,
+  previousRhythm: string,
 ) {
-  const parts: string[] = [];
+  const scores = new Map<MinimalCue, number>();
+  const hidden = profile(sentence);
+
   const rhythm = rhythmKey(sentence.rhythm);
-  const rhythmDirections: Record<string, string> = {
-    light: "bright and light",
-    solemn: "solemn and measured",
-    relaxed: "soft and warm",
-    tense: "controlled and tense",
-    soaring: "open and resonant",
-    low: "low and restrained",
-  };
-  parts.push(rhythmDirections[rhythm] ?? rhythmDirections.relaxed);
+  if (rhythm !== baseRhythm) {
+    addCueScore(scores, SENTENCE_RHYTHM_CUES[rhythm], 3.2 + (rhythm !== previousRhythm ? 0.8 : 0));
+  } else if (rhythm !== previousRhythm) {
+    addCueScore(scores, SENTENCE_RHYTHM_CUES[rhythm], 3.4);
+  }
 
   const prosody = Array.isArray(sentence.prosody) ? sentence.prosody.map(object) : [];
-  const types = prosody.map((event) => String(event.type ?? ""));
-  if (types.includes("falling") && types.includes("rising")) {
-    parts.push("gently descending into a low point, then opening again");
-  } else if (types.includes("valley")) {
-    parts.push("settling into one low contour, then recovering naturally");
-  } else if (types.includes("peak")) {
-    parts.push("building toward one natural crest, then releasing");
-  } else if (types.includes("rising")) {
-    parts.push("gently building through the phrase");
-  } else if (types.includes("falling")) {
-    parts.push("gently settling through the phrase");
+  const prosodyTypes = new Set(prosody.map((event) => String(event.type ?? "")));
+  const prosodyWeight = prosody.reduce((weight, event) => {
+    const strength = Math.max(1, Math.min(3, integer(event.strength) ?? 1));
+    const confidence = Math.max(0, Math.min(1, finiteNumber(event.confidence, 0.7)));
+    return Math.max(weight, 1.2 + strength * 0.65 + confidence * 0.45);
+  }, 0);
+  if (prosodyTypes.has("valley") || (prosodyTypes.has("falling") && prosodyTypes.has("rising"))) {
+    addCueScore(scores, "thoughtful", prosodyWeight + 0.7);
+  } else {
+    prosody.forEach((event) => addCueScore(
+      scores,
+      PROSODY_CUES[String(event.type ?? "")],
+      prosodyWeight,
+    ));
   }
+
+  const voiceQuality = String(hidden.voiceQuality ?? hidden.voice_quality ?? "");
+  addCueScore(scores, VOICE_QUALITY_CUES[voiceQuality], 4.2);
+  stringArray(hidden.emotionTone ?? hidden.emotion_tone)
+    .forEach((tone) => addCueScore(scores, cueForEmotion(tone), 4));
+  const focusStyle = String(hidden.focusStyle ?? hidden.focus_style ?? "");
+  addCueScore(scores, FOCUS_REALIZATION_CUES[focusStyle], 2.8);
+  const amplitude = String(hidden.expressionAmplitude ?? hidden.expression_amplitude ?? "");
+  addCueScore(scores, EXPRESSION_AMPLITUDE_CUES[amplitude], 3.1);
+  const continuity = String(hidden.continuity ?? sentence.continuity ?? "");
+  if (continuity === "segmented") addCueScore(scores, "thoughtful", 2.7);
 
   const focusEntries = Array.isArray(sentence.focus) ? sentence.focus.map(object) : [];
-  const primary = focusEntries[0];
-  if (primary) {
-    const focusText = focusIndexes(primary)
-      .map((index) => tokenByIndex.get(index)?.char ?? "")
-      .join("")
-      .trim();
-    if (focusText) parts.push(`let ${focusText} carry the emotional focus without breaking the flow`);
-  }
+  focusEntries
+    .filter((focus) => String(focus.level ?? "primary") === "primary")
+    .slice(0, 1)
+    .forEach((focus) => {
+      const realization = String(focus.preferredRealization ?? focus.preferred_realization ?? "free");
+      const confidence = Math.max(0, Math.min(1, finiteNumber(focus.confidence, 0.7)));
+      addCueScore(scores, FOCUS_REALIZATION_CUES[realization], 1.1 + confidence * 0.6);
+    });
 
   const ending = object(sentence.endingIntonation ?? sentence.ending_intonation);
-  if (ending.type === "rising") parts.push("ending with a natural lift");
-  else if (ending.type === "falling") parts.push("ending with a gentle settling tone");
-  return `[${parts.join(", ")}]`;
+  const endingStrength = Math.max(1, Math.min(3, integer(ending.strength) ?? 1));
+  if (endingStrength >= 2) {
+    if (ending.type === "rising") addCueScore(scores, "building", 0.5 + endingStrength * 0.3);
+    else if (ending.type === "falling") addCueScore(scores, "settling", 0.5 + endingStrength * 0.3);
+  }
+
+  const avoid = [
+    ...stringArray(hidden.avoid),
+    ...stringArray(sentence.avoid),
+  ];
+  const selected = strongestAllowedCue(scores, avoid);
+  if (!selected || selected[1] < 2.7) return undefined;
+  return { cue: selected[0], score: selected[1], rhythm };
+}
+
+function planSentenceCues(spec: JsonObject, sentences: JsonObject[], globalCue: MinimalCue) {
+  const baseRhythm = documentRhythm(spec, sentences);
+  const cueBudget = Math.min(4, Math.max(1, Math.ceil(sentences.length / 4)));
+  const planned = new Map<number, MinimalCue>();
+  let previousRhythm = baseRhythm;
+  let lastCue = globalCue;
+  let lastCuePosition = -3;
+
+  sentences.forEach((sentence, position) => {
+    const candidate = sentenceCueCandidate(sentence, baseRhythm, previousRhythm);
+    previousRhythm = rhythmKey(sentence.rhythm);
+    if (!candidate || planned.size >= cueBudget) return;
+    if (candidate.cue === lastCue) return;
+    const spacedEnough = position - lastCuePosition >= 2;
+    if (position === 0 || (!spacedEnough && candidate.score < 4.5)) return;
+    planned.set(position, candidate.cue);
+    lastCue = candidate.cue;
+    lastCuePosition = position;
+  });
+
+  return planned;
 }
 
 function isSpokenCharacter(value: string) {
@@ -176,9 +385,15 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
   const append = (value: string | undefined) => {
     if (value) text += value;
   };
+  const ensureNewlines = (count: number) => {
+    const trailing = text.match(/\n+$/u)?.[0].length ?? 0;
+    if (trailing < count) append("\n".repeat(count - trailing));
+  };
 
-  append(globalDeliveryDirection(spec));
-  append(" ");
+  const globalCue = globalDeliveryCue(spec, sentences);
+  const sentenceCues = planSentenceCues(spec, sentences, globalCue);
+  append(`[${globalCue}]`);
+  ensureNewlines(2);
 
   sentences.forEach((sentence, sentencePosition) => {
     const rawSentenceTokens = Array.isArray(sentence.tokens) ? sentence.tokens.map(object) : [];
@@ -204,8 +419,12 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
 
     const sentenceId = String(sentence.id ?? `sentence-${sentencePosition + 1}`);
     sentenceTokenIndexes.push({ sentenceId, tokenIndexes: sentenceIndexes });
-    append(sentenceDeliveryDirection(sentence, tokenByIndex));
-    append(" ");
+    const sentenceCue = sentenceCues.get(sentencePosition);
+    if (sentenceCue) {
+      ensureNewlines(2);
+      append(`[${sentenceCue}]`);
+      ensureNewlines(1);
+    }
 
     const pauses = new Map<number, "short" | "long">();
     const pauseEntries = Array.isArray(sentence.pauses) ? sentence.pauses.map(object) : [];
@@ -224,15 +443,21 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
       if (index !== undefined) prolongations.set(index, degree);
     });
 
-    const strongestProlongation = [...prolongations.entries()]
+    const renderedProlongations = new Set([...prolongations.entries()]
       .filter(([, degree]) => degree >= 2)
-      .sort((left, right) => right[1] - left[1])[0]?.[0];
+      .sort((left, right) => right[1] - left[1] || left[0] - right[0])
+      .slice(0, 2)
+      .map(([index]) => index));
     const pauseCandidates = [...pauses.entries()]
       .sort((left, right) => (right[1] === "long" ? 1 : 0) - (left[1] === "long" ? 1 : 0));
     const explicitPause = pauseCandidates.find(([index]) => {
       const offset = sentenceIndexes.indexOf(index);
+      const current = tokenByIndex.get(index)?.char ?? "";
       const next = tokenByIndex.get(sentenceIndexes[offset + 1])?.char ?? "";
-      return offset >= 0 && offset < sentenceIndexes.length - 1 && !/[，。！？、；：,!?;:\s]/u.test(next);
+      return offset >= 0
+        && offset < sentenceIndexes.length - 1
+        && !/[，。！？、；：,!?;:\s]/u.test(current)
+        && !/[，。！？、；：,!?;:\s]/u.test(next);
     });
 
     sentenceIndexes.forEach((index) => {
@@ -240,13 +465,13 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
       sourceOffsets.set(index, Array.from(text).length);
       append(token.char);
 
-      if (index === strongestProlongation) append("——");
-      if (explicitPause?.[0] === index) append(explicitPause[1] === "long" ? "……" : "，");
+      if (renderedProlongations.has(index)) append("——");
+      else if (explicitPause?.[0] === index) append(explicitPause[1] === "long" ? "……" : "，");
     });
     if (
       sentencePosition < sentences.length - 1
       && !/\s/u.test(tokenByIndex.get(sentenceIndexes.at(-1)!)?.char ?? "")
-    ) append(" ");
+    ) ensureNewlines(1);
   });
 
   if (expectedIndex !== canonicalTokens.length) {

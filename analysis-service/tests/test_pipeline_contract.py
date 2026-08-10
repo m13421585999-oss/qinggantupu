@@ -144,6 +144,15 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
     }
     interpretation = LlmInterpretation.model_validate(
         {
+            "performance_profile": {
+                "delivery_mode": "lyrical_recitation",
+                "emotion_tone": ["温暖", "克制"],
+                "continuity": "connected",
+                "voice_quality": "slightly_breathy",
+                "focus_style": "soft",
+                "expression_amplitude": "medium",
+                "avoid": ["避免喊叫"],
+            },
             "sentences": [
                 {
                     "text": "我。",
@@ -152,6 +161,7 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
                     "focus_spans": [
                         {
                             "focus_span": {"start": 0, "end": 0},
+                            "focus_style": "breathy_to_supported",
                             "confidence": 0.9,
                             "explanation": "主语焦点",
                         }
@@ -166,6 +176,13 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
                         }
                     ],
                     "rhythm": {"type": "relaxed"},
+                    "performance_profile": {
+                        "emotion_tone": ["思索"],
+                        "continuity": "connected",
+                        "voice_quality": "breathy_to_supported",
+                        "focus_style": "breathy_to_supported",
+                        "expression_amplitude": "low",
+                    },
                     "text_logic": "主语",
                     "emotional_interpretation": "克制",
                     "confidence": 0.8,
@@ -182,6 +199,9 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
     assert spec["sentences"][0]["ending_intonation"]["type"] == "rising"
     assert spec["sentences"][0]["focus"][0]["focus_span"] == {"start": 0, "end": 0}
     assert spec["sentences"][0]["focus"][0]["focus_core"] == {"start": 0, "end": 0}
+    assert spec["sentences"][0]["focus"][0]["focus_style"] == "breathy_to_supported"
+    assert spec["performance_profile"]["voice_quality"] == "slightly_breathy"
+    assert spec["sentences"][0]["performance_profile"]["focus_style"] == "breathy_to_supported"
 
 
 def test_control_spec_allows_no_focus_or_teaching_prosody_when_evidence_is_weak() -> None:

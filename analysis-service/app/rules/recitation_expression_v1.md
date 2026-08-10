@@ -60,6 +60,20 @@ Parselmouth 先生成由 `level`、`rising`、`falling` 连续片段构成的 `m
 
 节奏不是语速的同义词。综合语速、停连、声音轻重、音高变化、连贯程度、语言张弛、文本内容和上下文判断。
 
+## 隐藏表演参数 performance_profile
+
+控制谱可额外保存只供 AI 示范使用的隐藏表演参数，不在图谱主界面展示：
+
+- `delivery_mode`：`natural_narration`、`lyrical_recitation`、`stage_recitation`
+- `emotion_tone`：少量简短的情绪底色词
+- `continuity`：`connected`、`balanced`、`segmented`
+- `voice_quality`：`neutral`、`solid`、`slightly_breathy`、`breathy`、`mixed`，以及 `breathy_to_supported`、`breathy_to_mixed`、`mixed_to_solid`、`solid_to_soft`
+- `focus_style`：`supported`、`soft`、`slower`、`lower_weighted`、`breathy`、`breathy_to_supported`
+- `expression_amplitude`：`low`、`medium`、`high`
+- `avoid`：本句或全篇需要避免的声音倾向
+
+全篇 `performance_profile` 负责稳定的宏观表演状态。句级 profile 只在节奏、情绪、质感或表达幅度确有明显变化时给出，不要逐句重复同一状态，也不要为了填字段强行输出。`focus_style` 说明表达焦点的实现倾向，重音仍不等于增大音量。
+
 ## 输出纪律
 
 只解释证据，不测量或编造声音事实。所有 token index 必须引用当前句范围。语势的 `core_zone` 必须位于 `active_span` 内。不得重新输出或覆盖停顿、拖音、句尾语调和基础声音路径。不得输出教师口令、句首/句尾声音、复杂声学参数或分析过程。

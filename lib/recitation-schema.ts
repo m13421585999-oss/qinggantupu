@@ -17,11 +17,32 @@ export type Rhythm =
   | "low";
 export type VoiceQuality =
   | "solid"
+  | "slightly_breathy"
   | "breathy"
   | "mixed"
   | "neutral"
+  | "breathy_to_supported"
   | "breathy_to_mixed"
-  | "mixed_to_solid";
+  | "mixed_to_solid"
+  | "solid_to_soft";
+
+export type FocusStyle =
+  | "supported"
+  | "soft"
+  | "slower"
+  | "lower_weighted"
+  | "breathy"
+  | "breathy_to_supported";
+
+export interface HiddenPerformanceProfile {
+  deliveryMode?: "natural_narration" | "lyrical_recitation" | "stage_recitation";
+  emotionTone?: string[];
+  continuity?: "connected" | "balanced" | "segmented";
+  voiceQuality?: VoiceQuality;
+  focusStyle?: FocusStyle;
+  expressionAmplitude?: "low" | "medium" | "high";
+  avoid?: string[];
+}
 
 export type FocusRealization =
   | "free"
@@ -123,6 +144,8 @@ export interface RecitationSentence {
   function: string;
   rhythm: Rhythm;
   continuity: "connected" | "balanced" | "segmented";
+  /** Hidden execution hints for TTS; intentionally not rendered in the graph UI. */
+  performanceProfile?: HiddenPerformanceProfile;
   macroProsodyPath?: MacroProsodyPath;
   prosody: ProsodyEvent[];
   endingIntonation: {
@@ -167,6 +190,8 @@ export interface ControlSpec {
   workId: string;
   version: number;
   source: "ai" | "human" | "hybrid";
+  /** Optional whole-piece TTS profile; intentionally hidden from the graph UI. */
+  performanceProfile?: HiddenPerformanceProfile;
   documentProfile: DocumentProfile;
   tokens: TimedToken[];
   sentences: RecitationSentence[];

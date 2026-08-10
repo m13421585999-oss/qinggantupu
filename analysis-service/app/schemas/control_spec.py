@@ -22,6 +22,14 @@ class Span(StrictModel):
 
 class FocusInterpretation(StrictModel):
     focus_span: Span
+    focus_style: Literal[
+        "supported",
+        "soft",
+        "slower",
+        "lower_weighted",
+        "breathy",
+        "breathy_to_supported",
+    ] | None = None
     confidence: float = Field(ge=0, le=1)
     explanation: str | None = None
 
@@ -60,6 +68,35 @@ class Rhythm(StrictModel):
     type: Literal["light", "solemn", "relaxed", "tense", "soaring", "low"]
 
 
+class PerformanceProfile(StrictModel):
+    delivery_mode: Literal[
+        "natural_narration", "lyrical_recitation", "stage_recitation"
+    ] | None = None
+    emotion_tone: list[str] = Field(default_factory=list)
+    continuity: Literal["connected", "balanced", "segmented"] | None = None
+    voice_quality: Literal[
+        "neutral",
+        "solid",
+        "slightly_breathy",
+        "breathy",
+        "mixed",
+        "breathy_to_supported",
+        "breathy_to_mixed",
+        "mixed_to_solid",
+        "solid_to_soft",
+    ] | None = None
+    focus_style: Literal[
+        "supported",
+        "soft",
+        "slower",
+        "lower_weighted",
+        "breathy",
+        "breathy_to_supported",
+    ] | None = None
+    expression_amplitude: Literal["low", "medium", "high"] | None = None
+    avoid: list[str] = Field(default_factory=list)
+
+
 class InterpretedSentence(StrictModel):
     text: str
     start_index: int = Field(ge=0)
@@ -67,6 +104,7 @@ class InterpretedSentence(StrictModel):
     focus_spans: list[FocusInterpretation]
     prosody: list[Prosody]
     rhythm: Rhythm | None = None
+    performance_profile: PerformanceProfile | None = None
     text_logic: str | None = None
     emotional_interpretation: str | None = None
     confidence: float = Field(ge=0, le=1)
@@ -85,6 +123,7 @@ class InterpretedSentence(StrictModel):
 
 
 class LlmInterpretation(StrictModel):
+    performance_profile: PerformanceProfile | None = None
     sentences: list[InterpretedSentence] = Field(min_length=1)
 
 
