@@ -79,7 +79,11 @@ def turning_regions(indexes: list[int], values: list[float | None]) -> list[dict
 
 
 def macro_contour(
-    indexes: list[int], values: list[float | None], zones: int = 5
+    indexes: list[int],
+    values: list[float | None],
+    zones: int = 5,
+    *,
+    value_key: str = "normalized_pitch",
 ) -> list[dict[str, Any]]:
     if not indexes:
         return []
@@ -95,7 +99,7 @@ def macro_contour(
             {
                 "start_index": indexes[start],
                 "end_index": indexes[end - 1],
-                "normalized_pitch": round(float(np.mean(pool)), 3) if pool else None,
+                value_key: round(float(np.mean(pool)), 3) if pool else None,
                 "trend": trend_label(values[start:end]),
             }
         )

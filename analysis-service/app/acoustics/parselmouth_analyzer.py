@@ -157,6 +157,7 @@ def _sentence_summary(
     pitch = [evidence[position]["normalized_pitch"] for position in positions]
     smooth_pitch = rolling_median(pitch, radius=2)
     energy = [evidence[position]["normalized_energy"] for position in positions]
+    duration_ratios = [evidence[position]["local_duration_ratio"] for position in positions]
     durations = [evidence[position]["duration_ms"] for position in positions]
     start_ms = min((tokens[position]["start_ms"] for position in positions), default=tokens[start]["start_ms"])
     end_ms = max((tokens[position]["end_ms"] for position in positions), default=tokens[end]["end_ms"])
@@ -202,6 +203,16 @@ def _sentence_summary(
             ],
         },
         "macro_pitch_contour": macro_contour(indexes, smooth_pitch),
+        "macro_energy_contour": macro_contour(
+            indexes,
+            energy,
+            value_key="normalized_energy",
+        ),
+        "macro_duration_contour": macro_contour(
+            indexes,
+            duration_ratios,
+            value_key="local_duration_ratio",
+        ),
     }
 
 

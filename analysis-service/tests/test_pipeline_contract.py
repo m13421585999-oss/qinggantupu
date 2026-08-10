@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+from app.acoustics.contour import macro_contour
 from app.interpretation.llm_interpreter import assemble_control_spec
 from app.providers.eleven_alignment import map_to_source, normalize_payload
 from app.schemas.control_spec import LlmInterpretation
+
+
+def test_macro_contour_preserves_the_named_acoustic_metric() -> None:
+    contour = macro_contour(
+        [0, 1, 2],
+        [0.4, -1.2, 0.2],
+        zones=3,
+        value_key="normalized_energy",
+    )
+    assert [item["normalized_energy"] for item in contour] == [0.4, -1.2, 0.2]
+    assert all("normalized_pitch" not in item for item in contour)
 
 
 def test_alignment_preserves_exact_source_indexes() -> None:
