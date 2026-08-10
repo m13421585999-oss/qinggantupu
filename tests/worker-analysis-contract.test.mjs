@@ -23,6 +23,7 @@ test("worker exposes the production reference-analysis contract", async () => {
   assert.match(worker, /verifyHandoff/);
   assert.match(worker, /await dispatchAnalysisJob\(env, origin, jobId\)/);
   assert.doesNotMatch(worker, /waitUntil\(dispatchAnalysisJob/);
+  assert.match(worker, /response\.status === 524/);
   assert.match(worker, /ANALYSIS_JOB_TIMEOUT_MS/);
   assert.match(worker, /ANALYSIS_SUBMISSION_FAILED/);
   assert.match(worker, /importControlSpec\(rawControlSpec/);

@@ -507,6 +507,14 @@ async function dispatchAnalysisJob(env: Env, origin: string, jobId: string) {
       callback_url: `${origin}/api/internal/analysis-jobs/${encodeURIComponent(jobId)}/callback`,
     }),
   });
+  if (response.status === 524) {
+    // The analysis function can legitimately outlive the proxy's synchronous
+    // waiting window. Vercel keeps the in-flight function running and the
+    // authenticated callback remains the sole owner of the terminal state.
+    // Leave the job processing here; the existing 7-minute stale-job guard
+    // still turns a genuinely lost callback into an explicit failure.
+    return;
+  }
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 600);
     throw new Error(`分析服务拒绝任务（HTTP ${response.status}）：${detail}`);
