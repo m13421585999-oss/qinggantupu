@@ -1,3 +1,6 @@
 # Cloudflare Worker / Sites server-side values. Copy to .dev.vars for local work.
+ANALYSIS_SERVICE_URL=https://your-analysis-service.example.com
+ANALYSIS_SERVICE_TOKEN=replace-with-a-long-random-service-token
+ANALYSIS_CALLBACK_TOKEN=replace-with-a-different-long-random-callback-token
 ELEVENLABS_API_KEY=replace-with-elevenlabs-secret
 ELEVENLABS_VOICE_ID=replace-with-elevenlabs-voice-id

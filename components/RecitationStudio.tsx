@@ -29,14 +29,15 @@ import {
 type ProductMode = "studio" | "viewer";
 type WorkflowStep = 1 | 2 | 3 | 4 | 5;
 type AudioSource = "reference" | "ai_demo";
+type AnalysisJobStatus = "idle" | "queued" | "processing" | "succeeded" | "failed";
 
 const workflowSteps: Array<{
   id: WorkflowStep;
   title: string;
   subtitle: string;
 }> = [
-  { id: 1, title: "准备作品", subtitle: "作品信息 · 准确正文" },
-  { id: 2, title: "导入控制谱", subtitle: "本地分析 · JSON 校验" },
+  { id: 1, title: "准备作品", subtitle: "正文 · 参考朗诵" },
+  { id: 2, title: "导入控制谱", subtitle: "失败时的 JSON 兜底" },
   { id: 3, title: "编辑图谱", subtitle: "人工复核 · 单句修正" },
   { id: 4, title: "生成示范", subtitle: "Eleven v3 · 时间戳" },
   { id: 5, title: "预览发布", subtitle: "观看端 · 同步高亮" },
@@ -93,11 +94,47 @@ function activeSentenceAt(
     : undefined;
 }
 
+function activeTokenAt(timeline: AudioTimeline | undefined, currentMs: number) {
+  const sentence = timeline?.sentences.find(
+    (item) => currentMs >= item.startMs && currentMs < item.endMs,
+  );
+  if (!timeline || !sentence) return undefined;
+  const eligible = timeline.tokens.filter(
+    (token) => token.endMs > token.startMs
+      && token.startMs >= sentence.startMs
+      && token.endMs <= sentence.endMs,
+  );
+  const exact = eligible.find(
+    (token) => currentMs >= token.startMs && currentMs < token.endMs,
+  );
+  if (exact) return exact.tokenId;
+  for (let index = eligible.length - 1; index >= 0; index -= 1) {
+    if (eligible[index].startMs <= currentMs) return eligible[index].tokenId;
+  }
+  return undefined;
+}
+
 function highestAvailableStep(work: RecitationWork): WorkflowStep {
   if (work.aiDemoAudio?.timeline && work.controlSpec) return 5;
   if (work.controlSpec) return 4;
   if (!work.id.startsWith("draft-")) return 2;
   return 1;
+}
+
+function readAudioDuration(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const audio = document.createElement("audio");
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => {
+      const durationMs = Math.round(audio.duration * 1000);
+      audio.removeAttribute("src");
+      audio.load();
+      if (Number.isFinite(durationMs) && durationMs > 0) resolve(durationMs);
+      else reject(new Error("invalid audio duration"));
+    };
+    audio.onerror = () => reject(new Error("audio metadata unavailable"));
+    audio.src = url;
+  });
 }
 
 function createEmptyWork(): RecitationWork {
@@ -125,6 +162,24 @@ async function apiJson<T>(response: Response): Promise<T> {
     throw new Error(String(error.message ?? `请求失败（HTTP ${response.status}）`));
   }
   return payload as T;
+}
+
+interface AnalysisJobPayload {
+  analysis_job_id: string;
+  work_id: string;
+  status: Exclude<AnalysisJobStatus, "idle">;
+  progress?: number;
+  error?: string | { message?: string };
+  control_spec?: unknown;
+  work?: RecitationWork;
+}
+
+function analysisErrorMessage(error: AnalysisJobPayload["error"]) {
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object" && typeof error.message === "string") {
+    return error.message;
+  }
+  return "参考朗诵分析失败。";
 }
 
 interface CurveMetrics {
@@ -460,6 +515,88 @@ function GraphSentence({
   );
 }
 
+function ReferenceAudioPanel({
+  audio,
+  disabled = false,
+  onFile,
+  onDelete,
+}: {
+  audio?: AudioTrack;
+  disabled?: boolean;
+  onFile: (file: File) => void;
+  onDelete?: () => void;
+}) {
+  return (
+    <div className="paper-card reference-audio-card">
+      <div className="card-title-row compact-title-row">
+        <div>
+          <p className="eyebrow">参考朗诵</p>
+          <h2>真实声音依据</h2>
+        </div>
+        <span className="secure-note">仅创作端可见</span>
+      </div>
+      <p className="reference-explainer">
+        上传与正文逐字对应的优质朗诵。点击解析后，音频会真实保存并进入声音分析任务。
+      </p>
+      {audio ? (
+        <div className="reference-audio-ready">
+          <div className="audio-file-row">
+            <span className="upload-icon has-audio" aria-hidden="true">声</span>
+            <div>
+              <strong>{audio.filename}</strong>
+              <small>{formatTime(audio.durationMs)} · {audio.label}</small>
+            </div>
+          </div>
+          {/* The exact transcript is displayed in the work manuscript beside this reference audio. */}
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio className="reference-preview" controls preload="metadata" src={audio.url} />
+          <div className="reference-actions">
+            <label className="secondary-button replace-audio">
+              替换音频
+              <input
+                className="visually-hidden"
+                type="file"
+                disabled={disabled}
+                accept="audio/*,.wav,.m4a,.mp3"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) onFile(file);
+                }}
+              />
+            </label>
+            {onDelete ? (
+              <button type="button" className="text-button delete-audio" disabled={disabled} onClick={onDelete}>
+                删除音频
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <label className="reference-dropzone">
+          <input
+            className="visually-hidden"
+            type="file"
+            disabled={disabled}
+            accept="audio/*,.wav,.m4a,.mp3"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.currentTarget.value = "";
+              if (file) onFile(file);
+            }}
+          />
+          <span className="upload-icon" aria-hidden="true">声</span>
+          <span>
+            <strong>上传优质参考朗诵</strong>
+            <small>WAV / M4A / MP3，单人清晰人声最佳</small>
+          </span>
+          <b>选择音频</b>
+        </label>
+      )}
+    </div>
+  );
+}
+
 function Player({
   title,
   track,
@@ -491,7 +628,9 @@ function Player({
   hasAiDemo: boolean;
   compact?: boolean;
 }) {
-  const progress = Math.min(100, (currentMs / track.durationMs) * 100);
+  const progress = track.durationMs > 0
+    ? Math.min(100, (currentMs / track.durationMs) * 100)
+    : 0;
   const activeSentence = activeSentenceAt(sentences, track.timeline, currentMs);
 
   return (
@@ -598,8 +737,8 @@ function WorkflowRail({
       <div className="rail-note">
         <span aria-hidden="true">◎</span>
         <p>
-          <strong>本地分析 · 在线创作</strong>
-          参考音频只在你的电脑上分析；网站保存正文、控制谱和最终 AI 示范。
+          <strong>真实声音分析</strong>
+          新正文只会使用本次上传的参考朗诵生成控制谱；失败时不会回退固定示例。
         </p>
       </div>
     </nav>
@@ -608,25 +747,35 @@ function WorkflowRail({
 
 function MaterialStage({
   work,
-  isSaving,
+  jobStatus,
+  analysisStatus,
   onWorkChange,
-  onSave,
+  onReferenceFile,
+  onDeleteReference,
+  onAnalyze,
+  onManualImport,
 }: {
   work: RecitationWork;
-  isSaving: boolean;
+  jobStatus: AnalysisJobStatus;
+  analysisStatus: string;
   onWorkChange: (field: "title" | "author" | "sourceText", value: string) => void;
-  onSave: () => void;
+  onReferenceFile: (file: File) => void;
+  onDeleteReference: () => void;
+  onAnalyze: () => void;
+  onManualImport: () => void;
 }) {
   const hasWorkInfo = Boolean(work.title.trim() && work.sourceText.trim());
+  const isAnalyzing = jobStatus === "queued" || jobStatus === "processing";
+  const canAnalyze = Boolean(work.referenceAudio && hasWorkInfo && !isAnalyzing);
 
   return (
     <section className="stage material-stage">
       <div className="stage-heading">
         <div>
           <p className="eyebrow">01 · 准备作品</p>
-          <h1>先保存准确正文，再导入本地生成的控制谱</h1>
+          <h1>把一段好朗诵，变成一张能听的声音地图</h1>
           <p className="stage-lead">
-            参考朗诵在你的电脑上完成对齐和声学分析，在线网站不上传参考音频，也不会调用本地 Python。
+            填写准确正文并上传对应参考朗诵。点击解析后，系统会保存素材并执行真实文字对齐、声学分析和控制谱生成。
           </p>
         </div>
         <span className="version-chip">控制谱 v2.0</span>
@@ -646,6 +795,7 @@ function MaterialStage({
               <span>作品名称</span>
               <input
                 value={work.title}
+                disabled={isAnalyzing}
                 onChange={(event) => onWorkChange("title", event.target.value)}
               />
             </label>
@@ -653,6 +803,7 @@ function MaterialStage({
               <span>作者 / 来源（可选）</span>
               <input
                 value={work.author ?? ""}
+                disabled={isAnalyzing}
                 onChange={(event) => onWorkChange("author", event.target.value)}
               />
             </label>
@@ -662,6 +813,7 @@ function MaterialStage({
             <textarea
               rows={8}
               value={work.sourceText}
+              disabled={isAnalyzing}
               onChange={(event) => onWorkChange("sourceText", event.target.value)}
             />
           </label>
@@ -673,31 +825,57 @@ function MaterialStage({
         </div>
 
         <div className="asset-column">
+          <ReferenceAudioPanel
+            audio={work.referenceAudio}
+            disabled={isAnalyzing}
+            onFile={onReferenceFile}
+            onDelete={work.referenceAudio?.url.startsWith("blob:") ? onDeleteReference : undefined}
+          />
+
           <div className="analysis-card">
             <div className="analysis-orbit" aria-hidden="true">
               <span>声</span>
             </div>
             <div className="analysis-copy">
-              <p className="eyebrow">本地朗诵分析工具</p>
-              <h3>参考音频留在你的电脑</h3>
+              <p className="eyebrow">参考朗诵解析</p>
+              <h3>{analysisStatus}</h3>
               <p>
-                在本地工具中粘贴同一份正文并选择 MP3/WAV，生成分析结果后交给 ChatGPT，再把返回的 control_spec JSON 导入下一步。
+                {jobStatus === "queued"
+                  ? "音频和正文已经保存，等待分析服务接单。"
+                  : jobStatus === "processing"
+                    ? "正在提取字符时间戳、停顿、时值、音高和能量，并生成当前正文的控制谱。"
+                    : jobStatus === "failed"
+                      ? "本次没有生成控制谱。你可以重新解析，或使用下方的手动 JSON 导入兜底。"
+                      : "参考朗诵是控制谱的真实声音依据，不会仅根据正文伪造标准图谱。"}
               </p>
             </div>
             <button
               type="button"
               className="primary-button analyze-button"
-              disabled={!hasWorkInfo || isSaving}
-              onClick={onSave}
+              disabled={!canAnalyze}
+              onClick={onAnalyze}
             >
-              {isSaving ? <span className="button-spinner" /> : <span aria-hidden="true">→</span>}
-              {isSaving ? "正在保存" : "保存作品，进入导入"}
+              {isAnalyzing ? <span className="button-spinner" /> : <span aria-hidden="true">✦</span>}
+              {isAnalyzing
+                ? "解析中"
+                : jobStatus === "failed" || jobStatus === "succeeded"
+                  ? "重新解析参考朗诵"
+                  : "解析参考朗诵"}
             </button>
           </div>
-          {!hasWorkInfo ? (
+          {!work.referenceAudio ? (
+            <p className="analysis-requirement" role="status">
+              请先上传参考朗诵，系统将根据实际声音表现生成情感图谱。
+            </p>
+          ) : !hasWorkInfo ? (
             <p className="analysis-requirement" role="status">
               请先填写作品名称和完整正文。
             </p>
+          ) : null}
+          {hasWorkInfo && !isAnalyzing ? (
+            <button type="button" className="text-button" onClick={onManualImport}>
+              {jobStatus === "failed" ? "改为手动导入控制谱 JSON" : "已有控制谱 JSON，直接导入"} →
+            </button>
           ) : null}
         </div>
       </div>
@@ -735,7 +913,7 @@ function ControlImportStage({
       <div className="stage-heading">
         <div>
           <p className="eyebrow">02 · 导入控制谱</p>
-          <h1>把 ChatGPT 返回的 control_spec 粘贴回来</h1>
+          <h1>自动分析失败时，手动导入 control_spec</h1>
           <p className="stage-lead">
             网站会逐字校验 token、时间戳、拼音和句子范围。只要与已保存正文有一处不一致，导入就会停止，正文绝不会被改写。
           </p>
@@ -746,16 +924,16 @@ function ControlImportStage({
       <div className="analysis-result-grid">
         <div className="paper-card analysis-package-card">
           <div className="card-title-row">
-            <div><p className="eyebrow">电脑端流程</p><h2>{work.title}</h2></div>
-            <span className="json-chip">本地分析</span>
+            <div><p className="eyebrow">备用通道</p><h2>{work.title}</h2></div>
+            <span className="json-chip">JSON 兜底</span>
           </div>
           <div className="analysis-facts">
-            <span><strong>1</strong><small>本地生成分析 JSON</small></span>
-            <span><strong>2</strong><small>交给 ChatGPT 解释</small></span>
-            <span><strong>3</strong><small>粘贴控制谱</small></span>
+            <span><strong>1</strong><small>保留完整 tokens</small></span>
+            <span><strong>2</strong><small>核对正文与时间戳</small></span>
+            <span><strong>3</strong><small>导入后人工编辑</small></span>
           </div>
           <p className="analysis-package-note">
-            请确保本地分析工具使用的正文与这里完全相同，并让 ChatGPT 原样保留 tokens 中的 index、char、start_ms、end_ms 和拼音字段。
+            这是自动分析失败时的备用入口。JSON 必须对应当前正文，并保留 tokens 中的 index、char、start_ms、end_ms 和拼音字段。
           </p>
         </div>
 
@@ -1284,6 +1462,7 @@ function AudioStage({
 }) {
   const spec = work.controlSpec;
   if (!spec) return null;
+  const reference = work.referenceAudio;
   const aiDemo = work.aiDemoAudio;
   return (
     <section className="stage audio-stage">
@@ -1292,18 +1471,18 @@ function AudioStage({
           <p className="eyebrow">04 · 示范声音</p>
           <h1>根据确认后的图谱，生成 AI 标准朗诵</h1>
           <p className="stage-lead">
-            这一步只读取已经确认的控制谱，生成 AI 示范音频及其字符时间轴；本地参考朗诵不会上传或被改动。
+            这一步读取已经确认的控制谱，单独生成 AI 示范音频及其字符时间轴。参考朗诵仍作为原始分析依据保留。
           </p>
         </div>
         <span className="provider-chip">图谱版本 v{spec.version}</span>
       </div>
 
-      <div className="audio-source-compare" aria-label="本地分析结果和 AI 示范">
+      <div className="audio-source-compare" aria-label="参考朗诵和 AI 示范">
         <div className="paper-card audio-source-card source-reference">
           <span className="source-kicker">分析依据</span>
-          <strong>本地分析结果</strong>
-          <p>控制谱已导入</p>
-          <small>参考朗诵保留在你的电脑</small>
+          <strong>参考朗诵</strong>
+          <p>{reference?.filename ?? "未提供"}</p>
+          <small>{reference ? `${formatTime(reference.durationMs)} · 真人原始声音` : "控制谱来自手动导入"}</small>
         </div>
         <span className="source-arrow" aria-hidden="true">→</span>
         <div className={`paper-card audio-source-card source-ai ${aiDemo ? "ready" : ""}`}>
@@ -1451,14 +1630,18 @@ function StudioView({
   step,
   highestStep,
   editingSentenceId,
-  isSavingWork,
+  analysisJobStatus,
+  analysisStatus,
   isGenerating,
   currentMs,
   activeTokenId,
   timeline,
   onStep,
   onWorkChange,
-  onSaveWork,
+  onReferenceFile,
+  onDeleteReference,
+  onAnalyze,
+  onManualImport,
   onImportControlSpec,
   onEditSentence,
   onCloseEditor,
@@ -1475,14 +1658,18 @@ function StudioView({
   step: WorkflowStep;
   highestStep: WorkflowStep;
   editingSentenceId: string | null;
-  isSavingWork: boolean;
+  analysisJobStatus: AnalysisJobStatus;
+  analysisStatus: string;
   isGenerating: boolean;
   currentMs: number;
   activeTokenId?: string;
   timeline?: AudioTimeline;
   onStep: (step: WorkflowStep) => void;
   onWorkChange: (field: "title" | "author" | "sourceText", value: string) => void;
-  onSaveWork: () => void;
+  onReferenceFile: (file: File) => void;
+  onDeleteReference: () => void;
+  onAnalyze: () => void;
+  onManualImport: () => void;
   onImportControlSpec: (jsonText: string) => Promise<void>;
   onEditSentence: (id: string) => void;
   onCloseEditor: () => void;
@@ -1517,9 +1704,13 @@ function StudioView({
         {step === 1 ? (
           <MaterialStage
             work={work}
-            isSaving={isSavingWork}
+            jobStatus={analysisJobStatus}
+            analysisStatus={analysisStatus}
             onWorkChange={onWorkChange}
-            onSave={onSaveWork}
+            onReferenceFile={onReferenceFile}
+            onDeleteReference={onDeleteReference}
+            onAnalyze={onAnalyze}
+            onManualImport={onManualImport}
           />
         ) : null}
         {step === 2 ? (
@@ -1592,7 +1783,7 @@ function ViewerView({
           <span aria-hidden="true">声</span>
           <p className="eyebrow">用户观看端</p>
           <h1>作品还没有可播放的 AI 示范</h1>
-          <p>请先在创作端保存正文、导入控制谱、确认情感图谱并生成 AI 示范。</p>
+          <p>请先在创作端解析参考朗诵、确认情感图谱并生成 AI 示范。</p>
         </section>
       </div>
     );
@@ -1664,11 +1855,13 @@ function ViewerView({
 export function RecitationStudio() {
   const [mode, setMode] = useState<ProductMode>("studio");
   const [work, setWork] = useState<RecitationWork>(() => createEmptyWork());
+  const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [isWorkDirty, setIsWorkDirty] = useState(true);
   const [step, setStep] = useState<WorkflowStep>(1);
   const [editingSentenceId, setEditingSentenceId] = useState<string | null>(null);
   const [audioSource, setAudioSource] = useState<AudioSource>("reference");
-  const [isSavingWork, setIsSavingWork] = useState(false);
+  const [analysisJobStatus, setAnalysisJobStatus] = useState<AnalysisJobStatus>("idle");
+  const [analysisStatus, setAnalysisStatus] = useState("等待参考朗诵");
   const [isGenerating, setIsGenerating] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
@@ -1677,7 +1870,8 @@ export function RecitationStudio() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
   const activeTrack = audioSource === "reference" ? work.referenceAudio : work.aiDemoAudio;
-  const highestStep = isWorkDirty ? 1 : highestAvailableStep(work);
+  const analysisInFlight = analysisJobStatus === "queued" || analysisJobStatus === "processing";
+  const highestStep = isWorkDirty || analysisInFlight ? 1 : highestAvailableStep(work);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -1689,7 +1883,8 @@ export function RecitationStudio() {
     const workId = params.get("work");
     if (!workId) return;
     let cancelled = false;
-    void fetch(`/api/works/${encodeURIComponent(workId)}`)
+    const publishedQuery = params.get("view") === "1" ? "?published=1" : "";
+    void fetch(`/api/works/${encodeURIComponent(workId)}${publishedQuery}`)
       .then((response) => apiJson<{ work: RecitationWork }>(response))
       .then(({ work: stored }) => {
         if (cancelled) return;
@@ -1702,8 +1897,9 @@ export function RecitationStudio() {
           setStep(stored.aiDemoAudio ? 5 : 3);
           setAudioSource(stored.aiDemoAudio ? "ai_demo" : "reference");
         } else {
-          setStep(2);
+          setStep(1);
           setAudioSource("reference");
+          setAnalysisStatus(stored.referenceAudio ? "参考朗诵已保存，可以开始解析" : "等待参考朗诵");
         }
       })
       .catch((error) => !cancelled && showToast(error instanceof Error ? error.message : String(error)));
@@ -1769,12 +1965,16 @@ export function RecitationStudio() {
     setSegmentEndMs(null);
   }, [activeTrack?.id]);
 
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = playbackRate;
+  }, [activeTrack?.id, playbackRate]);
+
   const activeSentence = useMemo(
     () => activeSentenceAt(work.controlSpec?.sentences ?? [], activeTrack?.timeline, currentMs),
     [activeTrack?.timeline, currentMs, work.controlSpec?.sentences],
   );
-  const activeTokenId = activeSentence && activeTrack?.timeline
-    ? activeTrack.timeline.tokens.find((token) => currentMs >= token.startMs && currentMs < token.endMs)?.tokenId
+  const activeTokenId = activeSentence
+    ? activeTokenAt(activeTrack?.timeline, currentMs)
     : undefined;
 
   const setWorkflowStep = (next: WorkflowStep) => {
@@ -1790,12 +1990,22 @@ export function RecitationStudio() {
 
   const handleWorkChange = (field: "title" | "author" | "sourceText", value: string) => {
     const sourceChanged = field === "sourceText" && value !== work.sourceText;
+    const keepsLocalReference = Boolean(work.referenceAudio?.url.startsWith("blob:"));
     setIsWorkDirty(true);
+    setAnalysisJobStatus("idle");
+    setAnalysisStatus(
+      sourceChanged && !keepsLocalReference
+        ? "正文已修改，请重新上传匹配的参考朗诵"
+        : work.referenceAudio ? "内容已修改，请重新解析" : "等待参考朗诵",
+    );
     setWork((current) => ({
       ...current,
       [field]: value,
       ...(sourceChanged ? {
         status: "draft" as const,
+        referenceAudio: current.referenceAudio?.url.startsWith("blob:")
+          ? { ...current.referenceAudio, timeline: undefined }
+          : undefined,
         controlSpec: undefined,
         currentSpecVersionId: undefined,
         aiDemoAudio: undefined,
@@ -1809,43 +2019,215 @@ export function RecitationStudio() {
     }
   };
 
-  const handleSaveWork = async () => {
-    if (isSavingWork) return;
-    if (!work.title.trim() || !work.sourceText.trim()) { showToast("请先填写作品名称和完整正文"); return; }
-    setIsSavingWork(true);
+  const handleReferenceFile = async (file: File) => {
+    const url = URL.createObjectURL(file);
     try {
-      const result = await apiJson<{ work: RecitationWork }>(
-        await fetch("/api/works", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            ...(!work.id.startsWith("draft-") ? { work_id: work.id } : {}),
-            title: work.title.trim(),
-            author: work.author?.trim() ?? "",
-            full_text: work.sourceText,
-          }),
+      const durationMs = await readAudioDuration(url);
+      if (work.referenceAudio?.url.startsWith("blob:")) URL.revokeObjectURL(work.referenceAudio.url);
+      setReferenceFile(file);
+      setIsWorkDirty(true);
+      setAnalysisJobStatus("idle");
+      setAnalysisStatus("参考朗诵已就绪");
+      setWork((current) => ({
+        ...current,
+        status: "draft",
+        referenceAudio: {
+          id: `local-${crypto.randomUUID()}`,
+          kind: "reference",
+          url,
+          filename: file.name,
+          mimeType: file.type || undefined,
+          durationMs,
+          provider: "upload",
+          label: "待上传的优质参考朗诵",
+        },
+        controlSpec: undefined,
+        currentSpecVersionId: undefined,
+        aiDemoAudio: undefined,
+        updatedAt: new Date().toISOString(),
+      }));
+      setStep(1);
+      setAudioSource("reference");
+      showToast(`${file.name} 已就绪；点击“解析参考朗诵”后会真实上传`);
+    } catch {
+      URL.revokeObjectURL(url);
+      showToast("无法读取这段音频，请换用 WAV、M4A 或 MP3 文件");
+    }
+  };
+
+  const handleDeleteReference = () => {
+    if (work.referenceAudio?.url.startsWith("blob:")) URL.revokeObjectURL(work.referenceAudio.url);
+    audioRef.current?.pause();
+    setReferenceFile(null);
+    setIsWorkDirty(true);
+    setAnalysisJobStatus("idle");
+    setAnalysisStatus("等待参考朗诵");
+    setWork((current) => ({
+      ...current,
+      status: "draft",
+      referenceAudio: undefined,
+      controlSpec: undefined,
+      currentSpecVersionId: undefined,
+      aiDemoAudio: undefined,
+      updatedAt: new Date().toISOString(),
+    }));
+    setStep(1);
+    setAudioSource("reference");
+    showToast("参考朗诵已从当前草稿移除");
+  };
+
+  const persistWorkRecord = async () => {
+    if (!work.title.trim() || !work.sourceText.trim()) { showToast("请先填写作品名称和完整正文"); return; }
+    const result = await apiJson<{ work: RecitationWork }>(
+      await fetch("/api/works", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...(!work.id.startsWith("draft-") ? { work_id: work.id } : {}),
+          title: work.title.trim(),
+          author: work.author?.trim() ?? "",
+          full_text: work.sourceText,
         }),
-      );
-      setWork(result.work);
-      setIsWorkDirty(false);
-      const url = new URL(window.location.href);
-      url.searchParams.set("work", result.work.id);
-      url.searchParams.delete("view");
-      window.history.replaceState({}, "", url);
-      setAudioSource(result.work.aiDemoAudio ? "ai_demo" : "reference");
-      setStep(result.work.controlSpec ? (result.work.aiDemoAudio ? 5 : 3) : 2);
+      }),
+    );
+    setWork((current) => ({
+      ...result.work,
+      referenceAudio: current.referenceAudio ?? result.work.referenceAudio,
+      controlSpec: current.controlSpec,
+      currentSpecVersionId: current.currentSpecVersionId,
+      aiDemoAudio: current.aiDemoAudio,
+    }));
+    setIsWorkDirty(false);
+    const url = new URL(window.location.href);
+    url.searchParams.set("work", result.work.id);
+    url.searchParams.delete("view");
+    window.history.replaceState({}, "", url);
+    return result.work;
+  };
+
+  const handleManualImport = async () => {
+    try {
+      const saved = isWorkDirty || work.id.startsWith("draft-") ? await persistWorkRecord() : work;
+      if (!saved) return;
+      setStep(2);
+      setAudioSource("reference");
       window.scrollTo({ top: 0, behavior: "smooth" });
-      showToast("作品正文已保存；现在可以导入控制谱 JSON");
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsSavingWork(false);
+    }
+  };
+
+  const handleAnalyze = async () => {
+    if (analysisJobStatus === "queued" || analysisJobStatus === "processing") return;
+    if (!work.title.trim() || !work.sourceText.trim()) { showToast("请先填写作品名称和完整正文"); return; }
+    if (!work.referenceAudio) { showToast("请先上传参考朗诵"); return; }
+    setAnalysisJobStatus("queued");
+    setAnalysisStatus("正在保存作品与参考音频");
+    try {
+      let saved = await persistWorkRecord();
+      if (!saved) throw new Error("作品正文保存失败。");
+
+      if (referenceFile) {
+        const form = new FormData();
+        form.set("reference_audio_file", referenceFile);
+        form.set("duration_ms", String(work.referenceAudio.durationMs));
+        await apiJson<Record<string, unknown>>(
+          await fetch(`/api/works/${encodeURIComponent(saved.id)}/reference-audio`, {
+            method: "POST",
+            body: form,
+          }),
+        );
+        const refreshed = await apiJson<{ work: RecitationWork }>(
+          await fetch(`/api/works/${encodeURIComponent(saved.id)}`),
+        );
+        if (!refreshed.work.referenceAudio) {
+          throw new Error("参考朗诵上传后未能读取，请重新上传。");
+        }
+        if (work.referenceAudio.url.startsWith("blob:")) URL.revokeObjectURL(work.referenceAudio.url);
+        saved = refreshed.work;
+        setReferenceFile(null);
+        setWork(saved);
+      } else if (!saved.referenceAudio) {
+        const refreshed = await apiJson<{ work: RecitationWork }>(
+          await fetch(`/api/works/${encodeURIComponent(saved.id)}`),
+        );
+        saved = refreshed.work;
+        if (!saved.referenceAudio) throw new Error("当前作品没有已保存的参考朗诵，请重新选择音频。");
+        setWork(saved);
+      }
+
+      const created = await apiJson<AnalysisJobPayload>(
+        await fetch(`/api/works/${encodeURIComponent(saved.id)}/analysis-jobs`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
+      );
+      if (!created.analysis_job_id) throw new Error("分析任务创建失败：服务端没有返回任务编号。");
+      setWork((current) => ({ ...current, analysisJobId: created.analysis_job_id, status: "analyzing" }));
+      setAnalysisStatus("已进入分析队列");
+
+      const deadline = Date.now() + 20 * 60 * 1000;
+      while (Date.now() < deadline) {
+        const job = await apiJson<AnalysisJobPayload>(
+          await fetch(`/api/analysis-jobs/${encodeURIComponent(created.analysis_job_id)}`),
+        );
+        setAnalysisJobStatus(job.status);
+        const progressValue = typeof job.progress === "number"
+          ? (job.progress > 0 && job.progress <= 1 ? job.progress * 100 : job.progress)
+          : undefined;
+        const progress = progressValue === undefined ? "" : ` ${Math.round(progressValue)}%`;
+        if (job.status === "queued") {
+          setAnalysisStatus(`等待分析服务${progress}`);
+        } else if (job.status === "processing") {
+          setAnalysisStatus(`正在分析参考朗诵${progress}`);
+        } else if (job.status === "failed") {
+          throw new Error(analysisErrorMessage(job.error));
+        } else if (job.status === "succeeded") {
+          let completedWork = job.work;
+          if (!completedWork?.controlSpec) {
+            completedWork = (await apiJson<{ work: RecitationWork }>(
+              await fetch(`/api/works/${encodeURIComponent(saved.id)}`),
+            )).work;
+          }
+          if (!completedWork.controlSpec && job.control_spec) {
+            const controlSpec = importControlSpec(job.control_spec, work.sourceText, saved.id, completedWork.referenceAudio?.id);
+            completedWork = (await apiJson<{ work: RecitationWork }>(
+              await fetch(`/api/works/${encodeURIComponent(saved.id)}/control-spec`, {
+                method: "PATCH",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ control_spec: controlSpec, source: "analysis" }),
+              }),
+            )).work;
+          }
+          if (!completedWork.controlSpec) {
+            throw new Error("分析任务已结束，但没有返回当前正文的控制谱。请重试或手动导入 JSON。");
+          }
+          setWork(completedWork);
+          setIsWorkDirty(false);
+          setAnalysisJobStatus("succeeded");
+          setAnalysisStatus("参考朗诵解析完成");
+          setAudioSource("reference");
+          setStep(3);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          showToast(`真实控制谱已生成：${completedWork.controlSpec.sentences.length} 句`);
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 1600));
+      }
+      throw new Error("分析等待超过 20 分钟，请稍后重新打开作品检查任务状态。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setAnalysisJobStatus("failed");
+      setAnalysisStatus(`分析失败：${message}`);
+      setWork((current) => ({ ...current, status: "draft" }));
+      showToast(message);
     }
   };
 
   const handleImportControlSpec = async (jsonText: string) => {
     const parsed = parseControlSpecText(jsonText);
-    const controlSpec = importControlSpec(parsed, work.sourceText, work.id);
+    const controlSpec = importControlSpec(parsed, work.sourceText, work.id, work.referenceAudio?.id);
     const result = await apiJson<{ work: RecitationWork; control_spec: ControlSpec }>(
       await fetch(`/api/works/${encodeURIComponent(work.id)}/control-spec`, {
         method: "PATCH",
@@ -2017,14 +2399,18 @@ export function RecitationStudio() {
           step={step}
           highestStep={highestStep}
           editingSentenceId={editingSentenceId}
-          isSavingWork={isSavingWork}
+          analysisJobStatus={analysisJobStatus}
+          analysisStatus={analysisStatus}
           isGenerating={isGenerating}
           currentMs={currentMs}
           activeTokenId={activeTokenId}
           timeline={activeTrack?.timeline}
           onStep={setWorkflowStep}
           onWorkChange={handleWorkChange}
-          onSaveWork={handleSaveWork}
+          onReferenceFile={handleReferenceFile}
+          onDeleteReference={handleDeleteReference}
+          onAnalyze={handleAnalyze}
+          onManualImport={handleManualImport}
           onImportControlSpec={handleImportControlSpec}
           onEditSentence={setEditingSentenceId}
           onCloseEditor={() => setEditingSentenceId(null)}

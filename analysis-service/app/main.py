@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import secrets
+from typing import Any
+
+import httpx
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, status
+
+from app.config import ConfigurationError, Settings
+from app.pipeline import analyze_job
+from app.schemas.control_spec import JobRequest
+
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("recitation-analysis")
+
+app = FastAPI(
+    title="声图朗诵分析服务",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+)
+
+
+def _settings() -> Settings:
+    try:
+        return Settings.from_environment()
+    except ConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _authorize(
+    authorization: str | None = Header(default=None),
+    settings: Settings = Depends(_settings),
+) -> Settings:
+    supplied = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        supplied = authorization[7:].strip()
+    if not supplied or not secrets.compare_digest(supplied, settings.analysis_service_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
+    return settings
+
+
+async def _callback(
+    *,
+    url: str,
+    token: str,
+    sites_bypass_token: str,
+    body: dict[str, Any],
+    timeout_seconds: float,
+) -> None:
+    last_error = ""
+    for attempt, delay in enumerate((0, 2, 8), 1):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=30)) as client:
+                response = await client.post(
+                    url,
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "content-type": "application/json",
+                    "OAI-Sites-Authorization": f"Bearer {sites_bypass_token}",
+                },
+                    json=body,
+                )
+            if response.status_code < 400:
+                return
+            last_error = f"HTTP {response.status_code}: {response.text[:500]}"
+        except httpx.HTTPError as exc:
+            last_error = str(exc)
+        logger.warning("callback attempt %s failed for job %s: %s", attempt, body.get("job_id"), last_error)
+    raise RuntimeError(f"Analysis callback failed after retries: {last_error}")
+
+
+async def _run_job(job: JobRequest, settings: Settings) -> None:
+    logger.info("starting analysis job %s", job.job_id)
+    try:
+        await _callback(
+            url=job.callback_url,
+            token=settings.analysis_callback_token,
+            sites_bypass_token=settings.sites_bypass_token,
+            body={"job_id": job.job_id, "status": "processing", "progress": 5},
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+        analysis_package, control_spec = await analyze_job(
+            input_url=job.input_url,
+            audio_url=job.audio_url,
+            settings=settings,
+        )
+        await _callback(
+            url=job.callback_url,
+            token=settings.analysis_callback_token,
+            sites_bypass_token=settings.sites_bypass_token,
+            body={
+                "job_id": job.job_id,
+                "status": "succeeded",
+                "progress": 100,
+                "analysis_package": analysis_package,
+                "control_spec": control_spec,
+                "pipeline": {
+                    "version": "recitation-analysis-1.0",
+                    "alignment": "elevenlabs-forced-alignment",
+                    "acoustics": "parselmouth",
+                    "language_model": settings.llm_model,
+                    "knowledge_base": "recitation-expression-v1.0",
+                },
+            },
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+        logger.info("completed analysis job %s", job.job_id)
+    except Exception as exc:  # Every production failure becomes an explicit failed job.
+        logger.exception("analysis job %s failed", job.job_id)
+        try:
+            await _callback(
+                url=job.callback_url,
+                token=settings.analysis_callback_token,
+                sites_bypass_token=settings.sites_bypass_token,
+                body={
+                    "job_id": job.job_id,
+                    "status": "failed",
+                    "progress": 100,
+                    "error_code": exc.__class__.__name__.upper(),
+                    "error_message": str(exc)[:1200] or "Analysis failed",
+                },
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+        except Exception:
+            logger.exception("failed to report terminal state for job %s", job.job_id)
+
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    required = (
+        "ELEVENLABS_API_KEY",
+        "LLM_API_KEY",
+        "ANALYSIS_SERVICE_TOKEN",
+        "ANALYSIS_CALLBACK_TOKEN",
+        "SITES_BYPASS_TOKEN",
+    )
+    configured = {name: bool(os.getenv(name, "").strip()) for name in required}
+    return {"ok": all(configured.values()), "configured": configured}
+
+
+@app.post("/v1/jobs", status_code=status.HTTP_202_ACCEPTED)
+@app.post("/jobs", status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
+async def create_job(
+    job: JobRequest,
+    background_tasks: BackgroundTasks,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, str]:
+    background_tasks.add_task(_run_job, job, settings)
+    return {"job_id": job.job_id, "status": "queued"}
