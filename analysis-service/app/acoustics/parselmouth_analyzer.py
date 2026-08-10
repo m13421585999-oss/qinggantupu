@@ -51,13 +51,27 @@ def split_sentence_ranges(text: str) -> list[tuple[int, int]]:
     return normalized
 
 
-def convert_to_mono_wav(source: Path, target: Path) -> None:
+def resolve_ffmpeg() -> str:
     ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise AcousticAnalysisError("FFmpeg is not installed in the analysis service")
+    if ffmpeg:
+        return ffmpeg
+    try:
+        import imageio_ffmpeg
+
+        bundled = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as exc:  # Keep the provider detail out of the user-facing callback.
+        raise AcousticAnalysisError(
+            "FFmpeg is unavailable in the analysis service runtime"
+        ) from exc
+    if not bundled or not Path(bundled).is_file():
+        raise AcousticAnalysisError("FFmpeg is unavailable in the analysis service runtime")
+    return bundled
+
+
+def convert_to_mono_wav(source: Path, target: Path) -> None:
     process = subprocess.run(
         [
-            ffmpeg,
+            resolve_ffmpeg(),
             "-nostdin",
             "-hide_banner",
             "-loglevel",

@@ -20,6 +20,11 @@ test("worker exposes the production reference-analysis contract", async () => {
   assert.match(worker, /const analysisAudioMatch = .*analysis-jobs.*audio/);
   assert.match(worker, /const callbackMatch = .*analysis-jobs.*callback/);
   assert.match(worker, /handoffSignature/);
+  assert.match(worker, /verifyHandoff/);
+  assert.match(worker, /await dispatchAnalysisJob\(env, origin, jobId\)/);
+  assert.doesNotMatch(worker, /waitUntil\(dispatchAnalysisJob/);
+  assert.match(worker, /ANALYSIS_JOB_TIMEOUT_MS/);
+  assert.match(worker, /ANALYSIS_SUBMISSION_FAILED/);
   assert.match(worker, /importControlSpec\(rawControlSpec/);
   assert.match(worker, /kind: "reference_audio"/);
   assert.match(worker, /audio_sha256|checksum/);

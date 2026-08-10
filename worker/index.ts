@@ -29,6 +29,7 @@ interface ExecutionContext {
 type Row = Record<string, string | number | null>;
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
+const ANALYSIS_JOB_TIMEOUT_MS = 7 * 60 * 1000;
 
 function json(data: unknown, status = 200, headers?: HeadersInit) {
   return new Response(JSON.stringify(data), {
@@ -434,51 +435,103 @@ async function verifyHandoff(request: Request, env: Env, scope: "input" | "audio
   return secureSecretMatch(signature, expected);
 }
 
+async function failActiveAnalysisJob(
+  env: Env,
+  jobId: string,
+  code: string,
+  message: string,
+) {
+  const job = await first<Row>(env.DB.prepare(
+    "SELECT id, work_id FROM processing_jobs WHERE id = ? AND type = 'reference_analysis'",
+  ).bind(jobId));
+  if (!job) return;
+  const failedAt = now();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE processing_jobs
+          SET status = 'failed', progress = 0, error_code = ?, error_message = ?, updated_at = ?
+        WHERE id = ? AND status IN ('queued', 'processing')`,
+    ).bind(code, message, failedAt, jobId),
+    env.DB.prepare(
+      `UPDATE works
+          SET status = 'draft', updated_at = ?
+        WHERE id = ? AND status = 'analyzing'
+          AND EXISTS (
+            SELECT 1 FROM processing_jobs
+             WHERE id = ? AND status = 'failed'
+          )`,
+    ).bind(failedAt, job.work_id, jobId),
+  ]);
+}
+
+function isStaleAnalysisJob(job: Row) {
+  if (!["queued", "processing"].includes(String(job.status))) return false;
+  const updatedAt = Date.parse(String(job.updated_at ?? job.created_at ?? ""));
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt > ANALYSIS_JOB_TIMEOUT_MS;
+}
+
+async function expireStaleAnalysisJob(env: Env, job: Row) {
+  if (!isStaleAnalysisJob(job)) return false;
+  await failActiveAnalysisJob(
+    env,
+    String(job.id),
+    "ANALYSIS_TIMED_OUT",
+    "声音分析超过 7 分钟仍未返回终态，请重新发起分析。",
+  );
+  return true;
+}
+
 async function dispatchAnalysisJob(env: Env, origin: string, jobId: string) {
   const serviceUrl = env.ANALYSIS_SERVICE_URL?.replace(/\/$/, "");
-  if (!serviceUrl || !env.ANALYSIS_SERVICE_TOKEN) return;
+  if (!serviceUrl || !env.ANALYSIS_SERVICE_TOKEN) {
+    throw new Error("ANALYSIS_SERVICE_URL or ANALYSIS_SERVICE_TOKEN is not configured");
+  }
   const context = await jobContext(env, jobId);
-  if (!context) return;
+  if (!context) throw new Error("分析任务缺少作品正文或参考音频上下文。");
   const expires = Number(context.input.handoffExpiresAt ?? 0);
+  const inputUrl = await signedHandoffUrl(env, origin, "input", jobId, String(context.asset.id), expires);
+  const audioUrl = await signedHandoffUrl(env, origin, "audio", jobId, String(context.asset.id), expires);
+  await env.DB.prepare(
+    "UPDATE processing_jobs SET status = 'processing', progress = 1, updated_at = ? WHERE id = ? AND status = 'queued'",
+  ).bind(now(), jobId).run();
+  const response = await fetch(`${serviceUrl}/v1/jobs`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.ANALYSIS_SERVICE_TOKEN}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      job_id: jobId,
+      input_url: inputUrl,
+      audio_url: audioUrl,
+      callback_url: `${origin}/api/internal/analysis-jobs/${encodeURIComponent(jobId)}/callback`,
+    }),
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 600);
+    throw new Error(`分析服务拒绝任务（HTTP ${response.status}）：${detail}`);
+  }
+  let completion: Record<string, unknown>;
   try {
-    const inputUrl = await signedHandoffUrl(env, origin, "input", jobId, String(context.asset.id), expires);
-    const audioUrl = await signedHandoffUrl(env, origin, "audio", jobId, String(context.asset.id), expires);
-    const response = await fetch(`${serviceUrl}/v1/jobs`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${env.ANALYSIS_SERVICE_TOKEN}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        job_id: jobId,
-        input_url: inputUrl,
-        audio_url: audioUrl,
-        callback_url: `${origin}/api/internal/analysis-jobs/${encodeURIComponent(jobId)}/callback`,
-      }),
-    });
-    if (!response.ok) {
-      const detail = (await response.text()).slice(0, 600);
-      throw new Error(`分析服务拒绝任务（HTTP ${response.status}）：${detail}`);
-    }
-    await env.DB.prepare(
-      "UPDATE processing_jobs SET status = 'processing', progress = 5, updated_at = ? WHERE id = ? AND status = 'queued'",
-    ).bind(now(), jobId).run();
-  } catch (error) {
-    const failedAt = now();
-    await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE processing_jobs
-            SET status = 'failed', progress = 0, error_code = 'ANALYSIS_SUBMISSION_FAILED',
-                error_message = ?, updated_at = ?
-          WHERE id = ? AND status = 'queued'`,
-      ).bind(error instanceof Error ? error.message : String(error), failedAt, jobId),
-      env.DB.prepare("UPDATE works SET status = 'draft', updated_at = ? WHERE id = ? AND status = 'analyzing'")
-        .bind(failedAt, context.job.work_id),
-    ]);
+    completion = await response.json() as Record<string, unknown>;
+  } catch {
+    throw new Error("分析服务完成响应不是有效 JSON。");
+  }
+  if (
+    String(completion.job_id ?? "") !== jobId
+    || !["succeeded", "failed"].includes(String(completion.status ?? ""))
+  ) {
+    throw new Error("分析服务没有返回与当前任务匹配的终态。");
+  }
+  const stored = await first<Row>(env.DB.prepare(
+    "SELECT status FROM processing_jobs WHERE id = ? AND type = 'reference_analysis'",
+  ).bind(jobId));
+  if (!stored || ["queued", "processing"].includes(String(stored.status))) {
+    throw new Error("分析服务已结束，但终态回调没有写入网站。");
   }
 }
 
-async function createAnalysisJob(env: Env, ctx: ExecutionContext, origin: string, workId: string) {
+async function createAnalysisJob(env: Env, origin: string, workId: string) {
   if (!env.DB || !env.AUDIO_BUCKET) {
     return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 或 R2 尚未绑定，无法创建分析任务。");
   }
@@ -491,13 +544,20 @@ async function createAnalysisJob(env: Env, ctx: ExecutionContext, origin: string
     "SELECT * FROM assets WHERE work_id = ? AND kind = 'reference_audio' ORDER BY created_at DESC LIMIT 1",
   ).bind(workId));
   if (!reference) return apiError(409, "REFERENCE_AUDIO_REQUIRED", "请先上传真实参考朗诵音频。");
-  const active = await first<Row>(env.DB.prepare(
-    `SELECT id, status FROM processing_jobs
+  let active = await first<Row>(env.DB.prepare(
+    `SELECT * FROM processing_jobs
       WHERE work_id = ? AND type = 'reference_analysis' AND status IN ('queued', 'processing')
       ORDER BY created_at DESC LIMIT 1`,
   ).bind(workId));
   if (active) {
-    return json({ analysis_job_id: active.id, work_id: workId, status: active.status });
+    if (await expireStaleAnalysisJob(env, active)) {
+      active = await first<Row>(env.DB.prepare(
+        "SELECT * FROM processing_jobs WHERE id = ?",
+      ).bind(active.id));
+    }
+    if (active && ["queued", "processing"].includes(String(active.status))) {
+      return json({ analysis_job_id: active.id, work_id: workId, status: active.status });
+    }
   }
 
   const jobId = id("job");
@@ -518,11 +578,30 @@ async function createAnalysisJob(env: Env, ctx: ExecutionContext, origin: string
     ),
     env.DB.prepare("UPDATE works SET status = 'analyzing', updated_at = ? WHERE id = ?").bind(createdAt, workId),
   ]);
-  ctx.waitUntil(dispatchAnalysisJob(env, origin, jobId));
-  return json({ analysis_job_id: jobId, work_id: workId, status: "queued" }, 202);
+  try {
+    // The Vercel endpoint intentionally stays open until its terminal callback
+    // is persisted. Await it in the request lifetime: Cloudflare waitUntil is
+    // not a durable queue and may end before multi-minute audio analysis does.
+    await dispatchAnalysisJob(env, origin, jobId);
+  } catch (error) {
+    await failActiveAnalysisJob(
+      env,
+      jobId,
+      "ANALYSIS_SUBMISSION_FAILED",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const completed = await first<Row>(env.DB.prepare(
+    "SELECT status FROM processing_jobs WHERE id = ?",
+  ).bind(jobId));
+  const status = String(completed?.status ?? "failed");
+  return json(
+    { analysis_job_id: jobId, work_id: workId, status },
+    ["queued", "processing"].includes(status) ? 202 : 200,
+  );
 }
 
-async function createAnalysisJobFromRequest(request: Request, env: Env, ctx: ExecutionContext, origin: string) {
+async function createAnalysisJobFromRequest(request: Request, env: Env, origin: string) {
   let body: Record<string, unknown>;
   try {
     const parsed = await request.json();
@@ -533,13 +612,17 @@ async function createAnalysisJobFromRequest(request: Request, env: Env, ctx: Exe
   }
   const workId = String(body.work_id ?? "").trim();
   if (!workId) return apiError(400, "WORK_ID_REQUIRED", "创建分析任务必须提供 work_id。");
-  return createAnalysisJob(env, ctx, origin, workId);
+  return createAnalysisJob(env, origin, workId);
 }
 
 async function getAnalysisJob(env: Env, jobId: string) {
-  const job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
+  let job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
   if (!job || job.type !== "reference_analysis") {
     return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务。");
+  }
+  if (await expireStaleAnalysisJob(env, job)) {
+    job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
+    if (!job) return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务。");
   }
   const output = parseJson<Record<string, unknown>>(job.output_json as string | null);
   const payload: Record<string, unknown> = {
@@ -983,7 +1066,7 @@ async function serveAsset(request: Request, env: Env, assetId: string) {
   return new Response(object.body, { status, headers });
 }
 
-async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<Response | null> {
+async function api(request: Request, env: Env): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return null;
   if (url.pathname === "/api/health" && request.method === "GET") {
@@ -1001,13 +1084,13 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
   }
   if (url.pathname === "/api/works" && request.method === "POST") return createWork(request, env);
   if (url.pathname === "/api/analysis-jobs" && request.method === "POST") {
-    return createAnalysisJobFromRequest(request, env, ctx, url.origin);
+    return createAnalysisJobFromRequest(request, env, url.origin);
   }
   const uploadMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/reference-audio$/);
   if (uploadMatch && request.method === "POST") return uploadReferenceAudio(request, env, uploadMatch[1]);
   const createJobMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/analysis-jobs$/);
   if (createJobMatch && request.method === "POST") {
-    return createAnalysisJob(env, ctx, url.origin, createJobMatch[1]);
+    return createAnalysisJob(env, url.origin, createJobMatch[1]);
   }
   const jobMatch = url.pathname.match(/^\/api\/analysis-jobs\/([^/]+)$/);
   if (jobMatch && request.method === "GET") return getAnalysisJob(env, jobMatch[1]);
@@ -1036,7 +1119,7 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      const apiResponse = await api(request, env, ctx);
+      const apiResponse = await api(request, env);
       if (apiResponse) return apiResponse;
       const url = new URL(request.url);
       if (url.pathname === "/_vinext/image") {

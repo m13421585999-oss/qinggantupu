@@ -4,27 +4,56 @@
 
 任何步骤失败都会通过回调把任务标为 `failed`，绝不返回 Demo 控制谱。
 
-## 接口
+## 接口与执行方式
 
 - `GET /health`：检查必需 Secret 是否齐全，不返回 Secret 内容。
-- `POST /v1/jobs`：由网站 Worker 使用 `ANALYSIS_SERVICE_TOKEN` 调用。请求包含 `job_id`、签名的 `input_url`、签名的 `audio_url`、`callback_url`。
+- `POST /v1/jobs`：由网站 Worker 使用 `ANALYSIS_SERVICE_TOKEN` 调用。请求只包含 `job_id`、签名的 `input_url`、签名的 `audio_url` 和 `callback_url`，音频不会进入 Vercel 请求体。
 
-服务接受任务后在后台处理，并使用 `ANALYSIS_CALLBACK_TOKEN` 回调网站。成功回调同时包含 `analysis_package` 与简化的 `control_spec`；网站负责将它转换为现有编辑器使用的完整结构并保存版本。
+Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `BackgroundTasks`。因此 `/v1/jobs` 会保持请求，直到分析完成并把 `succeeded` 或 `failed` 终态回调给网站；网站 Worker 也会在同一次创建任务请求中等待这一终态，不再依赖只有短暂续命窗口的 `waitUntil`。`vercel.json` 把函数最长执行时间设为 300 秒。
 
-## 本地开发
+如果分析服务返回时网站仍未收到终态回调，任务会明确标为 `failed`；超过 7 分钟仍停留在 `queued` / `processing` 的中断任务，也会在下一次读取或重试时自动收敛为失败，避免永久卡住。
 
-Python 3.12 环境中安装 `requirements.txt`，复制 `.env.example` 为 `.env` 并通过运行环境加载这些变量，然后启动：
+所有中间音频只写入系统临时目录，函数结束后自动删除。运行时优先使用系统 `ffmpeg`，找不到时自动使用 `imageio-ffmpeg` 随包二进制。
+
+## Vercel 配置
+
+将 Vercel 项目的 Root Directory 设为本目录 `analysis-service`。项目会通过 `api/index.py` 加载 FastAPI，根路径重写后继续使用 `/health` 和 `/v1/jobs`。
+
+在 Vercel 项目中启用 AI Gateway，并配置：
+
+- `ELEVENLABS_API_KEY`：ElevenLabs 服务端 Key；
+- `ANALYSIS_SERVICE_TOKEN`：网站 Worker 调用本服务的 Bearer token；
+- `ANALYSIS_CALLBACK_TOKEN`：本服务回调网站的 Bearer token，必须与网站端一致；
+- `SITES_BYPASS_TOKEN`：仅所有者可见的 Sites 跨服务访问 token。
+
+AI Gateway 在 Vercel 部署中默认使用平台自动注入、自动轮换的 `VERCEL_OIDC_TOKEN`，不需要配置 `LLM_API_KEY`。默认网关和模型分别是：
 
 ```text
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+LLM_BASE_URL=https://ai-gateway.vercel.sh/v1
+LLM_MODEL=openai/gpt-5.6-sol
 ```
 
-系统必须能够执行 `ffmpeg`。
+如需在 Vercel 之外本地调用 Gateway，可配置 `AI_GATEWAY_API_KEY`。静态 Key 的优先级高于 OIDC；不要同时配置一个无效的静态 Key，否则会覆盖有效 OIDC。
 
-## 云端部署
+部署完成后，把服务 HTTPS 根地址配置到网站端 `ANALYSIS_SERVICE_URL`。网站端与分析服务端的 `ANALYSIS_SERVICE_TOKEN`、`ANALYSIS_CALLBACK_TOKEN` 必须完全一致。
 
-使用本目录的 `Dockerfile` 部署为一个常驻 HTTPS 服务，并配置 `.env.example` 中列出的环境变量。部署完成后，把服务的 HTTPS 根地址保存为网站端 `ANALYSIS_SERVICE_URL`。网站端与分析服务端的 `ANALYSIS_SERVICE_TOKEN`、`ANALYSIS_CALLBACK_TOKEN` 必须完全一致。
+## 本地验证
 
-当前网站采用仅所有者可访问的 Sites 策略。外部 Python 服务读取签名输入、音频和提交回调时还需要 `SITES_BYPASS_TOKEN`，并只将它放入 `OAI-Sites-Authorization` 请求头。该 token 仅用于跨服务穿过 Sites 登录门，不代替任务签名或回调 token。
+使用 Python 3.12：
 
-不要把 `.env`、API Key 或 token 提交到 Git，也不要放到浏览器代码中。
+```text
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+PYTHONPATH=. .venv/bin/python -m pytest tests
+PYTHONPATH=. .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+本地调用 AI Gateway 时，可先链接 Vercel 项目并执行 `vercel env pull .env.local` 获取短期 OIDC token，也可以在仅本机的环境文件中设置 `AI_GATEWAY_API_KEY`。不要提交 `.env`、`.env.local`、API Key 或 token，也不要把它们放进浏览器代码。
+
+## 部署体积与限制
+
+- Python 固定为 3.12；
+- 运行依赖与开发依赖已分离，测试、缓存、Docker 文件和样本不会进入函数包；
+- 标准 Python Function 未压缩包上限为 500 MB；
+- Vercel 请求/响应体上限不适合传音频，本服务始终通过网站签名 URL 拉取 R2 音频；
+- 单次任务需在 300 秒内完成，第一版适合约 1～3 分钟的朗诵样本。

@@ -12,6 +12,7 @@ class ConfigurationError(RuntimeError):
 class Settings:
     elevenlabs_api_key: str
     llm_api_key: str
+    llm_auth_source: str
     analysis_service_token: str
     analysis_callback_token: str
     sites_bypass_token: str
@@ -21,23 +22,39 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> "Settings":
+        # Vercel injects VERCEL_OIDC_TOKEN for deployed Functions. A static AI
+        # Gateway key remains useful for local development and non-Vercel CI.
+        gateway_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
+        oidc_token = os.getenv("VERCEL_OIDC_TOKEN", "").strip()
+        llm_api_key = gateway_api_key or oidc_token
+        llm_auth_source = (
+            "ai_gateway_api_key"
+            if gateway_api_key
+            else "vercel_oidc"
+            if oidc_token
+            else "missing"
+        )
         required = {
             "ELEVENLABS_API_KEY": os.getenv("ELEVENLABS_API_KEY", "").strip(),
-            "LLM_API_KEY": os.getenv("LLM_API_KEY", "").strip(),
             "ANALYSIS_SERVICE_TOKEN": os.getenv("ANALYSIS_SERVICE_TOKEN", "").strip(),
             "ANALYSIS_CALLBACK_TOKEN": os.getenv("ANALYSIS_CALLBACK_TOKEN", "").strip(),
             "SITES_BYPASS_TOKEN": os.getenv("SITES_BYPASS_TOKEN", "").strip(),
         }
         missing = [name for name, value in required.items() if not value]
+        if not llm_api_key:
+            missing.append("AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN")
         if missing:
             raise ConfigurationError(f"Missing required environment variables: {', '.join(missing)}")
         return cls(
             elevenlabs_api_key=required["ELEVENLABS_API_KEY"],
-            llm_api_key=required["LLM_API_KEY"],
+            llm_api_key=llm_api_key,
+            llm_auth_source=llm_auth_source,
             analysis_service_token=required["ANALYSIS_SERVICE_TOKEN"],
             analysis_callback_token=required["ANALYSIS_CALLBACK_TOKEN"],
             sites_bypass_token=required["SITES_BYPASS_TOKEN"],
-            llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
-            llm_model=os.getenv("LLM_MODEL", "gpt-5-mini").strip(),
-            request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "300")),
+            llm_base_url=os.getenv(
+                "LLM_BASE_URL", "https://ai-gateway.vercel.sh/v1"
+            ).rstrip("/"),
+            llm_model=os.getenv("LLM_MODEL", "openai/gpt-5.6-sol").strip(),
+            request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "180")),
         )

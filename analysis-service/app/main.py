@@ -7,7 +7,7 @@ import secrets
 from typing import Any
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.config import ConfigurationError, Settings
 from app.pipeline import analyze_job
@@ -57,26 +57,36 @@ async def _callback(
         if delay:
             await asyncio.sleep(delay)
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=30)) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds, connect=30),
+                follow_redirects=True,
+            ) as client:
                 response = await client.post(
                     url,
-                headers={
-                    "authorization": f"Bearer {token}",
-                    "content-type": "application/json",
-                    "OAI-Sites-Authorization": f"Bearer {sites_bypass_token}",
-                },
+                    headers={
+                        "authorization": f"Bearer {token}",
+                        "content-type": "application/json",
+                        "OAI-Sites-Authorization": f"Bearer {sites_bypass_token}",
+                    },
                     json=body,
                 )
-            if response.status_code < 400:
-                return
-            last_error = f"HTTP {response.status_code}: {response.text[:500]}"
+            if 200 <= response.status_code < 300:
+                try:
+                    acknowledgement = response.json()
+                except ValueError:
+                    acknowledgement = None
+                if isinstance(acknowledgement, dict) and acknowledgement.get("ok") is True:
+                    return
+                last_error = "Callback endpoint returned no JSON acknowledgement"
+            else:
+                last_error = f"HTTP {response.status_code}: {response.text[:500]}"
         except httpx.HTTPError as exc:
             last_error = str(exc)
         logger.warning("callback attempt %s failed for job %s: %s", attempt, body.get("job_id"), last_error)
     raise RuntimeError(f"Analysis callback failed after retries: {last_error}")
 
 
-async def _run_job(job: JobRequest, settings: Settings) -> None:
+async def _run_job(job: JobRequest, settings: Settings) -> str:
     logger.info("starting analysis job %s", job.job_id)
     try:
         await _callback(
@@ -112,6 +122,7 @@ async def _run_job(job: JobRequest, settings: Settings) -> None:
             timeout_seconds=settings.request_timeout_seconds,
         )
         logger.info("completed analysis job %s", job.job_id)
+        return "succeeded"
     except Exception as exc:  # Every production failure becomes an explicit failed job.
         logger.exception("analysis job %s failed", job.job_id)
         try:
@@ -128,29 +139,39 @@ async def _run_job(job: JobRequest, settings: Settings) -> None:
                 },
                 timeout_seconds=settings.request_timeout_seconds,
             )
-        except Exception:
+        except Exception as callback_error:
             logger.exception("failed to report terminal state for job %s", job.job_id)
+            raise RuntimeError(
+                f"Analysis failed and its terminal callback could not be delivered: {callback_error}"
+            ) from callback_error
+        return "failed"
 
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
     required = (
         "ELEVENLABS_API_KEY",
-        "LLM_API_KEY",
         "ANALYSIS_SERVICE_TOKEN",
         "ANALYSIS_CALLBACK_TOKEN",
         "SITES_BYPASS_TOKEN",
     )
     configured = {name: bool(os.getenv(name, "").strip()) for name in required}
+    configured["AI_GATEWAY_AUTH"] = bool(
+        os.getenv("AI_GATEWAY_API_KEY", "").strip()
+        or os.getenv("VERCEL_OIDC_TOKEN", "").strip()
+    )
     return {"ok": all(configured.values()), "configured": configured}
 
 
-@app.post("/v1/jobs", status_code=status.HTTP_202_ACCEPTED)
-@app.post("/jobs", status_code=status.HTTP_202_ACCEPTED, include_in_schema=False)
+@app.post("/v1/jobs", status_code=status.HTTP_200_OK)
+@app.post("/jobs", status_code=status.HTTP_200_OK, include_in_schema=False)
 async def create_job(
     job: JobRequest,
-    background_tasks: BackgroundTasks,
     settings: Settings = Depends(_authorize),
 ) -> dict[str, str]:
-    background_tasks.add_task(_run_job, job, settings)
-    return {"job_id": job.job_id, "status": "queued"}
+    # Vercel may freeze or terminate a Python Function as soon as its response
+    # is sent, so FastAPI BackgroundTasks cannot own this production job. The
+    # Worker keeps the dispatch request open too; both sides wait until the
+    # pipeline and terminal callback have finished.
+    final_status = await _run_job(job, settings)
+    return {"job_id": job.job_id, "status": final_status}

@@ -1,0 +1,13 @@
+.env
+.env.*
+.venv/
+.pytest_cache/
+**/__pycache__/
+**/*.py[cod]
+tests/
+requirements-dev.txt
+Dockerfile
+README.md
+samples/
+outputs/
+work/
