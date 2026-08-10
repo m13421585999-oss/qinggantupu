@@ -159,6 +159,7 @@ async def interpret_control_spec(
                 "content": (
                     "请解释以下当前作品的声音证据。每个 sentence 必须原样返回 text、start_index、end_index，"
                     "并给出 focus、pauses、prolongations、prosody、ending_intonation、rhythm、confidence。"
+                    "判断 prosody 时必须综合宏观音高、能量、时值、停连和语义，不能让普通话单字声调或单个 F0 极值决定类型。"
                     "只依据可见证据和文本语义；不确定时降低 confidence。"
                     "仅返回一个合法 JSON 对象，不得添加 Markdown 或解释文字。输出必须符合下面的 JSON Schema：\n"
                     + schema_text
