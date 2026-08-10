@@ -7,6 +7,7 @@ import {
   buildElevenV3Request,
   compileElevenV3Prompt,
   ELEVEN_V3_MINIMAL_AUDIO_TAGS,
+  ELEVEN_V3_PROSODY_MOTION_DIRECTIONS,
 } from "../lib/eleven-tts.ts";
 
 function controlSpec(text = "面朝大海，春暖花开。") {
@@ -19,7 +20,10 @@ function controlSpec(text = "面朝大海，春暖花开。") {
     tokens,
     sentences: [{
       id: "sentence-1",
-      rhythm: "relaxed",
+      rhythm: {
+        type: "relaxed",
+        source_control_ref: "current-control-spec/rhythm/relaxed",
+      },
       tokens,
       focus: [{ tokenIndexes: [0, 1, 2, 3], level: "primary" }],
       pauses: [{ afterTokenIndex: 3, type: "short" }],
@@ -29,6 +33,7 @@ function controlSpec(text = "面朝大海，春暖花开。") {
         activeSpan: { start: 0, end: 8 },
         coreZone: { start: 2, end: 7 },
         strength: 2,
+        source_control_ref: "current-control-spec/prosody/valley",
       }],
       endingIntonation: { type: "falling", strength: 1 },
     }],
@@ -120,7 +125,8 @@ test("prompt compiler does not duplicate source newlines or pause signals", () =
   assert.ok((prompt.text.match(/\[[^\]]+\]/g) ?? []).length <= 3);
   const prolongation = prompt.executionPlan.controls.find((control) => control.kind === "prolongation");
   assert.equal(prolongation, undefined);
-  assert.equal(stripAudioTags(prompt.text), text);
+  const promptWithoutInsertedTags = prompt.text.replace(/ ?\[[^\]\r\n]+\] ?/gu, "");
+  assert.equal(promptWithoutInsertedTags, text);
 });
 
 test("only one strong high-confidence prolongation becomes a standard dash", () => {
@@ -171,6 +177,7 @@ test("hidden performance profiles only select short whitelisted state cues", () 
   const sentenceTokens = Array.from({ length: 5 }, (_, position) => tokens.slice(position * 4, position * 4 + 4));
   const spec = {
     performance_profile: {
+      source_control_ref: "current-control-spec/profile/global",
       delivery_mode: "lyrical_recitation",
       emotion_tone: ["安静"],
       continuity: "connected",
@@ -185,6 +192,7 @@ test("hidden performance profiles only select short whitelisted state cues", () 
       rhythm: "relaxed",
       tokens: items,
       performance_profile: position === 2 ? {
+        source_control_ref: "current-control-spec/profile/sentence-3",
         emotion_tone: ["克制"],
         voice_quality: "solid",
         focus_style: "supported",
@@ -228,7 +236,45 @@ test("a new work with no control intent receives no invented TTS control", () =>
 
   assert.equal(prompt.text, text);
   assert.deepEqual(prompt.executionPlan.controls, []);
-  assert.equal(prompt.executionPlan.validation.checks.length, 7);
+  assert.equal(prompt.executionPlan.validation.checks.length, 9);
+});
+
+test("fields without an explicit current control spec source never invent cues", () => {
+  const text = "无来源时保持原文。";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    performance_profile: {
+      delivery_mode: "lyrical_recitation",
+      emotion_tone: ["温柔"],
+      voice_quality: "slightly_breathy",
+    },
+    tokens,
+    sentences: [{
+      id: "sentence-untraced",
+      rhythm: "relaxed",
+      tokens,
+      performance_profile: {
+        emotion_tone: ["明亮"],
+      },
+      focus: [{
+        tokenIndexes: [0, 1],
+        level: "primary",
+        preferred_realization: "supported",
+      }],
+      pauses: [],
+      prolongations: [],
+      prosody: [{
+        type: "peak",
+        active_span: { start: 0, end: 7 },
+        core_zone: { start: 2, end: 5 },
+        strength: 3,
+        confidence: 1,
+      }],
+    }],
+  });
+
+  assert.equal(prompt.text, text);
+  assert.deepEqual(prompt.executionPlan.controls, []);
 });
 
 test("every generic special control preserves its current control spec reference", () => {
@@ -320,6 +366,12 @@ test("prosody motion follows ordered phrase boundaries instead of a fixed templa
 });
 
 test("peak and valley compile in the correct direction at semantic phrase boundaries", () => {
+  assert.deepEqual(ELEVEN_V3_PROSODY_MOTION_DIRECTIONS, {
+    rising: { entry: "building" },
+    falling: { entry: ["softening", "settling"] },
+    peak: { entry: "building", exit: "settling" },
+    valley: { entry: "softening", exit: "building" },
+  });
   const text = "远山渐高，云开日出，余音渐远。";
   const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
   const prompt = compileElevenV3Prompt({
@@ -466,6 +518,58 @@ test("sentence cues never replace source punctuation with a newline", () => {
   assert.equal(prompt.text, "从明天起， [brightly] 做一个幸福的人。");
   assert.equal(stripAudioTags(prompt.text), text);
   assert.doesNotMatch(prompt.text, /，\s*\n/u);
+});
+
+test("audio tags preserve every original punctuation mark, source line break, and sentence boundary", () => {
+  const text = "从明天起，做一个幸福的人。\n风起时，云仍在走！";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const firstClauseEnd = text.indexOf("，") + 1;
+  const firstSentenceEnd = text.indexOf("。") + 1;
+  const prompt = compileElevenV3Prompt({
+    tokens,
+    sentences: [
+      {
+        id: "sentence-clause-a",
+        tokens: tokens.slice(0, firstClauseEnd),
+        focus: [], pauses: [], prolongations: [], prosody: [],
+      },
+      {
+        id: "sentence-clause-b",
+        tokens: tokens.slice(firstClauseEnd, firstSentenceEnd),
+        performance_profile: {
+          emotion_tone: ["明亮"],
+          source_control_ref: "current-control-spec/profile/clause-b",
+        },
+        focus: [], pauses: [], prolongations: [], prosody: [],
+      },
+      {
+        id: "sentence-source-line-2",
+        tokens: tokens.slice(firstSentenceEnd),
+        focus: [], pauses: [], prolongations: [],
+        prosody: [{
+          type: "rising",
+          active_span: { start: firstSentenceEnd + 1, end: tokens.length - 2 },
+          core_zone: { start: firstSentenceEnd + 4, end: tokens.length - 3 },
+          strength: 2,
+          confidence: 0.9,
+          source_control_ref: "current-control-spec/prosody/source-line-2",
+        }],
+      },
+    ],
+  });
+
+  const promptWithoutInsertedTags = prompt.text.replace(/ ?\[[^\]\r\n]+\] ?/gu, "");
+  assert.equal(promptWithoutInsertedTags, text);
+  assert.equal((prompt.text.match(/\n/g) ?? []).length, (text.match(/\n/g) ?? []).length);
+  for (const token of tokens.filter((token) => /[\p{P}\r\n]/u.test(token.char))) {
+    assert.equal(Array.from(prompt.text)[prompt.sourceOffsets.get(token.index)], token.char);
+  }
+  assert.ok(prompt.executionPlan.validation.checks.some(
+    (check) => check.code === "source_structure_preserved",
+  ));
+  assert.ok(prompt.executionPlan.validation.checks.some(
+    (check) => check.code === "audio_tags_are_insertions_only",
+  ));
 });
 
 test("golden sample wording is absent from runtime compiler and general rules", () => {
