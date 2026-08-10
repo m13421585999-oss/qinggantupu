@@ -19,21 +19,22 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 
 将 Vercel 项目的 Root Directory 设为本目录 `analysis-service`。Vercel 会通过根目录的 `server.py` 自动识别 FastAPI，并原样保留 `/health` 和 `/v1/jobs` 请求路径。
 
-在 Vercel 项目中启用 AI Gateway，并配置：
+在 Vercel 项目中配置：
 
 - `ELEVENLABS_API_KEY`：ElevenLabs 服务端 Key；
 - `ANALYSIS_SERVICE_TOKEN`：网站 Worker 调用本服务的 Bearer token；
 - `ANALYSIS_CALLBACK_TOKEN`：本服务回调网站的 Bearer token，必须与网站端一致；
-- `SITES_BYPASS_TOKEN`：仅所有者可见的 Sites 跨服务访问 token。
+- `SITES_BYPASS_TOKEN`：仅所有者可见的 Sites 跨服务访问 token；
+- `LLM_API_KEY`：DeepSeek 服务端 API Key。
 
-AI Gateway 在 Vercel 部署中默认使用平台自动注入、自动轮换的 `VERCEL_OIDC_TOKEN`，不需要配置 `LLM_API_KEY`。默认网关和模型分别是：
+正式版默认使用 DeepSeek 的 OpenAI 兼容接口：
 
 ```text
-LLM_BASE_URL=https://ai-gateway.vercel.sh/v1
-LLM_MODEL=openai/gpt-5.6-sol
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
 ```
 
-如需在 Vercel 之外本地调用 Gateway，可配置 `AI_GATEWAY_API_KEY`。静态 Key 的优先级高于 OIDC；不要同时配置一个无效的静态 Key，否则会覆盖有效 OIDC。
+`LLM_API_KEY` 优先于 `AI_GATEWAY_API_KEY` 和 Vercel OIDC。保留后两者仅作为可选的 AI Gateway 备用配置。
 
 部署完成后，把服务 HTTPS 根地址配置到网站端 `ANALYSIS_SERVICE_URL`。网站端与分析服务端的 `ANALYSIS_SERVICE_TOKEN`、`ANALYSIS_CALLBACK_TOKEN` 必须完全一致。
 
@@ -48,7 +49,7 @@ PYTHONPATH=. .venv/bin/python -m pytest tests
 PYTHONPATH=. .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-本地调用 AI Gateway 时，可先链接 Vercel 项目并执行 `vercel env pull .env.local` 获取短期 OIDC token，也可以在仅本机的环境文件中设置 `AI_GATEWAY_API_KEY`。不要提交 `.env`、`.env.local`、API Key 或 token，也不要把它们放进浏览器代码。
+本地验证时只在本机环境文件中设置 `LLM_API_KEY`。不要提交 `.env`、`.env.local`、API Key 或 token，也不要把它们放进浏览器代码。
 
 ## 部署体积与限制
 

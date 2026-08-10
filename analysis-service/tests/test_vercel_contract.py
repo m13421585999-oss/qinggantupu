@@ -10,6 +10,7 @@ import pytest
 
 from app.acoustics.parselmouth_analyzer import resolve_ffmpeg
 from app.config import ConfigurationError, Settings
+from app.interpretation.llm_interpreter import _response_format_for_provider
 from app.main import _callback, app, create_job
 from app.pipeline import _sites_headers
 from app.schemas.control_spec import JobRequest
@@ -21,6 +22,7 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 
 def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
+        "LLM_API_KEY",
         "AI_GATEWAY_API_KEY",
         "VERCEL_OIDC_TOKEN",
         "LLM_BASE_URL",
@@ -68,9 +70,42 @@ def test_static_gateway_key_precedes_oidc(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.llm_auth_source == "ai_gateway_api_key"
 
 
+def test_provider_key_selects_deepseek_defaults_and_precedes_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "gateway-test")
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_api_key == "deepseek-test"
+    assert settings.llm_auth_source == "llm_api_key"
+    assert settings.llm_base_url == "https://api.deepseek.com"
+    assert settings.llm_model == "deepseek-chat"
+
+
+def test_deepseek_uses_json_object_mode() -> None:
+    assert _response_format_for_provider(
+        base_url="https://api.deepseek.com",
+        model="deepseek-chat",
+        schema={"type": "object"},
+    ) == {"type": "json_object"}
+
+
+def test_gateway_keeps_strict_json_schema_mode() -> None:
+    schema = {"type": "object"}
+    response_format = _response_format_for_provider(
+        base_url="https://ai-gateway.vercel.sh/v1",
+        model="openai/gpt-5.6-sol",
+        schema=schema,
+    )
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"] == schema
+
+
 def test_missing_gateway_auth_is_a_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
-    with pytest.raises(ConfigurationError, match="VERCEL_OIDC_TOKEN"):
+    with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
         Settings.from_environment()
 
 

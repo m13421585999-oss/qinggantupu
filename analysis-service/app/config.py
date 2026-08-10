@@ -22,13 +22,16 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> "Settings":
-        # Vercel injects VERCEL_OIDC_TOKEN for deployed Functions. A static AI
-        # Gateway key remains useful for local development and non-Vercel CI.
+        # A provider-neutral key takes precedence so production can use any
+        # OpenAI-compatible LLM without routing through Vercel AI Gateway.
+        provider_api_key = os.getenv("LLM_API_KEY", "").strip()
         gateway_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
         oidc_token = os.getenv("VERCEL_OIDC_TOKEN", "").strip()
-        llm_api_key = gateway_api_key or oidc_token
+        llm_api_key = provider_api_key or gateway_api_key or oidc_token
         llm_auth_source = (
-            "ai_gateway_api_key"
+            "llm_api_key"
+            if provider_api_key
+            else "ai_gateway_api_key"
             if gateway_api_key
             else "vercel_oidc"
             if oidc_token
@@ -42,9 +45,15 @@ class Settings:
         }
         missing = [name for name, value in required.items() if not value]
         if not llm_api_key:
-            missing.append("AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN")
+            missing.append("LLM_API_KEY, AI_GATEWAY_API_KEY, or VERCEL_OIDC_TOKEN")
         if missing:
             raise ConfigurationError(f"Missing required environment variables: {', '.join(missing)}")
+        default_base_url = (
+            "https://api.deepseek.com"
+            if provider_api_key
+            else "https://ai-gateway.vercel.sh/v1"
+        )
+        default_model = "deepseek-chat" if provider_api_key else "openai/gpt-5.6-sol"
         return cls(
             elevenlabs_api_key=required["ELEVENLABS_API_KEY"],
             llm_api_key=llm_api_key,
@@ -52,9 +61,7 @@ class Settings:
             analysis_service_token=required["ANALYSIS_SERVICE_TOKEN"],
             analysis_callback_token=required["ANALYSIS_CALLBACK_TOKEN"],
             sites_bypass_token=required["SITES_BYPASS_TOKEN"],
-            llm_base_url=os.getenv(
-                "LLM_BASE_URL", "https://ai-gateway.vercel.sh/v1"
-            ).rstrip("/"),
-            llm_model=os.getenv("LLM_MODEL", "openai/gpt-5.6-sol").strip(),
+            llm_base_url=os.getenv("LLM_BASE_URL", default_base_url).rstrip("/"),
+            llm_model=os.getenv("LLM_MODEL", default_model).strip(),
             request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "180")),
         )

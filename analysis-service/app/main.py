@@ -156,8 +156,9 @@ async def health() -> dict[str, Any]:
         "SITES_BYPASS_TOKEN",
     )
     configured = {name: bool(os.getenv(name, "").strip()) for name in required}
-    configured["AI_GATEWAY_AUTH"] = bool(
-        os.getenv("AI_GATEWAY_API_KEY", "").strip()
+    configured["LLM_AUTH"] = bool(
+        os.getenv("LLM_API_KEY", "").strip()
+        or os.getenv("AI_GATEWAY_API_KEY", "").strip()
         or os.getenv("VERCEL_OIDC_TOKEN", "").strip()
     )
     return {"ok": all(configured.values()), "configured": configured}

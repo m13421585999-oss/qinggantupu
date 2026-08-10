@@ -114,6 +114,21 @@ def assemble_control_spec(
     return {"tokens": tokens, "sentences": sentences}
 
 
+def _response_format_for_provider(*, base_url: str, model: str, schema: dict[str, Any]) -> dict[str, Any]:
+    if "deepseek.com" in base_url.lower() or model.lower().startswith("deepseek"):
+        # DeepSeek supports JSON Object mode. Schema enforcement remains our
+        # responsibility through the prompt and Pydantic validation below.
+        return {"type": "json_object"}
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "recitation_control_spec_interpretation",
+            "strict": True,
+            "schema": schema,
+        },
+    }
+
+
 async def interpret_control_spec(
     *,
     analysis_package: dict[str, Any],
@@ -126,6 +141,7 @@ async def interpret_control_spec(
     rules = rules_path.read_text(encoding="utf-8")
     evidence = _compact_evidence(analysis_package)
     schema = LlmInterpretation.model_json_schema()
+    schema_text = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
     request_body = {
         "model": model,
         "messages": [
@@ -141,19 +157,20 @@ async def interpret_control_spec(
                 "content": (
                     "请解释以下当前作品的声音证据。每个 sentence 必须原样返回 text、start_index、end_index，"
                     "并给出 focus、pauses、prolongations、prosody、ending_intonation、rhythm、confidence。"
-                    "只依据可见证据和文本语义；不确定时降低 confidence。\n\n"
+                    "只依据可见证据和文本语义；不确定时降低 confidence。"
+                    "仅返回一个合法 JSON 对象，不得添加 Markdown 或解释文字。输出必须符合下面的 JSON Schema：\n"
+                    + schema_text
+                    + "\n\n声音证据：\n"
                     + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
                 ),
             },
         ],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "recitation_control_spec_interpretation",
-                "strict": True,
-                "schema": schema,
-            },
-        },
+        "response_format": _response_format_for_provider(
+            base_url=base_url,
+            model=model,
+            schema=schema,
+        ),
+        "temperature": 0.1,
     }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=30)) as client:
