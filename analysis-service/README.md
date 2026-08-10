@@ -17,7 +17,7 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 
 ## Vercel 配置
 
-将 Vercel 项目的 Root Directory 设为本目录 `analysis-service`。项目会通过 `api/index.py` 加载 FastAPI，根路径重写后继续使用 `/health` 和 `/v1/jobs`。
+将 Vercel 项目的 Root Directory 设为本目录 `analysis-service`。Vercel 会通过根目录的 `server.py` 自动识别 FastAPI，并原样保留 `/health` 和 `/v1/jobs` 请求路径。
 
 在 Vercel 项目中启用 AI Gateway，并配置：
 

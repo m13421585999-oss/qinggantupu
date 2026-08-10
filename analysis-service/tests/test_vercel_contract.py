@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from api.index import app as vercel_app
 from app.acoustics.parselmouth_analyzer import resolve_ffmpeg
 from app.config import ConfigurationError, Settings
 from app.main import _callback, app, create_job
 from app.pipeline import _sites_headers
 from app.schemas.control_spec import JobRequest
+from server import app as vercel_app
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -39,10 +39,10 @@ def test_vercel_entrypoint_exports_the_fastapi_app() -> None:
 
 def test_vercel_configuration_targets_entrypoint_and_portable_duration() -> None:
     configuration = json.loads((SERVICE_ROOT / "vercel.json").read_text(encoding="utf-8"))
-    function = configuration["functions"]["api/index.py"]
+    function = configuration["functions"]["server.py"]
     assert function["maxDuration"] == 300
     assert "tests/**" in function["excludeFiles"]
-    assert configuration["rewrites"] == [{"source": "/(.*)", "destination": "/api/index"}]
+    assert "rewrites" not in configuration
 
 
 def test_settings_use_vercel_oidc_and_gateway_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
