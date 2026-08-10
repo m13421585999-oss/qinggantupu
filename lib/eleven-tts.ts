@@ -42,58 +42,83 @@ function tokenIndexes(value: unknown): number[] {
     .filter((item): item is number => item !== undefined);
 }
 
-function rhythmTag(value: unknown) {
+function rhythmKey(value: unknown) {
   const rhythm = object(value);
-  const key = String(typeof value === "string" ? value : rhythm.type ?? rhythm.label ?? "");
-  const tags: Record<string, string> = {
-    light: "[bright and lively]",
-    solemn: "[solemn]",
-    relaxed: "[calm]",
-    tense: "[tense]",
-    soaring: "[passionately]",
-    low: "[low and restrained]",
-  };
-  return tags[key] ?? "[natural]";
+  return String(typeof value === "string" ? value : rhythm.type ?? rhythm.label ?? "relaxed");
 }
 
-function prosodyTag(type: unknown, strength: unknown, core = false) {
-  const level = Math.max(1, Math.min(3, integer(strength) ?? 2));
-  const prefix = level === 1 ? "gently " : level === 3 ? "strongly " : "";
-  const tags: Record<string, string> = core
-    ? {
-      peak: "strong and resonant",
-      valley: "quiet and restrained",
-      rising: "with greater intensity",
-      falling: "softly easing down",
-    }
-    : {
-      peak: "building toward a crest",
-      valley: "settling into a low contour",
-      rising: "gradually building",
-      falling: "gradually easing",
-    };
-  const direction = tags[String(type)];
-  return direction ? `[${prefix}${direction}]` : undefined;
+function globalDeliveryDirection(spec: JsonObject) {
+  const profile = object(spec.documentProfile ?? spec.document_profile);
+  const rhythm = rhythmKey(profile.baseRhythm ?? profile.base_rhythm);
+  const styles: Record<string, string> = {
+    light: "bright, natural and continuous",
+    solemn: "solemn, measured and continuous",
+    relaxed: "soft, warm and naturally continuous",
+    tense: "focused and connected, with controlled tension",
+    soaring: "open and resonant while keeping phrases connected",
+    low: "low, restrained and continuous",
+  };
+  return `[${styles[rhythm] ?? styles.relaxed}; no unnecessary pauses or restarts]`;
 }
 
-function endingTag(value: unknown) {
-  const ending = object(value);
-  const type = String(typeof value === "string" ? value : ending.type ?? "");
-  const tags: Record<string, string> = {
-    rising: "[with rising intonation]",
-    falling: "[with falling intonation]",
-    level: "[with level intonation]",
+function focusIndexes(value: JsonObject) {
+  const explicit = tokenIndexes(value.tokenIndexes ?? value.token_indexes);
+  if (explicit.length) return explicit;
+  const span = object(value.focusSpan ?? value.focus_span);
+  const start = integer(span.start ?? span.start_index);
+  const end = integer(span.end ?? span.end_index);
+  if (start === undefined || end === undefined || end < start) return [];
+  return Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
+}
+
+function sentenceDeliveryDirection(
+  sentence: JsonObject,
+  tokenByIndex: Map<number, { char: string }>,
+) {
+  const parts: string[] = [];
+  const rhythm = rhythmKey(sentence.rhythm);
+  const rhythmDirections: Record<string, string> = {
+    light: "bright and light",
+    solemn: "solemn and measured",
+    relaxed: "soft and warm",
+    tense: "controlled and tense",
+    soaring: "open and resonant",
+    low: "low and restrained",
   };
-  return tags[type];
+  parts.push(rhythmDirections[rhythm] ?? rhythmDirections.relaxed);
+
+  const prosody = Array.isArray(sentence.prosody) ? sentence.prosody.map(object) : [];
+  const types = prosody.map((event) => String(event.type ?? ""));
+  if (types.includes("falling") && types.includes("rising")) {
+    parts.push("gently descending into a low point, then opening again");
+  } else if (types.includes("valley")) {
+    parts.push("settling into one low contour, then recovering naturally");
+  } else if (types.includes("peak")) {
+    parts.push("building toward one natural crest, then releasing");
+  } else if (types.includes("rising")) {
+    parts.push("gently building through the phrase");
+  } else if (types.includes("falling")) {
+    parts.push("gently settling through the phrase");
+  }
+
+  const focusEntries = Array.isArray(sentence.focus) ? sentence.focus.map(object) : [];
+  const primary = focusEntries[0];
+  if (primary) {
+    const focusText = focusIndexes(primary)
+      .map((index) => tokenByIndex.get(index)?.char ?? "")
+      .join("")
+      .trim();
+    if (focusText) parts.push(`let ${focusText} carry the emotional focus without breaking the flow`);
+  }
+
+  const ending = object(sentence.endingIntonation ?? sentence.ending_intonation);
+  if (ending.type === "rising") parts.push("ending with a natural lift");
+  else if (ending.type === "falling") parts.push("ending with a gentle settling tone");
+  return `[${parts.join(", ")}]`;
 }
 
 function isSpokenCharacter(value: string) {
   return /[\p{L}\p{N}]/u.test(value);
-}
-
-function spanBoundary(value: unknown, edge: "start" | "end") {
-  const span = object(value);
-  return integer(span[edge] ?? span[`${edge}_index`] ?? span[`anchor_${edge}`]);
 }
 
 /**
@@ -127,6 +152,9 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
     if (value) text += value;
   };
 
+  append(globalDeliveryDirection(spec));
+  append(" ");
+
   sentences.forEach((sentence, sentencePosition) => {
     const rawSentenceTokens = Array.isArray(sentence.tokens) ? sentence.tokens.map(object) : [];
     if (!rawSentenceTokens.length) {
@@ -151,24 +179,8 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
 
     const sentenceId = String(sentence.id ?? `sentence-${sentencePosition + 1}`);
     sentenceTokenIndexes.push({ sentenceId, tokenIndexes: sentenceIndexes });
-    append(rhythmTag(sentence.rhythm));
+    append(sentenceDeliveryDirection(sentence, tokenByIndex));
     append(" ");
-
-    const focusStarts = new Map<number, "primary" | "secondary">();
-    const focusEnds = new Set<number>();
-    const focusEntries = Array.isArray(sentence.focus) ? sentence.focus.map(object) : [];
-    focusEntries.forEach((focus) => {
-      const indexes = [...new Set(tokenIndexes(focus.tokenIndexes ?? focus.token_indexes))]
-        .sort((left, right) => left - right);
-      const level = focus.level === "secondary" ? "secondary" : "primary";
-      indexes.forEach((index, position) => {
-        if (position === 0 || indexes[position - 1] !== index - 1) {
-          const existing = focusStarts.get(index);
-          if (!existing || level === "primary") focusStarts.set(index, level);
-        }
-        if (position === indexes.length - 1 || indexes[position + 1] !== index + 1) focusEnds.add(index);
-      });
-    });
 
     const pauses = new Map<number, "short" | "long">();
     const pauseEntries = Array.isArray(sentence.pauses) ? sentence.pauses.map(object) : [];
@@ -177,60 +189,39 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
       if (index !== undefined) pauses.set(index, pause.type === "long" ? "long" : "short");
     });
 
-    const prolongations = new Set<number>();
+    const prolongations = new Map<number, number>();
     const prolongEntries = Array.isArray(sentence.prolongations)
       ? sentence.prolongations.map(object)
       : [];
     prolongEntries.forEach((prolongation) => {
       const index = integer(prolongation.tokenIndex ?? prolongation.token_index);
-      if (index !== undefined) prolongations.add(index);
+      const degree = integer(prolongation.degree ?? prolongation.strength) ?? 1;
+      if (index !== undefined) prolongations.set(index, degree);
     });
 
-    const before = new Map<number, string[]>();
-    const after = new Map<number, string[]>();
-    const addBoundary = (target: Map<number, string[]>, index: number | undefined, tag: string | undefined) => {
-      if (index === undefined || !tag) return;
-      target.set(index, [...(target.get(index) ?? []), tag]);
-    };
-    const prosodyEntries = Array.isArray(sentence.prosody) ? sentence.prosody.map(object) : [];
-    prosodyEntries.forEach((prosody) => {
-      const active = prosody.activeSpan ?? prosody.active_span;
-      const core = prosody.coreZone ?? prosody.core_zone;
-      const activeStart = spanBoundary(active, "start");
-      const activeEnd = spanBoundary(active, "end");
-      const coreStart = spanBoundary(core, "start");
-      const coreEnd = spanBoundary(core, "end");
-      addBoundary(before, activeStart, prosodyTag(prosody.type, prosody.strength));
-      addBoundary(before, coreStart, prosodyTag(prosody.type, prosody.strength, true));
-      if (coreEnd !== undefined) addBoundary(after, coreEnd, prosodyTag(prosody.type, prosody.strength));
-      if (activeEnd !== undefined) addBoundary(after, activeEnd, rhythmTag(sentence.rhythm));
+    const strongestProlongation = [...prolongations.entries()]
+      .filter(([, degree]) => degree >= 2)
+      .sort((left, right) => right[1] - left[1])[0]?.[0];
+    const pauseCandidates = [...pauses.entries()]
+      .sort((left, right) => (right[1] === "long" ? 1 : 0) - (left[1] === "long" ? 1 : 0));
+    const explicitPause = pauseCandidates.find(([index]) => {
+      const offset = sentenceIndexes.indexOf(index);
+      const next = tokenByIndex.get(sentenceIndexes[offset + 1])?.char ?? "";
+      return offset >= 0 && offset < sentenceIndexes.length - 1 && !/[，。！？、；：,!?;:\s]/u.test(next);
     });
-
-    const finalSpokenIndex = [...sentenceIndexes].reverse()
-      .find((index) => isSpokenCharacter(tokenByIndex.get(index)?.char ?? ""));
-    const finalTag = endingTag(sentence.endingIntonation ?? sentence.ending_intonation);
 
     sentenceIndexes.forEach((index) => {
       const token = tokenByIndex.get(index)!;
-      before.get(index)?.forEach(append);
-      const focusStart = focusStarts.get(index);
-      if (focusStart === "primary") append("[emphasized]");
-      else if (focusStart === "secondary") append("[gently emphasized]");
-      if (prolongations.has(index)) append("[drawn out]");
-      if (index === finalSpokenIndex) append(finalTag);
-
       sourceOffsets.set(index, Array.from(text).length);
       append(token.char);
 
-      if (prolongations.has(index)) append("——");
-      const pause = pauses.get(index);
-      if (pause) append(pause === "long" ? " [long pause] " : " [short pause] ");
-      if (focusEnds.has(index) || prolongations.has(index)) {
-        append("[continue naturally]");
-      }
-      after.get(index)?.forEach(append);
+      if (index === strongestProlongation) append("——");
+      if (explicitPause?.[0] === index) append(explicitPause[1] === "long" ? "……" : "，");
     });
-    if (sentencePosition < sentences.length - 1) append("\n");
+    if (
+      sentencePosition < sentences.length - 1
+      && !/\s/u.test(tokenByIndex.get(sentenceIndexes.at(-1)!)?.char ?? "")
+    ) append(" ");
   });
 
   if (expectedIndex !== canonicalTokens.length) {

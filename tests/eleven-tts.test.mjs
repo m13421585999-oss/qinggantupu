@@ -15,7 +15,7 @@ function controlSpec(text = "面朝大海，春暖花开。") {
       id: "sentence-1",
       rhythm: "relaxed",
       tokens,
-      focus: [{ tokenIndexes: [0, 3, 5, 8], level: "primary" }],
+      focus: [{ tokenIndexes: [0, 1, 2, 3], level: "primary" }],
       pauses: [{ afterTokenIndex: 3, type: "short" }],
       prolongations: [{ tokenIndex: 8, degree: 1 }],
       prosody: [{
@@ -40,22 +40,51 @@ function alignmentFor(text) {
   };
 }
 
-test("prompt compiler consumes the confirmed control labels without changing source tokens", () => {
+test("prompt compiler compresses the control spec into minimal sufficient directions", () => {
   const spec = controlSpec();
   const prompt = compileElevenV3Prompt(spec);
 
-  assert.match(prompt.text, /\[calm\]/);
-  assert.match(prompt.text, /\[emphasized\]/);
-  assert.match(prompt.text, /\[short pause\]/);
-  assert.match(prompt.text, /\[drawn out\]/);
-  assert.match(prompt.text, /settling into a low contour/);
-  assert.match(prompt.text, /falling intonation/);
+  assert.match(prompt.text, /naturally continuous/);
+  assert.match(prompt.text, /settling into one low contour/);
+  assert.match(prompt.text, /面朝大海.*carry the emotional focus/);
+  assert.doesNotMatch(prompt.text, /\[emphasized\]|\[short pause\]|\[drawn out\]|continue naturally/);
+  assert.equal(prompt.text.match(/\[[^\]]+\]/g)?.length, 2);
   assert.equal(prompt.sourceTokens.length, spec.tokens.length);
 
   const promptCharacters = Array.from(prompt.text);
   for (const token of spec.tokens) {
     assert.equal(promptCharacters[prompt.sourceOffsets.get(token.index)], token.char);
   }
+});
+
+test("prompt compiler does not duplicate source newlines or pause signals", () => {
+  const text = "从明天起\n做一个幸福的人";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const spec = {
+    tokens,
+    sentences: [
+      {
+        id: "sentence-1",
+        rhythm: "relaxed",
+        tokens: tokens.slice(0, 5),
+        focus: [], pauses: [{ afterTokenIndex: 3, type: "short" }], prolongations: [], prosody: [],
+        endingIntonation: { type: "falling" },
+      },
+      {
+        id: "sentence-2",
+        rhythm: "relaxed",
+        tokens: tokens.slice(5),
+        focus: [], pauses: [], prolongations: [{ tokenIndex: 7, degree: 2 }], prosody: [],
+        endingIntonation: { type: "level" },
+      },
+    ],
+  };
+  const prompt = compileElevenV3Prompt(spec);
+
+  assert.equal((prompt.text.match(/\n/g) ?? []).length, 1);
+  assert.doesNotMatch(prompt.text, /\n\n|short pause|continue naturally/);
+  assert.equal((prompt.text.match(/——/g) ?? []).length, 1);
+  assert.ok((prompt.text.match(/\[[^\]]+\]/g) ?? []).length <= 3);
 });
 
 test("raw Eleven alignment maps every immutable token to a unique monotonic timestamp", () => {

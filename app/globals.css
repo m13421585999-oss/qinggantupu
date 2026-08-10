@@ -2479,6 +2479,16 @@ p {
   filter: drop-shadow(0 2px 5px rgba(189, 63, 45, 0.2));
 }
 
+.acoustic-path {
+  stroke: #8f776c;
+  opacity: 0.82;
+}
+
+.event-path {
+  stroke: var(--red);
+  opacity: 0.72;
+}
+
 .curve-dot {
   fill: #81665d;
   vector-effect: non-scaling-stroke;

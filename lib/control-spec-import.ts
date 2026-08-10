@@ -2,6 +2,7 @@ import type {
   ControlSpec,
   EndingTone,
   FocusTarget,
+  MacroProsodyPath,
   PauseMark,
   ProlongMark,
   ProsodyEvent,
@@ -118,7 +119,7 @@ function indexesFromEntry(value: unknown, min: number, max: number): number[] {
       .sort((a, b) => a - b);
   }
   const span = parseSpan(
-    entry.span ?? entry.active_span ?? entry.activeSpan ?? entry,
+    entry.focus_span ?? entry.focusSpan ?? entry.span ?? entry.active_span ?? entry.activeSpan ?? entry,
     { start: min, end: min - 1 },
     min,
     max,
@@ -139,6 +140,8 @@ function parseFocus(
     const indexes = indexesFromEntry(value, min, max);
     if (!indexes.length) return [];
     const entry = object(value);
+    const rawCore = entry.focus_core ?? entry.focusCore ?? entry.core_span ?? entry.coreSpan;
+    const coreIndexes = rawCore === undefined ? [] : indexesFromEntry(rawCore, min, max);
     const level = entry.level === "secondary" || entry.level === "次重音"
       ? "secondary"
       : "primary";
@@ -146,7 +149,11 @@ function parseFocus(
       id: `${sentenceId}-focus-${position + 1}`,
       tokenIds: indexes.map((index) => tokensByIndex.get(index)?.id).filter(Boolean) as string[],
       tokenIndexes: indexes,
+      coreTokenIds: coreIndexes.map((index) => tokensByIndex.get(index)?.id).filter(Boolean) as string[],
+      coreTokenIndexes: coreIndexes,
       level,
+      confidence: number(entry.confidence),
+      explanation: string(entry.explanation),
       preferredRealization: "free" as const,
       allowedRealizations: ["free", "combined"] as const,
       avoid: [],
@@ -235,13 +242,64 @@ function parseProsody(raw: unknown, sentenceId: string, min: number, max: number
   });
 }
 
-function parseEnding(value: unknown): { type: EndingTone; strength: 1 | 2 | 3 } {
+function parseEnding(value: unknown): {
+  type: EndingTone;
+  strength: 1 | 2 | 3;
+  confidence?: number;
+  source?: "acoustic" | "human" | "legacy";
+} {
   const entry = object(value);
   const label = typeof value === "string" ? value : entry.type;
+  const source = entry.source === "acoustic" || entry.source === "human"
+    ? entry.source
+    : "legacy";
   return {
     type: endingAliases[String(label ?? "level")] ?? "level",
     strength: parseStrength(entry.strength ?? 1),
+    confidence: number(entry.confidence),
+    source,
   };
+}
+
+function parseMacroProsodyPath(value: unknown, min: number, max: number): MacroProsodyPath | undefined {
+  const entry = object(value);
+  const rawPoints = Array.isArray(entry.points) ? entry.points : [];
+  const points = rawPoints.flatMap((value) => {
+    const point = object(value);
+    const tokenIndex = integer(point.token_index ?? point.tokenIndex);
+    const normalizedLevel = number(point.normalized_level ?? point.normalizedLevel);
+    if (tokenIndex === undefined || tokenIndex < min || tokenIndex > max || normalizedLevel === undefined) {
+      return [];
+    }
+    return [{
+      tokenIndex,
+      normalizedLevel,
+      rawNormalizedPitch: number(point.raw_normalized_pitch ?? point.rawNormalizedPitch),
+    }];
+  }).sort((left, right) => left.tokenIndex - right.tokenIndex);
+  if (!points.length) return undefined;
+  const segments = (Array.isArray(entry.segments) ? entry.segments : []).flatMap((value) => {
+    const segment = object(value);
+    const startIndex = integer(segment.start_index ?? segment.startIndex);
+    const endIndex = integer(segment.end_index ?? segment.endIndex);
+    const type = String(segment.type ?? "");
+    const startLevel = number(segment.start_level ?? segment.startLevel);
+    const endLevel = number(segment.end_level ?? segment.endLevel);
+    if (
+      startIndex === undefined || endIndex === undefined || startIndex < min || endIndex > max
+      || endIndex < startIndex || !["level", "rising", "falling"].includes(type)
+      || startLevel === undefined || endLevel === undefined
+    ) return [];
+    return [{
+      startIndex,
+      endIndex,
+      type: type as "level" | "rising" | "falling",
+      startLevel,
+      endLevel,
+      confidence: number(segment.confidence),
+    }];
+  });
+  return { points, segments, source: "acoustic" };
 }
 
 function parseRhythm(value: unknown): Rhythm {
@@ -328,9 +386,12 @@ function validateAnnotationIndexes(
     if (explicit.length) explicit.forEach((index) => ensure(index, "重音"));
     else if (single !== undefined) ensure(single, "重音");
     else {
-      const span = item.span ?? item.active_span ?? item.activeSpan;
+      const span = item.focus_span ?? item.focusSpan ?? item.span ?? item.active_span ?? item.activeSpan;
       if (span === undefined) throw new Error(`第 ${sentenceNumber} 句存在无法识别的重音标记。`);
       validateSpan(span, sentenceNumber, "重音区间", min, max);
+      const parsedFocusSpan = parseSpan(span, { start: min, end: max }, min, max);
+      const core = item.focus_core ?? item.focusCore ?? item.core_span ?? item.coreSpan;
+      validateSpan(core, sentenceNumber, "重音核心区", parsedFocusSpan.start, parsedFocusSpan.end);
     }
   });
 
@@ -487,6 +548,11 @@ export function importControlSpec(
       function: "",
       rhythm: parseRhythm(entry.rhythm),
       continuity: "connected",
+      macroProsodyPath: parseMacroProsodyPath(
+        entry.macro_prosody_path ?? entry.macroProsodyPath,
+        min,
+        max,
+      ),
       prosody: parseProsody(entry.prosody, id, min, max),
       endingIntonation: parseEnding(entry.ending_intonation ?? entry.endingIntonation),
       focus: parseFocus(entry.focus, id, tokensByIndex, min, max),

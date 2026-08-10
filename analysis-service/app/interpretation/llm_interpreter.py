@@ -83,22 +83,134 @@ def _validate_against_analysis(
             raise InterpretationError(f"LLM changed the text or token range of sentence {position}")
 
 
+def _focus_core(
+    *,
+    start: int,
+    end: int,
+    acoustics: dict[int, dict[str, Any]],
+) -> dict[str, int]:
+    scored: list[tuple[float, int]] = []
+    for index in range(start, end + 1):
+        evidence = acoustics.get(index, {})
+        duration_ratio = float(evidence.get("local_duration_ratio") or 1)
+        energy = abs(float(evidence.get("normalized_energy") or 0))
+        pitch = abs(float(evidence.get("normalized_pitch") or 0))
+        voiced = float(evidence.get("voiced_ratio") or 0)
+        score = abs(duration_ratio - 1) * 0.42 + energy * 0.32 + pitch * 0.21 + voiced * 0.05
+        scored.append((score, index))
+    if not scored:
+        return {"start": start, "end": start}
+    scored.sort(reverse=True)
+    best_score, best_index = scored[0]
+    core_indexes = [best_index]
+    for score, index in scored[1:]:
+        if abs(index - best_index) == 1 and best_score > 0 and score >= best_score * 0.86:
+            core_indexes.append(index)
+    return {"start": min(core_indexes), "end": max(core_indexes)}
+
+
+def _acoustic_pauses(
+    analysis_package: dict[str, Any], start: int, end: int
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "after_index": int(item["after_index"]),
+            "type": "long" if item.get("relative_level") == "long" else "short",
+            "observed_gap_ms": int(item["gap_ms"]),
+            "source": "acoustic",
+            "confidence": 0.95,
+        }
+        for item in analysis_package["acoustic_evidence"].get("pauses", [])
+        if start <= int(item["after_index"]) <= end
+    ]
+
+
+def _acoustic_prolongations(
+    analysis_package: dict[str, Any], start: int, end: int
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for item in analysis_package["acoustic_evidence"].get("duration_outliers", []):
+        index = int(item["token_index"])
+        if index < start or index > end:
+            continue
+        ratio = float(item.get("local_duration_ratio") or 1)
+        degree = 1 if ratio < 1.7 else 2 if ratio < 2.1 else 3
+        result.append(
+            {
+                "token_index": index,
+                "degree": degree,
+                "duration_ms": int(item.get("duration_ms") or 0),
+                "local_duration_ratio": round(ratio, 3),
+                "source": "acoustic",
+                "confidence": round(min(0.98, 0.58 + max(0, ratio - 1.45) / 1.5), 3),
+            }
+        )
+    return result
+
+
 def assemble_control_spec(
     interpretation: LlmInterpretation,
     analysis_package: dict[str, Any],
 ) -> dict[str, Any]:
     _validate_against_analysis(interpretation, analysis_package)
-    gap_by_index = {
-        int(item["after_index"]): int(item["gap_ms"])
-        for item in analysis_package["acoustic_evidence"]["pauses"]
+    acoustics = {
+        int(item["token_index"]): item
+        for item in analysis_package.get("acoustic_evidence", {}).get("tokens", [])
     }
     sentences = []
-    for sentence in interpretation.sentences:
-        item = sentence.model_dump(mode="json")
-        for pause in item["pauses"]:
-            if pause.get("observed_gap_ms") is None:
-                pause["observed_gap_ms"] = gap_by_index.get(int(pause["after_index"]))
-        sentences.append(item)
+    for sentence, segment in zip(
+        interpretation.sentences,
+        analysis_package["segments"],
+        strict=True,
+    ):
+        focus = []
+        for entry in sentence.focus_spans:
+            span = entry.focus_span.model_dump(mode="json")
+            focus.append(
+                {
+                    "focus_span": span,
+                    "focus_core": _focus_core(
+                        start=span["start"],
+                        end=span["end"],
+                        acoustics=acoustics,
+                    ),
+                    "level": "primary",
+                    "confidence": entry.confidence,
+                    "explanation": entry.explanation,
+                }
+            )
+        rhythm = sentence.rhythm.model_dump(mode="json") if sentence.rhythm else {"type": "relaxed"}
+        sentences.append(
+            {
+                "text": sentence.text,
+                "start_index": sentence.start_index,
+                "end_index": sentence.end_index,
+                "focus": focus,
+                "pauses": _acoustic_pauses(
+                    analysis_package, sentence.start_index, sentence.end_index
+                ),
+                "prolongations": _acoustic_prolongations(
+                    analysis_package, sentence.start_index, sentence.end_index
+                ),
+                "macro_prosody_path": segment.get(
+                    "macro_prosody_path", {"points": [], "segments": []}
+                ),
+                "prosody": [entry.model_dump(mode="json") for entry in sentence.prosody],
+                "ending_intonation": segment.get(
+                    "ending_intonation",
+                    {
+                        "type": "level",
+                        "strength": 1,
+                        "confidence": 0.2,
+                        "source": "acoustic",
+                    },
+                ),
+                "rhythm": {**rhythm, "confidence": sentence.confidence},
+                "text_logic": sentence.text_logic,
+                "emotional_interpretation": sentence.emotional_interpretation,
+                "confidence": sentence.confidence,
+            }
+        )
     tokens = [
         {
             "index": token["index"],
@@ -157,10 +269,13 @@ async def interpret_control_spec(
             {
                 "role": "user",
                 "content": (
-                    "请解释以下当前作品的声音证据。每个 sentence 必须原样返回 text、start_index、end_index，"
-                    "并给出 focus、pauses、prolongations、prosody、ending_intonation、rhythm、confidence。"
-                    "判断 prosody 时必须综合宏观音高、能量、时值、停连和语义，不能让普通话单字声调或单个 F0 极值决定类型。"
-                    "只依据可见证据和文本语义；不确定时降低 confidence。"
+                    "请解释以下当前作品的声音证据。每个 sentence 必须原样返回 text、start_index、end_index。"
+                    "你只负责 focus_spans、文本逻辑、情感解释、rhythm，以及把连续 macro_prosody_path 解释为教学语势事件。"
+                    "停顿、拖音、句尾语调和基础声音路径由声学层直接生成，不要在输出中重复判断。"
+                    "focus_spans 表示教学上整体标红的焦点词组；其内部声学核心由系统另算。"
+                    "prosody 可以为空或包含多个连续事件，不得为了填字段强行标注。"
+                    "判断 prosody 时必须尊重路径的真实连续高度，综合音高、能量、时值、停连和语义，"
+                    "不能让普通话单字声调或单个 F0 极值决定类型。证据不足时返回空数组或降低 confidence。"
                     "仅返回一个合法 JSON 对象，不得添加 Markdown 或解释文字。输出必须符合下面的 JSON Schema：\n"
                     + schema_text
                     + "\n\n声音证据：\n"

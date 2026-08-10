@@ -191,6 +191,7 @@ interface CurveMetrics {
   activeEnd: number;
   coreStart: number;
   coreEnd: number;
+  tokenCenters: Record<number, number>;
 }
 
 function ProsodyCurve({
@@ -279,6 +280,102 @@ function ProsodyCurve({
   );
 }
 
+function smoothPointPath(points: Array<{ x: number; y: number }>) {
+  if (!points.length) return "";
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  return points.slice(1).reduce((path, point, index) => {
+    const previous = points[index];
+    const middleX = (previous.x + point.x) / 2;
+    return `${path} C ${middleX} ${previous.y}, ${middleX} ${point.y}, ${point.x} ${point.y}`;
+  }, `M ${points[0].x} ${points[0].y}`);
+}
+
+function AcousticProsodyCurve({
+  sentence,
+  metrics,
+  active,
+}: {
+  sentence: RecitationSentence;
+  metrics: CurveMetrics;
+  active: boolean;
+}) {
+  const macro = sentence.macroProsodyPath;
+  const acousticPoints = (macro?.points ?? []).flatMap((point) => {
+    const x = metrics.tokenCenters[point.tokenIndex];
+    return Number.isFinite(x) ? [{ ...point, x }] : [];
+  });
+  if (metrics.width <= 0 || acousticPoints.length < 2) return null;
+
+  const height = metrics.height;
+  const levels = acousticPoints.map((point) => point.normalizedLevel);
+  const rawMin = Math.min(...levels);
+  const rawMax = Math.max(...levels);
+  const center = (rawMin + rawMax) / 2;
+  const range = Math.max(2, rawMax - rawMin + 0.8);
+  const yFor = (level: number) => height / 2 - ((level - center) / range) * (height - 16);
+  const points = acousticPoints.map((point) => ({
+    ...point,
+    y: yFor(point.normalizedLevel),
+  }));
+  const baselineY = yFor(0);
+  const label = sentence.prosody.length
+    ? sentence.prosody.map((event) => PROSODY_LABELS[event.type]).join("、")
+    : "真实宏观声音路径";
+
+  return (
+    <svg
+      className="prosody-curve acoustic-prosody-curve"
+      viewBox={`0 0 ${metrics.width} ${height}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={`${label}；声学连续曲线`}
+    >
+      <line
+        className="curve-baseline"
+        x1={points[0].x}
+        x2={points.at(-1)?.x ?? points[0].x}
+        y1={baselineY}
+        y2={baselineY}
+      />
+      <path className="curve-path acoustic-path" d={smoothPointPath(points)} />
+      {sentence.prosody.map((event) => {
+        let eventPoints = points.filter(
+          (point) => point.tokenIndex >= event.activeSpan.start && point.tokenIndex <= event.activeSpan.end,
+        );
+        if (eventPoints.length === 1) {
+          const position = points.findIndex((point) => point.tokenIndex === eventPoints[0].tokenIndex);
+          eventPoints = points.slice(Math.max(0, position - 1), Math.min(points.length, position + 2));
+        }
+        if (eventPoints.length < 2) return null;
+        const corePoints = eventPoints.filter(
+          (point) => point.tokenIndex >= event.coreZone.start && point.tokenIndex <= event.coreZone.end,
+        );
+        const candidates = corePoints.length ? corePoints : eventPoints;
+        const anchor = event.type === "peak"
+          ? candidates.reduce((best, point) => point.y < best.y ? point : best)
+          : event.type === "valley"
+            ? candidates.reduce((best, point) => point.y > best.y ? point : best)
+            : candidates.at(-1)!;
+        return (
+          <g key={event.id} aria-label={`${PROSODY_LABELS[event.type]}，强度 ${event.strength}`}>
+            <path
+              className={active ? "curve-path event-path active" : "curve-path event-path"}
+              d={smoothPointPath(eventPoints)}
+            />
+            <circle
+              className={active ? "curve-dot active" : "curve-dot"}
+              data-prosody-anchor="true"
+              cx={anchor.x}
+              cy={anchor.y}
+              r={active ? 4.5 : 3.5}
+            />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function ToneArrow({ type }: { type: EndingTone }) {
   return (
     <span className={`tone-arrow tone-${type}`} aria-label={ENDING_LABELS[type]}>
@@ -307,6 +404,7 @@ function IndexedGraphTrack({
     activeEnd: 0,
     coreStart: 0,
     coreEnd: 0,
+    tokenCenters: {},
   });
   const prosody = primaryProsody(sentence);
   const focused = focusSet(sentence);
@@ -324,26 +422,35 @@ function IndexedGraphTrack({
     const activeEnd = prosody && tokenRefs.current.get(prosody.activeSpan.end);
     const coreStart = prosody && tokenRefs.current.get(prosody.coreZone.start);
     const coreEnd = prosody && tokenRefs.current.get(prosody.coreZone.end);
-    if (!track || !first || !last || !activeStart || !activeEnd || !coreStart || !coreEnd) return;
+    if (!track || !first || !last) return;
 
     const trackRect = track.getBoundingClientRect();
     const firstRect = first.getBoundingClientRect();
     const lastRect = last.getBoundingClientRect();
-    const activeStartRect = activeStart.getBoundingClientRect();
-    const activeEndRect = activeEnd.getBoundingClientRect();
-    const coreStartRect = coreStart.getBoundingClientRect();
-    const coreEndRect = coreEnd.getBoundingClientRect();
+    const activeStartRect = activeStart?.getBoundingClientRect();
+    const activeEndRect = activeEnd?.getBoundingClientRect();
+    const coreStartRect = coreStart?.getBoundingClientRect();
+    const coreEndRect = coreEnd?.getBoundingClientRect();
+    const tokenCenters = Object.fromEntries(
+      sentence.tokens.flatMap((token) => {
+        const element = tokenRefs.current.get(token.index);
+        if (!element) return [];
+        const rect = element.getBoundingClientRect();
+        return [[token.index, rect.left - trackRect.left + rect.width / 2]];
+      }),
+    );
     setMetrics({
       width: trackRect.width,
       height: 64,
       trackStart: firstRect.left - trackRect.left + firstRect.width / 2,
       trackEnd: lastRect.left - trackRect.left + lastRect.width / 2,
-      activeStart: activeStartRect.left - trackRect.left,
-      activeEnd: activeEndRect.right - trackRect.left,
-      coreStart: coreStartRect.left - trackRect.left,
-      coreEnd: coreEndRect.right - trackRect.left,
+      activeStart: activeStartRect ? activeStartRect.left - trackRect.left : firstRect.left - trackRect.left,
+      activeEnd: activeEndRect ? activeEndRect.right - trackRect.left : lastRect.right - trackRect.left,
+      coreStart: coreStartRect ? coreStartRect.left - trackRect.left : firstRect.left - trackRect.left,
+      coreEnd: coreEndRect ? coreEndRect.right - trackRect.left : lastRect.right - trackRect.left,
+      tokenCenters,
     });
-  }, [lastSpokenIndex, prosody, spokenTokens]);
+  }, [lastSpokenIndex, prosody, sentence.tokens, spokenTokens]);
 
   useLayoutEffect(() => {
     const track = trackRef.current;
@@ -441,7 +548,13 @@ function IndexedGraphTrack({
             })}
           </div>
           <div className="curve-layer">
-            {prosody ? (
+            {sentence.macroProsodyPath?.points.length ? (
+              <AcousticProsodyCurve
+                sentence={sentence}
+                metrics={metrics}
+                active={active}
+              />
+            ) : prosody ? (
               <ProsodyCurve
                 type={prosody.type}
                 strength={prosody.strength}
@@ -1028,6 +1141,7 @@ function SentenceEditDrawer({
   const [draft, setDraft] = useState<RecitationSentence | null>(() =>
     sentence ? structuredClone(sentence) : null,
   );
+  const [prosodyIndex, setProsodyIndex] = useState(0);
 
   useEffect(() => {
     if (!sentence) return;
@@ -1160,7 +1274,7 @@ function SentenceEditDrawer({
     .map((token) => token.index);
   const sentenceMin = spokenIndexes[0] ?? draft.tokens[0]?.index ?? 0;
   const sentenceMax = spokenIndexes.at(-1) ?? draft.tokens.at(-1)?.index ?? sentenceMin;
-  const currentProsody = primaryProsody(draft) ?? {
+  const currentProsody = draft.prosody[prosodyIndex] ?? {
     id: `${draft.id}-prosody-manual`,
     type: "peak" as const,
     activeSpan: { start: sentenceMin, end: sentenceMax },
@@ -1169,7 +1283,26 @@ function SentenceEditDrawer({
   };
   const updateProsody = (change: Partial<ProsodyEvent>) => {
     const next = { ...currentProsody, ...change };
-    setDraft({ ...draft, prosody: [next, ...draft.prosody.slice(1)] });
+    const prosody = [...draft.prosody];
+    prosody[prosodyIndex] = next;
+    setDraft({ ...draft, prosody });
+  };
+  const addProsody = () => {
+    const next: ProsodyEvent = {
+      id: `${draft.id}-prosody-manual-${draft.prosody.length + 1}`,
+      type: "rising",
+      activeSpan: { start: sentenceMin, end: sentenceMax },
+      coreZone: { start: sentenceMin, end: sentenceMax },
+      strength: 1,
+      confidence: 1,
+    };
+    setDraft({ ...draft, prosody: [...draft.prosody, next] });
+    setProsodyIndex(draft.prosody.length);
+  };
+  const removeProsody = () => {
+    const next = draft.prosody.filter((_, index) => index !== prosodyIndex);
+    setDraft({ ...draft, prosody: next });
+    setProsodyIndex(Math.max(0, Math.min(prosodyIndex, next.length - 1)));
   };
   const updateSpan = (
     field: "activeSpan" | "coreZone",
@@ -1262,7 +1395,23 @@ function SentenceEditDrawer({
           <section className="drawer-section">
             <div className="drawer-label-row">
               <span>语势</span>
-              <small>选择当前句的主要声音走向</small>
+              <small>可以保留一句内部多个连续事件；曲线高度仍来自真实声音路径</small>
+            </div>
+            <div className="segmented-choice prosody-event-tabs">
+              {draft.prosody.map((event, index) => (
+                <button
+                  type="button"
+                  key={event.id}
+                  className={prosodyIndex === index ? "chosen" : ""}
+                  onClick={() => setProsodyIndex(index)}
+                >
+                  {index + 1} · {PROSODY_LABELS[event.type]}
+                </button>
+              ))}
+              <button type="button" onClick={addProsody}>＋ 新增</button>
+              {draft.prosody.length ? (
+                <button type="button" onClick={removeProsody}>删除当前</button>
+              ) : null}
             </div>
             <div className="choice-grid four-choices">
               {prosodyOptions.map((option) => (

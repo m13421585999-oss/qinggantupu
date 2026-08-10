@@ -20,9 +20,10 @@ class Span(StrictModel):
         return self
 
 
-class Focus(StrictModel):
-    token_indexes: list[int] = Field(min_length=1)
-    level: Literal["primary", "secondary"]
+class FocusInterpretation(StrictModel):
+    focus_span: Span
+    confidence: float = Field(ge=0, le=1)
+    explanation: str | None = None
 
 
 class Pause(StrictModel):
@@ -63,27 +64,20 @@ class InterpretedSentence(StrictModel):
     text: str
     start_index: int = Field(ge=0)
     end_index: int = Field(ge=0)
-    focus: list[Focus]
-    pauses: list[Pause]
-    prolongations: list[Prolongation]
+    focus_spans: list[FocusInterpretation]
     prosody: list[Prosody]
-    ending_intonation: EndingIntonation
-    rhythm: Rhythm
+    rhythm: Rhythm | None = None
+    text_logic: str | None = None
+    emotional_interpretation: str | None = None
     confidence: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_indexes(self) -> "InterpretedSentence":
         if self.end_index < self.start_index:
             raise ValueError("sentence end_index must be greater than or equal to start_index")
-        for focus in self.focus:
-            if any(index < self.start_index or index > self.end_index for index in focus.token_indexes):
-                raise ValueError("focus index is outside sentence")
-        for pause in self.pauses:
-            if pause.after_index < self.start_index or pause.after_index > self.end_index:
-                raise ValueError("pause index is outside sentence")
-        for prolongation in self.prolongations:
-            if prolongation.token_index < self.start_index or prolongation.token_index > self.end_index:
-                raise ValueError("prolongation index is outside sentence")
+        for focus in self.focus_spans:
+            if focus.focus_span.start < self.start_index or focus.focus_span.end > self.end_index:
+                raise ValueError("focus span is outside sentence")
         for event in self.prosody:
             if event.active_span.start < self.start_index or event.active_span.end > self.end_index:
                 raise ValueError("prosody span is outside sentence")

@@ -53,7 +53,12 @@ export interface FocusTarget {
   id: string;
   tokenIds: string[];
   tokenIndexes: number[];
+  /** Acoustic core inside the teaching-facing focus span. */
+  coreTokenIds?: string[];
+  coreTokenIndexes?: number[];
   level: "primary" | "secondary";
+  confidence?: number;
+  explanation?: string;
   preferredRealization: FocusRealization;
   allowedRealizations: FocusRealization[];
   avoid: string[];
@@ -90,6 +95,27 @@ export interface ProsodyEvent {
   confidence?: number;
 }
 
+export interface MacroProsodyPoint {
+  tokenIndex: number;
+  normalizedLevel: number;
+  rawNormalizedPitch?: number;
+}
+
+export interface MacroProsodySegment {
+  startIndex: number;
+  endIndex: number;
+  type: "level" | "rising" | "falling";
+  startLevel: number;
+  endLevel: number;
+  confidence?: number;
+}
+
+export interface MacroProsodyPath {
+  points: MacroProsodyPoint[];
+  segments: MacroProsodySegment[];
+  source: "acoustic";
+}
+
 export interface RecitationSentence {
   id: string;
   order: number;
@@ -97,10 +123,13 @@ export interface RecitationSentence {
   function: string;
   rhythm: Rhythm;
   continuity: "connected" | "balanced" | "segmented";
+  macroProsodyPath?: MacroProsodyPath;
   prosody: ProsodyEvent[];
   endingIntonation: {
     type: EndingTone;
     strength: 1 | 2 | 3;
+    confidence?: number;
+    source?: "acoustic" | "human" | "legacy";
   };
   focus: FocusTarget[];
   voiceQuality: {
@@ -261,6 +290,8 @@ export interface AnalysisSentenceSummary {
   pitch_summary: unknown;
   energy_summary: unknown;
   macro_pitch_contour: unknown;
+  macro_prosody_path?: unknown;
+  ending_intonation?: unknown;
 }
 
 export interface RecitationAnalysisPackage {

@@ -11,6 +11,7 @@ import numpy as np
 import parselmouth
 
 from app.acoustics.contour import (
+    continuous_macro_prosody_path,
     finite,
     macro_contour,
     robust_z,
@@ -141,6 +142,108 @@ def _pause_evidence(
     return result
 
 
+def _ending_intonation(
+    evidence: list[dict[str, Any]],
+    positions: list[int],
+    macro_path: dict[str, Any],
+    tail_pitch_path: list[dict[str, Any]],
+) -> dict[str, Any]:
+    valid = [
+        position
+        for position in positions
+        if evidence[position].get("pitch_start") is not None
+        and evidence[position].get("pitch_end") is not None
+        and float(evidence[position].get("voiced_ratio") or 0) >= 0.15
+    ]
+    if not valid:
+        return {
+            "type": "level",
+            "strength": 1,
+            "confidence": 0.2,
+            "source": "acoustic",
+            "evidence_indexes": [],
+            "pitch_delta": None,
+        }
+
+    final_positions = valid[-3:]
+    last = evidence[final_positions[-1]]
+    within_final = float(last.get("pitch_delta") or 0)
+    path_points = [
+        point
+        for point in macro_path.get("points", [])
+        if int(point["token_index"]) in {int(evidence[position]["token_index"]) for position in final_positions}
+    ]
+    across_final = 0.0
+    if len(path_points) >= 2:
+        across_final = float(path_points[-1]["normalized_level"]) - float(
+            path_points[0]["normalized_level"]
+        )
+
+    tail_delta = 0.0
+    if len(tail_pitch_path) >= 2:
+        tail_delta = float(tail_pitch_path[-1]["normalized_level"]) - float(
+            tail_pitch_path[-2]["normalized_level"]
+        )
+    if abs(tail_delta) >= 0.55:
+        delta = tail_delta
+    elif abs(within_final) >= 0.65:
+        delta = within_final * 0.72 + across_final * 0.28
+    else:
+        delta = across_final * 0.72 + within_final * 0.28
+    ending_type = "rising" if delta >= 0.55 else "falling" if delta <= -0.55 else "level"
+    movement = abs(delta)
+    strength = 1 if movement < 1.2 else 2 if movement < 2.5 else 3
+    confidence = min(0.98, 0.5 + movement / 4) if ending_type != "level" else max(0.45, 0.7 - movement / 3)
+    return {
+        "type": ending_type,
+        "strength": strength,
+        "confidence": round(confidence, 3),
+        "source": "acoustic",
+        "evidence_indexes": [int(evidence[position]["token_index"]) for position in final_positions],
+        "pitch_delta": round(delta, 3),
+        "within_final_syllable_delta": round(within_final, 3),
+        "final_phrase_delta": round(across_final, 3),
+        "tail_frame_delta": round(tail_delta, 3),
+        "tail_pitch_path": tail_pitch_path,
+    }
+
+
+def _tail_pitch_path(
+    pitch_times: np.ndarray,
+    pitch_values: np.ndarray,
+    start_ms: int,
+    end_ms: int,
+    reference_f0: list[float | None],
+) -> list[dict[str, Any]]:
+    pool = [value for value in finite(reference_f0) if value > 0]
+    if not pool:
+        return []
+    reference = float(median(pool))
+    start_s = max(start_ms / 1000, end_ms / 1000 - 1.3)
+    end_s = end_ms / 1000
+    boundaries = np.linspace(start_s, end_s, 5)
+    result: list[dict[str, Any]] = []
+    for position in range(4):
+        mask = (pitch_times >= boundaries[position]) & (pitch_times < boundaries[position + 1])
+        samples = [
+            float(value)
+            for value in pitch_values[mask]
+            if math.isfinite(float(value))
+            and float(value) > 0
+            and reference / 2.2 <= float(value) <= reference * 2.2
+        ]
+        if not samples:
+            continue
+        f0 = float(median(samples))
+        result.append(
+            {
+                "relative_position": round((position + 0.5) / 4, 3),
+                "normalized_level": round(12 * math.log2(f0 / reference), 3),
+            }
+        )
+    return result
+
+
 def _sentence_summary(
     tokens: list[dict[str, Any]],
     evidence: list[dict[str, Any]],
@@ -149,6 +252,9 @@ def _sentence_summary(
     start: int,
     end: int,
     order: int,
+    pitch_times: np.ndarray,
+    pitch_values: np.ndarray,
+    reference_f0: list[float | None],
 ) -> dict[str, Any]:
     positions = [
         position for position in range(start, end + 1) if tokens[position]["char"] not in PUNCTUATION
@@ -166,6 +272,18 @@ def _sentence_summary(
     sentence_durations = [item for item in duration_outliers if start <= item["token_index"] <= end]
     pitch_pool = finite(smooth_pitch)
     energy_pool = finite(energy)
+    tail_pitch_path = _tail_pitch_path(
+        pitch_times,
+        pitch_values,
+        int(start_ms),
+        int(end_ms),
+        reference_f0,
+    )
+    pitch_for_path = list(pitch)
+    if len(tail_pitch_path) >= 2 and len(pitch_for_path) >= 2:
+        pitch_for_path[-2] = tail_pitch_path[-2]["normalized_level"]
+        pitch_for_path[-1] = tail_pitch_path[-1]["normalized_level"]
+    macro_path = continuous_macro_prosody_path(indexes, pitch_for_path)
     return {
         "id": f"sentence-{order}",
         "order": order,
@@ -203,6 +321,13 @@ def _sentence_summary(
             ],
         },
         "macro_pitch_contour": macro_contour(indexes, smooth_pitch),
+        "macro_prosody_path": macro_path,
+        "ending_intonation": _ending_intonation(
+            evidence,
+            positions,
+            macro_path,
+            tail_pitch_path,
+        ),
         "macro_energy_contour": macro_contour(
             indexes,
             energy,
@@ -223,7 +348,16 @@ def analyze_wav(
 ) -> dict[str, Any]:
     try:
         sound = parselmouth.Sound(str(wav_path))
-        pitch = sound.to_pitch(time_step=0.01, pitch_floor=60, pitch_ceiling=500)
+        pitch = sound.to_pitch_cc(
+            time_step=0.01,
+            pitch_floor=55,
+            pitch_ceiling=500,
+            very_accurate=True,
+            silence_threshold=0.015,
+            voicing_threshold=0.32,
+            octave_jump_cost=0.4,
+            voiced_unvoiced_cost=0.18,
+        )
         intensity = sound.to_intensity(time_step=0.01, minimum_pitch=60)
     except Exception as exc:  # Parselmouth exposes native exception types.
         raise AcousticAnalysisError(f"Parselmouth could not analyze the audio: {exc}") from exc
@@ -239,6 +373,9 @@ def analyze_wav(
         end_s = token["end_ms"] / 1000
         raw_pitch = _interval(pitch_times, pitch_values, start_s, end_s)
         f0_samples = [value for value in raw_pitch if value > 0]
+        edge_size = max(1, len(f0_samples) // 3)
+        f0_start = float(median(f0_samples[:edge_size])) if f0_samples else None
+        f0_end = float(median(f0_samples[-edge_size:])) if f0_samples else None
         intensity_samples = _interval(intensity_times, intensity_values, start_s, end_s)
         token_acoustics.append(
             {
@@ -247,7 +384,13 @@ def analyze_wav(
                 "duration_ms": max(0, token["end_ms"] - token["start_ms"]),
                 "local_duration_ratio": None,
                 "f0_hz": round(float(median(f0_samples)), 2) if f0_samples else None,
+                "_pitch_start_hz": f0_start,
+                "_pitch_end_hz": f0_end,
                 "normalized_pitch": None,
+                "pitch_start": None,
+                "pitch_end": None,
+                "pitch_delta": None,
+                "pitch_trend": "level",
                 "intensity_db": round(float(np.mean(intensity_samples)), 2) if intensity_samples else None,
                 "normalized_energy": None,
                 "voiced_ratio": round(len(f0_samples) / max(len(raw_pitch), 1), 3),
@@ -268,6 +411,15 @@ def analyze_wav(
         item = token_acoustics[position]
         item["local_duration_ratio"] = round(item["duration_ms"] / max(baseline, 1), 3)
         item["normalized_pitch"] = rounded(semitone_normalize(item["f0_hz"], f0_pool))
+        item["pitch_start"] = rounded(semitone_normalize(item["_pitch_start_hz"], f0_pool))
+        item["pitch_end"] = rounded(semitone_normalize(item["_pitch_end_hz"], f0_pool))
+        if item["pitch_start"] is not None and item["pitch_end"] is not None:
+            item["pitch_delta"] = round(float(item["pitch_end"]) - float(item["pitch_start"]), 3)
+            item["pitch_trend"] = (
+                "rising" if item["pitch_delta"] >= 0.55
+                else "falling" if item["pitch_delta"] <= -0.55
+                else "level"
+            )
         item["normalized_energy"] = rounded(robust_z(item["intensity_db"], energy_pool))
 
     for order in range(len(spoken_positions) - 1):
@@ -291,7 +443,18 @@ def analyze_wav(
         and item["local_duration_ratio"] >= 1.45
     ]
     sentences = [
-        _sentence_summary(tokens, token_acoustics, pauses, duration_outliers, start, end, order + 1)
+        _sentence_summary(
+            tokens,
+            token_acoustics,
+            pauses,
+            duration_outliers,
+            start,
+            end,
+            order + 1,
+            pitch_times,
+            pitch_values,
+            f0_pool,
+        )
         for order, (start, end) in enumerate(sentence_ranges)
     ]
     energy_changes = [
@@ -304,6 +467,9 @@ def analyze_wav(
         for item in token_acoustics
         if item.get("normalized_energy") is not None and abs(item["normalized_energy"]) >= 0.9
     ]
+    for item in token_acoustics:
+        item.pop("_pitch_start_hz", None)
+        item.pop("_pitch_end_hz", None)
     return {
         "duration_ms": round(sound.get_total_duration() * 1000),
         "sample_rate": round(sound.sampling_frequency),

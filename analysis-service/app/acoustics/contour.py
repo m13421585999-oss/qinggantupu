@@ -104,3 +104,103 @@ def macro_contour(
             }
         )
     return result
+
+
+def _interpolate_missing(values: list[float | None]) -> list[float] | None:
+    """Interpolate short unvoiced holes without inventing an absolute pitch level."""
+
+    valid = [(index, float(value)) for index, value in enumerate(values) if value is not None]
+    if not valid:
+        return None
+    positions = np.arange(len(values), dtype=float)
+    known_positions = np.asarray([item[0] for item in valid], dtype=float)
+    known_values = np.asarray([item[1] for item in valid], dtype=float)
+    return [float(value) for value in np.interp(positions, known_positions, known_values)]
+
+
+def continuous_macro_prosody_path(
+    indexes: list[int],
+    values: list[float | None],
+) -> dict[str, Any]:
+    """Build one height-continuous macro F0 path anchored to source token indexes.
+
+    The path is deliberately less sensitive to lexical-tone spikes than the raw
+    per-token F0 values, while retaining the first and final movements so an
+    authentic sentence ending cannot disappear during smoothing.
+    """
+
+    if not indexes or len(indexes) != len(values):
+        return {"points": [], "segments": []}
+    interpolated = _interpolate_missing(values)
+    if interpolated is None:
+        return {"points": [], "segments": []}
+
+    smoothed: list[float] = []
+    for position, raw in enumerate(interpolated):
+        window = interpolated[max(0, position - 2) : position + 3]
+        local_center = float(median(window))
+        raw_weight = 0.68 if position in {0, len(interpolated) - 1} else 0.32
+        smoothed.append(raw * raw_weight + local_center * (1 - raw_weight))
+
+    points = [
+        {
+            "token_index": index,
+            "raw_normalized_pitch": rounded(values[position]),
+            "normalized_level": round(smoothed[position], 3),
+        }
+        for position, index in enumerate(indexes)
+    ]
+    if len(points) == 1:
+        return {
+            "points": points,
+            "segments": [
+                {
+                    "start_index": indexes[0],
+                    "end_index": indexes[0],
+                    "type": "level",
+                    "start_level": points[0]["normalized_level"],
+                    "end_level": points[0]["normalized_level"],
+                    "confidence": 0.5,
+                }
+            ],
+        }
+
+    deltas = [smoothed[position + 1] - smoothed[position] for position in range(len(smoothed) - 1)]
+    nonzero = [abs(value) for value in deltas if abs(value) > 0.02]
+    adaptive = float(median(nonzero)) * 0.55 if nonzero else 0.22
+    threshold = max(0.18, min(0.42, adaptive))
+    labels = [
+        "rising" if delta > threshold else "falling" if delta < -threshold else "level"
+        for delta in deltas
+    ]
+
+    # A single flat edge between two movements in the same direction is usually
+    # a smoothing plateau, not a new teaching event.
+    for position in range(1, len(labels) - 1):
+        if labels[position] == "level" and labels[position - 1] == labels[position + 1] != "level":
+            labels[position] = labels[position - 1]
+
+    runs: list[tuple[int, int, str]] = []
+    run_start = 0
+    for position in range(1, len(labels) + 1):
+        if position == len(labels) or labels[position] != labels[run_start]:
+            runs.append((run_start, position - 1, labels[run_start]))
+            run_start = position
+
+    segments = []
+    for start_edge, end_edge, kind in runs:
+        start_level = smoothed[start_edge]
+        end_level = smoothed[end_edge + 1]
+        movement = abs(end_level - start_level)
+        confidence = 0.55 if kind == "level" else min(0.96, 0.58 + movement / 4)
+        segments.append(
+            {
+                "start_index": indexes[start_edge],
+                "end_index": indexes[end_edge + 1],
+                "type": kind,
+                "start_level": round(start_level, 3),
+                "end_level": round(end_level, 3),
+                "confidence": round(confidence, 3),
+            }
+        )
+    return {"points": points, "segments": segments}
