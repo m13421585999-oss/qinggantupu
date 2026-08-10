@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildElevenTimeline, compileElevenV3Prompt } from "../lib/eleven-tts.ts";
+import {
+  buildElevenTimeline,
+  buildElevenV3Request,
+  compileElevenV3Prompt,
+} from "../lib/eleven-tts.ts";
 
 function controlSpec(text = "面朝大海，春暖花开。") {
   const tokens = Array.from(text).map((char, index) => ({
@@ -39,6 +43,17 @@ function alignmentFor(text) {
     },
   };
 }
+
+test("Eleven with-timestamps request explicitly selects v3 and Natural stability", () => {
+  const request = buildElevenV3Request("面朝大海，春暖花开。");
+
+  assert.equal(request.model_id, "eleven_v3");
+  assert.equal(request.language_code, "zh");
+  assert.equal(request.voice_settings.stability, 0.5);
+  assert.deepEqual(Object.keys(request.voice_settings), ["stability"]);
+  assert.equal(request.text, "面朝大海，春暖花开。");
+  assert.doesNotMatch(JSON.stringify(request), /api.?key|xi-api-key/i);
+});
 
 test("prompt compiler compresses the control spec into minimal sufficient directions", () => {
   const spec = controlSpec();

@@ -174,6 +174,23 @@ interface AnalysisJobPayload {
   work?: RecitationWork;
 }
 
+interface ElevenPromptDebugSnapshot {
+  request_state: "preview" | "sent";
+  model_id: string;
+  voice_id: string;
+  stability: number;
+  stability_preset: string;
+  final_eleven_text: string;
+  control_spec_version_id?: string;
+  audio_version_id?: string;
+  generated_at?: string;
+}
+
+interface ElevenPromptDebugPayload {
+  preview: ElevenPromptDebugSnapshot;
+  last_sent: ElevenPromptDebugSnapshot | null;
+}
+
 function analysisErrorMessage(error: AnalysisJobPayload["error"]) {
   if (typeof error === "string" && error.trim()) return error;
   if (error && typeof error === "object" && typeof error.message === "string") {
@@ -1596,16 +1613,121 @@ function EditorStage({
   );
 }
 
+function ElevenPromptDebugDrawer({
+  debug,
+  onClose,
+  onCopy,
+}: {
+  debug: ElevenPromptDebugPayload | null;
+  onClose: () => void;
+  onCopy: (text: string) => void;
+}) {
+  if (!debug) return null;
+  const sections = [
+    debug.last_sent ? {
+      key: "sent",
+      kicker: "最近一次实际发送",
+      title: "已保存的 Eleven 请求",
+      snapshot: debug.last_sent,
+    } : null,
+    {
+      key: "preview",
+      kicker: "当前生成前预览",
+      title: "此刻重新生成将发送",
+      snapshot: debug.preview,
+    },
+  ].filter(Boolean) as Array<{
+    key: string;
+    kicker: string;
+    title: string;
+    snapshot: ElevenPromptDebugSnapshot;
+  }>;
+
+  return (
+    <div className="sentence-drawer-backdrop prompt-debug-backdrop">
+      <button
+        type="button"
+        className="sentence-drawer-scrim"
+        aria-label="关闭 Eleven 提示词面板"
+        onClick={onClose}
+      />
+      <aside
+        className="sentence-drawer prompt-debug-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="eleven-prompt-debug-title"
+      >
+        <div className="sentence-drawer-heading">
+          <div>
+            <p className="eyebrow">仅创作端可见 · 不包含 API Key</p>
+            <h2 id="eleven-prompt-debug-title">Eleven 最终提示词</h2>
+          </div>
+          <button type="button" className="drawer-close" onClick={onClose} aria-label="关闭提示词面板">
+            ×
+          </button>
+        </div>
+        <div className="sentence-drawer-body prompt-debug-body">
+          {!debug.last_sent ? (
+            <div className="prompt-debug-empty">
+              当前控制谱还没有实际生成记录；下面显示生成前预览。
+            </div>
+          ) : null}
+          {sections.map(({ key, kicker, title, snapshot }) => (
+            <section className="drawer-section prompt-debug-section" key={key}>
+              <div className="prompt-debug-title-row">
+                <div>
+                  <p className="eyebrow">{kicker}</p>
+                  <h3>{title}</h3>
+                </div>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => onCopy(snapshot.final_eleven_text)}
+                >
+                  复制正文
+                </button>
+              </div>
+              <dl className="prompt-debug-meta">
+                <div><dt>model_id</dt><dd>{snapshot.model_id}</dd></div>
+                <div><dt>voice_id</dt><dd>{snapshot.voice_id || "未配置"}</dd></div>
+                <div><dt>stability</dt><dd>{snapshot.stability} · {snapshot.stability_preset}</dd></div>
+                {snapshot.generated_at ? (
+                  <div><dt>generated_at</dt><dd>{snapshot.generated_at}</dd></div>
+                ) : null}
+              </dl>
+              <div className="prompt-debug-text-heading">
+                <span>final_eleven_text</span>
+                <small>{Array.from(snapshot.final_eleven_text).length} 字符</small>
+              </div>
+              <pre className="prompt-debug-text">{snapshot.final_eleven_text}</pre>
+            </section>
+          ))}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function AudioStage({
   work,
   isGenerating,
+  isPromptDebugLoading,
+  promptDebug,
   onGenerate,
+  onViewPrompt,
+  onClosePrompt,
+  onCopyPrompt,
   onContinue,
   onBack,
 }: {
   work: RecitationWork;
   isGenerating: boolean;
+  isPromptDebugLoading: boolean;
+  promptDebug: ElevenPromptDebugPayload | null;
   onGenerate: () => void;
+  onViewPrompt: () => void;
+  onClosePrompt: () => void;
+  onCopyPrompt: (text: string) => void;
   onContinue: () => void;
   onBack: () => void;
 }) {
@@ -1666,15 +1788,25 @@ function AudioStage({
             <span>字符级时间轴</span>
           </div>
 
-          <button
-            type="button"
-            className="primary-button generate-wide"
-            onClick={onGenerate}
-            disabled={isGenerating}
-          >
-            {isGenerating ? <span className="button-spinner" /> : <span aria-hidden="true">✦</span>}
-            {isGenerating ? "正在生成声音与时间轴" : aiDemo ? "重新生成 AI 示范" : "生成 AI 示范"}
-          </button>
+          <div className="generation-button-row">
+            <button
+              type="button"
+              className="primary-button generate-wide"
+              onClick={onGenerate}
+              disabled={isGenerating}
+            >
+              {isGenerating ? <span className="button-spinner" /> : <span aria-hidden="true">✦</span>}
+              {isGenerating ? "正在生成声音与时间轴" : aiDemo ? "重新生成 AI 示范" : "生成 AI 示范"}
+            </button>
+            <button
+              type="button"
+              className="secondary-button prompt-debug-button"
+              onClick={onViewPrompt}
+              disabled={isPromptDebugLoading}
+            >
+              {isPromptDebugLoading ? "正在读取" : "查看 Eleven 最终提示词"}
+            </button>
+          </div>
           <p className="demo-disclaimer">
             正式调用 Eleven v3 TTS with timestamps；生成失败会显示错误，不会使用占位音频。
           </p>
@@ -1692,6 +1824,12 @@ function AudioStage({
           进入发布预览 <span aria-hidden="true">→</span>
         </button>
       </div>
+
+      <ElevenPromptDebugDrawer
+        debug={promptDebug}
+        onClose={onClosePrompt}
+        onCopy={onCopyPrompt}
+      />
     </section>
   );
 }
@@ -1782,6 +1920,8 @@ function StudioView({
   analysisJobStatus,
   analysisStatus,
   isGenerating,
+  isPromptDebugLoading,
+  promptDebug,
   currentMs,
   activeTokenId,
   timeline,
@@ -1799,6 +1939,9 @@ function StudioView({
   onSave,
   onGenerateStage,
   onGenerate,
+  onViewPrompt,
+  onClosePrompt,
+  onCopyPrompt,
   onPublishStage,
   onPreview,
   onPublish,
@@ -1810,6 +1953,8 @@ function StudioView({
   analysisJobStatus: AnalysisJobStatus;
   analysisStatus: string;
   isGenerating: boolean;
+  isPromptDebugLoading: boolean;
+  promptDebug: ElevenPromptDebugPayload | null;
   currentMs: number;
   activeTokenId?: string;
   timeline?: AudioTimeline;
@@ -1827,6 +1972,9 @@ function StudioView({
   onSave: () => void;
   onGenerateStage: () => void;
   onGenerate: () => void;
+  onViewPrompt: () => void;
+  onClosePrompt: () => void;
+  onCopyPrompt: (text: string) => void;
   onPublishStage: () => void;
   onPreview: () => void;
   onPublish: () => void;
@@ -1888,7 +2036,12 @@ function StudioView({
           <AudioStage
             work={work}
             isGenerating={isGenerating}
+            isPromptDebugLoading={isPromptDebugLoading}
+            promptDebug={promptDebug}
             onGenerate={onGenerate}
+            onViewPrompt={onViewPrompt}
+            onClosePrompt={onClosePrompt}
+            onCopyPrompt={onCopyPrompt}
             onContinue={onPublishStage}
             onBack={() => onStep(3)}
           />
@@ -2012,6 +2165,8 @@ export function RecitationStudio() {
   const [analysisJobStatus, setAnalysisJobStatus] = useState<AnalysisJobStatus>("idle");
   const [analysisStatus, setAnalysisStatus] = useState("等待参考朗诵");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isPromptDebugLoading, setIsPromptDebugLoading] = useState(false);
+  const [promptDebug, setPromptDebug] = useState<ElevenPromptDebugPayload | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -2467,6 +2622,34 @@ export function RecitationStudio() {
     if (nextTrack) setAudioSource(source);
   };
 
+  const handleViewElevenPrompt = async () => {
+    if (isPromptDebugLoading) return;
+    if (work.id.startsWith("draft-") || !work.controlSpec) {
+      showToast("请先保存并确认控制谱");
+      return;
+    }
+    setIsPromptDebugLoading(true);
+    try {
+      const result = await apiJson<ElevenPromptDebugPayload>(
+        await fetch(`/api/works/${encodeURIComponent(work.id)}/ai-demo-prompt`),
+      );
+      setPromptDebug(result);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsPromptDebugLoading(false);
+    }
+  };
+
+  const handleCopyElevenPrompt = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("final_eleven_text 已复制");
+    } catch {
+      showToast("浏览器未允许复制，请在面板中手动选择文本");
+    }
+  };
+
   const handleGenerate = async () => {
     if (isGenerating) return;
     if (!work.controlSpec) { showToast("请先导入并确认情感图谱"); return; }
@@ -2476,6 +2659,7 @@ export function RecitationStudio() {
         await fetch(`/api/works/${encodeURIComponent(work.id)}/ai-demo`, { method: "POST" }),
       );
       setWork(result.work);
+      setPromptDebug(null);
       setAudioSource("ai_demo");
       showToast("Eleven v3 AI 示范与真实字符时间戳已保存");
     } catch (error) {
@@ -2551,6 +2735,8 @@ export function RecitationStudio() {
           analysisJobStatus={analysisJobStatus}
           analysisStatus={analysisStatus}
           isGenerating={isGenerating}
+          isPromptDebugLoading={isPromptDebugLoading}
+          promptDebug={promptDebug}
           currentMs={currentMs}
           activeTokenId={activeTokenId}
           timeline={activeTrack?.timeline}
@@ -2568,6 +2754,9 @@ export function RecitationStudio() {
           onSave={() => work.controlSpec && void persistControlSpec(work.controlSpec, "控制谱草稿已保存")}
           onGenerateStage={() => setWorkflowStep(4)}
           onGenerate={handleGenerate}
+          onViewPrompt={handleViewElevenPrompt}
+          onClosePrompt={() => setPromptDebug(null)}
+          onCopyPrompt={(text) => void handleCopyElevenPrompt(text)}
           onPublishStage={() => setWorkflowStep(5)}
           onPreview={() => { setAudioSource("ai_demo"); setMode("viewer"); }}
           onPublish={handlePublish}

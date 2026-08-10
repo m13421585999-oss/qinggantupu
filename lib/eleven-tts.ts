@@ -1,5 +1,30 @@
 type JsonObject = Record<string, unknown>;
 
+export const ELEVEN_V3_MODEL_ID = "eleven_v3" as const;
+export const ELEVEN_V3_NATURAL_STABILITY = 0.5 as const;
+
+export interface ElevenV3RequestBody {
+  text: string;
+  model_id: typeof ELEVEN_V3_MODEL_ID;
+  language_code: "zh";
+  voice_settings: {
+    stability: typeof ELEVEN_V3_NATURAL_STABILITY;
+  };
+}
+
+/**
+ * Build the exact request body sent to ElevenLabs. Eleven v3 uses the Natural
+ * stability preset (0.5); v3-unsupported similarity/speed controls are omitted.
+ */
+export function buildElevenV3Request(text: string): ElevenV3RequestBody {
+  return {
+    text,
+    model_id: ELEVEN_V3_MODEL_ID,
+    language_code: "zh",
+    voice_settings: { stability: ELEVEN_V3_NATURAL_STABILITY },
+  };
+}
+
 export interface CompiledTtsPrompt {
   text: string;
   sourceOffsets: Map<number, number>;

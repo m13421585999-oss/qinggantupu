@@ -30,6 +30,10 @@ test("worker exposes the production reference-analysis contract", async () => {
   assert.match(worker, /kind: "reference_audio"/);
   assert.match(worker, /audio_sha256|checksum/);
   assert.match(worker, /status = 'succeeded'/);
+  assert.match(worker, /ai-demo-prompt/);
+  assert.match(worker, /eleven_tts_request/);
+  assert.match(worker, /final_eleven_text/);
+  assert.doesNotMatch(worker, /voice_settings: \{ stability: 0\.5, similarity_boost/);
   assert.doesNotMatch(worker, /DEMO_CONTROL_SPEC|createDemoControlSpec|月光下的中国/);
 
   assert.match(env, /ANALYSIS_SERVICE_URL/);

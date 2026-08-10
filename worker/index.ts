@@ -1,7 +1,12 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { importControlSpec } from "@/lib/control-spec-import";
-import { buildElevenTimeline, compileElevenV3Prompt } from "@/lib/eleven-tts";
+import {
+  ELEVEN_V3_NATURAL_STABILITY,
+  buildElevenTimeline,
+  buildElevenV3Request,
+  compileElevenV3Prompt,
+} from "@/lib/eleven-tts";
 
 interface Env {
   ASSETS: Fetcher;
@@ -885,6 +890,60 @@ function decodeBase64(input: string) {
   return bytes;
 }
 
+async function getAiDemoPromptDebug(env: Env, workId: string) {
+  if (!env.DB) {
+    return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 尚未绑定，无法读取 Eleven 请求记录。");
+  }
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  if (!work.current_spec_version_id) {
+    return apiError(409, "CONTROL_SPEC_REQUIRED", "请先导入并确认控制谱。");
+  }
+  const specRow = await first<Row>(env.DB.prepare(
+    "SELECT spec_json FROM control_spec_versions WHERE id = ?",
+  ).bind(work.current_spec_version_id));
+  const spec = parseJson<Record<string, unknown>>(specRow?.spec_json as string | null);
+  if (!spec) return apiError(500, "INVALID_STORED_SPEC", "保存的控制谱无法读取。");
+
+  let prompt: ReturnType<typeof compileElevenV3Prompt>;
+  try {
+    prompt = compileElevenV3Prompt(spec);
+  } catch (error) {
+    return apiError(422, "TTS_PROMPT_COMPILE_FAILED", error instanceof Error ? error.message : String(error));
+  }
+  const previewRequest = buildElevenV3Request(prompt.text);
+  const latest = await first<Row>(env.DB.prepare(
+    `SELECT id, control_spec_version_id, model, voice_id, prompt_text, created_at
+       FROM audio_versions
+      WHERE work_id = ? AND control_spec_version_id = ?
+      ORDER BY created_at DESC LIMIT 1`,
+  ).bind(workId, work.current_spec_version_id));
+
+  return json({
+    preview: {
+      request_state: "preview",
+      control_spec_version_id: work.current_spec_version_id,
+      model_id: previewRequest.model_id,
+      voice_id: env.ELEVENLABS_VOICE_ID?.trim() ?? "",
+      stability: previewRequest.voice_settings.stability,
+      stability_preset: "Natural",
+      final_eleven_text: previewRequest.text,
+    },
+    last_sent: latest ? {
+      request_state: "sent",
+      audio_version_id: latest.id,
+      control_spec_version_id: latest.control_spec_version_id,
+      generated_at: latest.created_at,
+      model_id: latest.model,
+      voice_id: latest.voice_id,
+      // All production Eleven v3 generations have used the fixed Natural value.
+      stability: ELEVEN_V3_NATURAL_STABILITY,
+      stability_preset: "Natural",
+      final_eleven_text: latest.prompt_text,
+    } : null,
+  });
+}
+
 async function generateAiDemo(env: Env, workId: string) {
   if (!env.DB || !env.AUDIO_BUCKET) {
     return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 或 R2 尚未绑定，无法保存 AI 示范。");
@@ -903,6 +962,19 @@ async function generateAiDemo(env: Env, workId: string) {
   } catch (error) {
     return apiError(422, "TTS_PROMPT_COMPILE_FAILED", error instanceof Error ? error.message : String(error));
   }
+  const elevenRequest = buildElevenV3Request(prompt.text);
+  const requestDebug = {
+    event: "eleven_tts_request",
+    work_id: workId,
+    control_spec_version_id: work.current_spec_version_id,
+    model_id: elevenRequest.model_id,
+    voice_id: env.ELEVENLABS_VOICE_ID,
+    stability: elevenRequest.voice_settings.stability,
+    stability_preset: "Natural",
+    final_eleven_text: elevenRequest.text,
+  };
+  // Deliberately excludes ELEVENLABS_API_KEY.
+  console.info("eleven_tts_request", JSON.stringify(requestDebug));
 
   let response: Response;
   try {
@@ -911,12 +983,7 @@ async function generateAiDemo(env: Env, workId: string) {
       {
         method: "POST",
         headers: { "content-type": "application/json", "xi-api-key": env.ELEVENLABS_API_KEY },
-        body: JSON.stringify({
-          text: prompt.text,
-          model_id: "eleven_v3",
-          language_code: "zh",
-          voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: 1.0 },
-        }),
+        body: JSON.stringify(elevenRequest),
       },
     );
   } catch (error) {
@@ -988,7 +1055,7 @@ async function generateAiDemo(env: Env, workId: string) {
     await env.AUDIO_BUCKET.delete(storageKey).catch(() => undefined);
     throw error;
   }
-  return json({ work: await getWorkPayload(env, workId) });
+  return json({ work: await getWorkPayload(env, workId), eleven_request: requestDebug });
 }
 
 async function publishWork(env: Env, workId: string, origin: string) {
@@ -1117,6 +1184,8 @@ async function api(request: Request, env: Env): Promise<Response | null> {
   }
   const specMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/control-spec$/);
   if (specMatch && request.method === "PATCH") return saveControlSpec(request, env, specMatch[1]);
+  const ttsPromptMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/ai-demo-prompt$/);
+  if (ttsPromptMatch && request.method === "GET") return getAiDemoPromptDebug(env, ttsPromptMatch[1]);
   const ttsMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/ai-demo$/);
   if (ttsMatch && request.method === "POST") return generateAiDemo(env, ttsMatch[1]);
   const publishMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/publish$/);
