@@ -890,6 +890,21 @@ function decodeBase64(input: string) {
   return bytes;
 }
 
+function promptControlTrace(prompt: ReturnType<typeof compileElevenV3Prompt>) {
+  return {
+    controls: prompt.executionPlan.controls.map((control) => ({
+      id: control.id,
+      kind: control.kind,
+      scope: control.scope,
+      emitted_text: control.emittedText,
+      sentence_id: control.sentenceId,
+      token_index: control.tokenIndex,
+      source_control_refs: control.sourceControlRefs,
+    })),
+    validation: prompt.executionPlan.validation,
+  };
+}
+
 async function getAiDemoPromptDebug(env: Env, workId: string) {
   if (!env.DB) {
     return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 尚未绑定，无法读取 Eleven 请求记录。");
@@ -913,11 +928,14 @@ async function getAiDemoPromptDebug(env: Env, workId: string) {
   }
   const previewRequest = buildElevenV3Request(prompt.text);
   const latest = await first<Row>(env.DB.prepare(
-    `SELECT id, control_spec_version_id, model, voice_id, prompt_text, created_at
+    `SELECT id, control_spec_version_id, model, voice_id, prompt_text, prompt_trace_json, created_at
        FROM audio_versions
       WHERE work_id = ? AND control_spec_version_id = ?
       ORDER BY created_at DESC LIMIT 1`,
   ).bind(workId, work.current_spec_version_id));
+  const lastSentPromptTrace = parseJson<Record<string, unknown>>(
+    latest?.prompt_trace_json as string | null,
+  );
 
   return json({
     preview: {
@@ -928,6 +946,7 @@ async function getAiDemoPromptDebug(env: Env, workId: string) {
       stability: previewRequest.voice_settings.stability,
       stability_preset: "Natural",
       final_eleven_text: previewRequest.text,
+      prompt_control_trace: promptControlTrace(prompt),
     },
     last_sent: latest ? {
       request_state: "sent",
@@ -940,6 +959,10 @@ async function getAiDemoPromptDebug(env: Env, workId: string) {
       stability: ELEVEN_V3_NATURAL_STABILITY,
       stability_preset: "Natural",
       final_eleven_text: latest.prompt_text,
+      // Older audio versions predate persisted prompt traces. Never rebuild a
+      // historical trace with today's compiler because that would misrepresent
+      // the request that was actually sent.
+      prompt_control_trace: lastSentPromptTrace ?? null,
     } : null,
   });
 }
@@ -963,6 +986,7 @@ async function generateAiDemo(env: Env, workId: string) {
     return apiError(422, "TTS_PROMPT_COMPILE_FAILED", error instanceof Error ? error.message : String(error));
   }
   const elevenRequest = buildElevenV3Request(prompt.text);
+  const persistedPromptTrace = promptControlTrace(prompt);
   const requestDebug = {
     event: "eleven_tts_request",
     work_id: workId,
@@ -972,6 +996,7 @@ async function generateAiDemo(env: Env, workId: string) {
     stability: elevenRequest.voice_settings.stability,
     stability_preset: "Natural",
     final_eleven_text: elevenRequest.text,
+    prompt_control_trace: persistedPromptTrace,
   };
   // Deliberately excludes ELEVENLABS_API_KEY.
   console.info("eleven_tts_request", JSON.stringify(requestDebug));
@@ -1044,9 +1069,20 @@ async function generateAiDemo(env: Env, workId: string) {
       ).bind(assetId, workId, storageKey, `${work.slug}-ai-demo.mp3`, audioBytes.byteLength, durationMs, checksum, createdAt),
       env.DB.prepare(
         `INSERT INTO audio_versions
-         (id, work_id, control_spec_version_id, audio_asset_id, provider, model, voice_id, prompt_text, timeline_json, duration_ms, candidate_state, created_at)
-         VALUES (?, ?, ?, ?, 'eleven', 'eleven_v3', ?, ?, ?, ?, 'candidate', ?)`,
-      ).bind(audioVersionId, workId, work.current_spec_version_id, assetId, env.ELEVENLABS_VOICE_ID, prompt.text, JSON.stringify(timeline), durationMs, createdAt),
+         (id, work_id, control_spec_version_id, audio_asset_id, provider, model, voice_id, prompt_text, prompt_trace_json, timeline_json, duration_ms, candidate_state, created_at)
+         VALUES (?, ?, ?, ?, 'eleven', 'eleven_v3', ?, ?, ?, ?, ?, 'candidate', ?)`,
+      ).bind(
+        audioVersionId,
+        workId,
+        work.current_spec_version_id,
+        assetId,
+        env.ELEVENLABS_VOICE_ID,
+        prompt.text,
+        JSON.stringify(persistedPromptTrace),
+        JSON.stringify(timeline),
+        durationMs,
+        createdAt,
+      ),
       env.DB.prepare(
         "UPDATE works SET status = 'audio_ready', updated_at = ? WHERE id = ? AND current_spec_version_id = ?",
       ).bind(createdAt, workId, work.current_spec_version_id),

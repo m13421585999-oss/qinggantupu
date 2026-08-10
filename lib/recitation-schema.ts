@@ -35,6 +35,7 @@ export type FocusStyle =
   | "breathy_to_supported";
 
 export interface HiddenPerformanceProfile {
+  sourceControlRef?: string;
   deliveryMode?: "natural_narration" | "lyrical_recitation" | "stage_recitation";
   emotionTone?: string[];
   continuity?: "connected" | "balanced" | "segmented";
@@ -72,6 +73,7 @@ export interface TimedToken {
 
 export interface FocusTarget {
   id: string;
+  sourceControlRef?: string;
   tokenIds: string[];
   tokenIndexes: number[];
   /** Acoustic core inside the teaching-facing focus span. */
@@ -87,6 +89,7 @@ export interface FocusTarget {
 
 export interface PauseMark {
   id: string;
+  sourceControlRef?: string;
   afterTokenId: string;
   afterTokenIndex: number;
   type: "short" | "long";
@@ -96,6 +99,7 @@ export interface PauseMark {
 
 export interface ProlongMark {
   id: string;
+  sourceControlRef?: string;
   tokenId: string;
   tokenIndex: number;
   degree: 1 | 2 | 3;
@@ -109,6 +113,7 @@ export interface TokenSpan {
 
 export interface ProsodyEvent {
   id: string;
+  sourceControlRef?: string;
   type: ProsodyType;
   activeSpan: TokenSpan;
   coreZone: TokenSpan;
@@ -149,6 +154,7 @@ export interface RecitationSentence {
   macroProsodyPath?: MacroProsodyPath;
   prosody: ProsodyEvent[];
   endingIntonation: {
+    sourceControlRef?: string;
     type: EndingTone;
     strength: 1 | 2 | 3;
     confidence?: number;
@@ -365,11 +371,14 @@ export const RHYTHM_LABELS: Record<Rhythm, string> = {
 
 export const VOICE_LABELS: Record<VoiceQuality, string> = {
   solid: "偏实声",
+  slightly_breathy: "轻微气声",
   breathy: "略带气声",
   mixed: "虚实结合",
   neutral: "自然中性",
+  breathy_to_supported: "气声到更有支撑",
   breathy_to_mixed: "气声到虚实结合",
   mixed_to_solid: "虚实结合到更有支撑",
+  solid_to_soft: "实声到柔和",
 };
 
 export const FOCUS_LABELS: Record<FocusRealization, string> = {

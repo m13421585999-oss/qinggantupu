@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -68,6 +69,12 @@ test("prompt compiler compresses the control spec into minimal sufficient direct
   assert.equal(prompt.text.match(/\[[^\]]+\]/g)?.length, 1);
   assert.equal(prompt.text.split("面朝大海，春暖花开。").length - 1, 1);
   assert.equal(prompt.sourceTokens.length, spec.tokens.length);
+  assert.equal(prompt.executionPlan.validation.state, "valid");
+  assert.ok(prompt.executionPlan.controls.every((control) => control.sourceControlRefs.length > 0));
+  assert.deepEqual(
+    prompt.executionPlan.controls.map((control) => control.kind),
+    ["audio_tag"],
+  );
 
   const promptCharacters = Array.from(prompt.text);
   for (const token of spec.tokens) {
@@ -104,6 +111,9 @@ test("prompt compiler does not duplicate source newlines or pause signals", () =
   assert.doesNotMatch(spokenBody, /\n\n|short pause|continue naturally/);
   assert.equal((prompt.text.match(/——/g) ?? []).length, 1);
   assert.ok((prompt.text.match(/\[[^\]]+\]/g) ?? []).length <= 3);
+  const prolongation = prompt.executionPlan.controls.find((control) => control.kind === "prolongation");
+  assert.equal(prolongation?.tokenIndex, 7);
+  assert.deepEqual(prolongation?.sourceControlRefs, ["control_spec.sentences.sentence-2.prolongations.1"]);
 });
 
 test("hidden performance profiles only select short whitelisted state cues", () => {
@@ -151,6 +161,122 @@ test("hidden performance profiles only select short whitelisted state cues", () 
     prompt.text.replace(/\[[^\]]+\]\s*/g, "").replace(/\n/g, ""),
     text,
   );
+  assert.ok(prompt.executionPlan.controls.every((control) => control.sourceControlRefs.length > 0));
+});
+
+test("a new work with no control intent receives no invented TTS control", () => {
+  const text = "任意新文稿保持原样。";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    tokens,
+    sentences: [{
+      id: "sentence-new",
+      tokens,
+      focus: [],
+      pauses: [],
+      prolongations: [],
+      prosody: [],
+    }],
+  });
+
+  assert.equal(prompt.text, text);
+  assert.deepEqual(prompt.executionPlan.controls, []);
+  assert.equal(prompt.executionPlan.validation.checks.length, 6);
+});
+
+test("every generic special control preserves its current control spec reference", () => {
+  const text = "风起云涌灯火渐明";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    tokens,
+    sentences: [{
+      id: "sentence-dynamic",
+      tokens,
+      focus: [],
+      pauses: [{
+        afterTokenIndex: 4,
+        type: "short",
+        source_control_ref: "current-control-spec/pause/p1",
+      }],
+      prolongations: [{
+        tokenIndex: 2,
+        degree: 3,
+        source_control_ref: "current-control-spec/prolongation/p1",
+      }],
+      prosody: [{
+        type: "rising",
+        activeSpan: { start: 0, end: 7 },
+        coreZone: { start: 3, end: 6 },
+        strength: 3,
+        confidence: 1,
+        source_control_ref: "current-control-spec/prosody/p1",
+      }],
+    }],
+  });
+
+  assert.equal(prompt.text, "[building]\n\n风起云————涌灯，火渐明");
+  assert.deepEqual(
+    prompt.executionPlan.controls.map((control) => ({
+      kind: control.kind,
+      refs: control.sourceControlRefs,
+    })),
+    [
+      { kind: "audio_tag", refs: ["current-control-spec/prosody/p1"] },
+      { kind: "prolongation", refs: ["current-control-spec/prolongation/p1"] },
+      { kind: "pause", refs: ["current-control-spec/pause/p1"] },
+    ],
+  );
+});
+
+test("prosody compression respects ordered active spans instead of inventing a template", () => {
+  const text = "甲乙丙丁戊己";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    tokens,
+    sentences: [{
+      id: "sentence-contour",
+      tokens,
+      focus: [], pauses: [], prolongations: [],
+      prosody: [
+        {
+          type: "falling",
+          active_span: { start: 0, end: 2 },
+          core_zone: { start: 1, end: 2 },
+          strength: 2,
+          confidence: 0.9,
+          source_control_ref: "current-control-spec/prosody/falling",
+        },
+        {
+          type: "rising",
+          active_span: { start: 3, end: 5 },
+          core_zone: { start: 4, end: 5 },
+          strength: 2,
+          confidence: 0.9,
+          source_control_ref: "current-control-spec/prosody/rising",
+        },
+      ],
+    }],
+  });
+
+  assert.match(prompt.text, /^\[thoughtful\]/u);
+  assert.deepEqual(prompt.executionPlan.controls[0].sourceControlRefs, [
+    "current-control-spec/prosody/falling",
+    "current-control-spec/prosody/rising",
+  ]);
+});
+
+test("golden sample wording is absent from runtime compiler and general rules", () => {
+  const runtime = [
+    readFileSync(new URL("../lib/eleven-tts.ts", import.meta.url), "utf8"),
+    readFileSync(
+      new URL("../analysis-service/app/rules/recitation_expression_v1.md", import.meta.url),
+      "utf8",
+    ),
+  ].join("\n");
+
+  for (const phrase of ["面朝大海", "春暖花开", "从明天起", "周游世界", "粮食和蔬菜"]) {
+    assert.doesNotMatch(runtime, new RegExp(phrase, "u"));
+  }
 });
 
 test("raw Eleven alignment maps every immutable token to a unique monotonic timestamp", () => {

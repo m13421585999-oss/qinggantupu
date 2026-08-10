@@ -7,6 +7,7 @@ test("control spec import preserves hidden performance profiles without changing
   const sourceText = "我。";
   const imported = importControlSpec({
     performance_profile: {
+      source_control_ref: "current-spec/performance/global",
       delivery_mode: "lyrical_recitation",
       emotion_tone: ["温暖", "克制"],
       continuity: "connected",
@@ -32,6 +33,7 @@ test("control spec import preserves hidden performance profiles without changing
       end_index: 1,
       rhythm: { type: "relaxed" },
       performance_profile: {
+        source_control_ref: "current-spec/performance/sentence-1",
         emotion_tone: ["思索"],
         continuity: "connected",
         voice_quality: "breathy_to_supported",
@@ -39,6 +41,7 @@ test("control spec import preserves hidden performance profiles without changing
         expression_amplitude: "low",
       },
       focus: [{
+        source_control_ref: "current-spec/focus/1",
         focus_span: { start: 0, end: 0 },
         focus_core: { start: 0, end: 0 },
         focus_style: "breathy_to_supported",
@@ -54,8 +57,10 @@ test("control spec import preserves hidden performance profiles without changing
 
   assert.equal(imported.tokens.map((token) => token.char).join(""), sourceText);
   assert.equal(imported.performanceProfile?.voiceQuality, "slightly_breathy");
+  assert.equal(imported.performanceProfile?.sourceControlRef, "current-spec/performance/global");
   assert.deepEqual(imported.performanceProfile?.emotionTone, ["温暖", "克制"]);
   assert.equal(imported.sentences[0].performanceProfile?.focusStyle, "breathy_to_supported");
+  assert.equal(imported.sentences[0].focus[0].sourceControlRef, "current-spec/focus/1");
   assert.deepEqual(imported.sentences[0].voiceQuality, {
     start: "breathy",
     transition: "breathy_to_supported",

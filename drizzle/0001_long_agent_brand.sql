@@ -1,0 +1,1 @@
+ALTER TABLE `audio_versions` ADD `prompt_trace_json` text;

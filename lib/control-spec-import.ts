@@ -182,6 +182,7 @@ function parsePerformanceProfile(value: unknown): HiddenPerformanceProfile | und
   const voiceValue = source.voice_quality ?? source.voiceQuality;
 
   const profile: HiddenPerformanceProfile = {
+    sourceControlRef: string(source.source_control_ref ?? source.sourceControlRef),
     deliveryMode: parseAliasedValue(
       source.delivery_mode ?? source.deliveryMode,
       deliveryModeAliases,
@@ -301,6 +302,7 @@ function parseFocus(
     ])];
     return [{
       id: `${sentenceId}-focus-${position + 1}`,
+      sourceControlRef: string(entry.source_control_ref ?? entry.sourceControlRef),
       tokenIds: indexes.map((index) => tokensByIndex.get(index)?.id).filter(Boolean) as string[],
       tokenIndexes: indexes,
       coreTokenIds: coreIndexes.map((index) => tokensByIndex.get(index)?.id).filter(Boolean) as string[],
@@ -334,6 +336,7 @@ function parsePauses(
     const marker = String(entry.type ?? entry.mark ?? "short");
     return [{
       id: `${sentenceId}-pause-${position + 1}`,
+      sourceControlRef: string(entry.source_control_ref ?? entry.sourceControlRef),
       afterTokenId: token.id,
       afterTokenIndex: after,
       type: marker === "long" || marker === "///" || marker === "长停" ? "long" : "short",
@@ -359,6 +362,7 @@ function parseProlongations(
     if (!token) return [];
     return [{
       id: `${sentenceId}-prolong-${position + 1}`,
+      sourceControlRef: string(entry.source_control_ref ?? entry.sourceControlRef),
       tokenId: token.id,
       tokenIndex: index,
       degree: parseStrength(entry.degree ?? entry.strength ?? 1),
@@ -387,6 +391,7 @@ function parseProsody(raw: unknown, sentenceId: string, min: number, max: number
     );
     return [{
       id: `${sentenceId}-prosody-${position + 1}`,
+      sourceControlRef: string(entry.source_control_ref ?? entry.sourceControlRef),
       type,
       activeSpan,
       coreZone,
@@ -397,6 +402,7 @@ function parseProsody(raw: unknown, sentenceId: string, min: number, max: number
 }
 
 function parseEnding(value: unknown): {
+  sourceControlRef?: string;
   type: EndingTone;
   strength: 1 | 2 | 3;
   confidence?: number;
@@ -408,6 +414,7 @@ function parseEnding(value: unknown): {
     ? entry.source
     : "legacy";
   return {
+    sourceControlRef: string(entry.source_control_ref ?? entry.sourceControlRef),
     type: endingAliases[String(label ?? "level")] ?? "level",
     strength: parseStrength(entry.strength ?? 1),
     confidence: number(entry.confidence),

@@ -91,6 +91,7 @@ export const audioVersions = sqliteTable(
     model: text("model").notNull(),
     voiceId: text("voice_id"),
     promptText: text("prompt_text").notNull(),
+    promptTraceJson: text("prompt_trace_json"),
     timelineJson: text("timeline_json").notNull(),
     durationMs: integer("duration_ms").notNull(),
     candidateState: text("candidate_state").notNull().default("candidate"),

@@ -6,6 +6,7 @@ const workerUrl = new URL("../worker/index.ts", import.meta.url);
 const envUrl = new URL("../cloudflare-env.d.ts", import.meta.url);
 const schemaUrl = new URL("../db/schema.ts", import.meta.url);
 const migrationUrl = new URL("../drizzle/0000_unusual_wendell_rand.sql", import.meta.url);
+const promptTraceMigrationUrl = new URL("../drizzle/0001_long_agent_brand.sql", import.meta.url);
 
 test("worker exposes the production reference-analysis contract", async () => {
   const [worker, env] = await Promise.all([
@@ -33,6 +34,11 @@ test("worker exposes the production reference-analysis contract", async () => {
   assert.match(worker, /ai-demo-prompt/);
   assert.match(worker, /eleven_tts_request/);
   assert.match(worker, /final_eleven_text/);
+  assert.match(worker, /prompt_control_trace/);
+  assert.match(worker, /source_control_refs/);
+  assert.match(worker, /prompt_trace_json/);
+  assert.match(worker, /JSON\.stringify\(persistedPromptTrace\)/);
+  assert.match(worker, /prompt_control_trace: lastSentPromptTrace \?\? null/);
   assert.doesNotMatch(worker, /voice_settings: \{ stability: 0\.5, similarity_boost/);
   assert.doesNotMatch(worker, /DEMO_CONTROL_SPEC|createDemoControlSpec|月光下的中国/);
 
@@ -42,10 +48,11 @@ test("worker exposes the production reference-analysis contract", async () => {
   assert.doesNotMatch(env, /LLM_API_KEY/);
 });
 
-test("D1 schema and migration retain the analysis persistence tables", async () => {
-  const [schema, migration] = await Promise.all([
+test("D1 schema and migrations retain analysis data and exact TTS prompt traces", async () => {
+  const [schema, migration, promptTraceMigration] = await Promise.all([
     readFile(schemaUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
+    readFile(promptTraceMigrationUrl, "utf8"),
   ]);
 
   assert.match(schema, /export const assets/);
@@ -54,7 +61,9 @@ test("D1 schema and migration retain the analysis persistence tables", async () 
   assert.match(schema, /export const processingJobs/);
   assert.match(schema, /outputJson: text\("output_json"\)/);
   assert.match(schema, /export const controlSpecVersions/);
+  assert.match(schema, /promptTraceJson: text\("prompt_trace_json"\)/);
   assert.match(migration, /CREATE TABLE `assets`/);
   assert.match(migration, /CREATE TABLE `processing_jobs`/);
   assert.match(migration, /CREATE TABLE `control_spec_versions`/);
+  assert.match(promptTraceMigration, /ALTER TABLE `audio_versions` ADD `prompt_trace_json` text/);
 });
