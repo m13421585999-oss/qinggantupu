@@ -47,4 +47,5 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+local-analyzer-windows.zip
 *.tsbuildinfo

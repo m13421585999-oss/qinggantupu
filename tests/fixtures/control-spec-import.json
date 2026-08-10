@@ -1,15 +1,15 @@
 {
   "tokens": [
-    { "index": 0, "char": "面" },
-    { "index": 1, "char": "朝" },
-    { "index": 2, "char": "大" },
-    { "index": 3, "char": "海" },
-    { "index": 4, "char": "，" },
-    { "index": 5, "char": "春" },
-    { "index": 6, "char": "暖" },
-    { "index": 7, "char": "花" },
-    { "index": 8, "char": "开" },
-    { "index": 9, "char": "。" }
+    { "index": 0, "char": "面", "machine_pinyin": "mian4", "display_pinyin": "miàn", "start_ms": 0, "end_ms": 140 },
+    { "index": 1, "char": "朝", "machine_pinyin": "chao2", "display_pinyin": "cháo", "start_ms": 140, "end_ms": 280 },
+    { "index": 2, "char": "大", "machine_pinyin": "da4", "display_pinyin": "dà", "start_ms": 280, "end_ms": 420 },
+    { "index": 3, "char": "海", "machine_pinyin": "hai3", "display_pinyin": "hǎi", "start_ms": 420, "end_ms": 610 },
+    { "index": 4, "char": "，", "start_ms": 610, "end_ms": 610 },
+    { "index": 5, "char": "春", "machine_pinyin": "chun1", "display_pinyin": "chūn", "start_ms": 820, "end_ms": 950 },
+    { "index": 6, "char": "暖", "machine_pinyin": "nuan3", "display_pinyin": "nuǎn", "start_ms": 950, "end_ms": 1080 },
+    { "index": 7, "char": "花", "machine_pinyin": "hua1", "display_pinyin": "huā", "start_ms": 1080, "end_ms": 1210 },
+    { "index": 8, "char": "开", "machine_pinyin": "kai1", "display_pinyin": "kāi", "start_ms": 1210, "end_ms": 1450 },
+    { "index": 9, "char": "。", "start_ms": 1450, "end_ms": 1450 }
   ],
   "sentences": [{
     "text": "面朝大海，春暖花开。",

@@ -1,4 +1,4 @@
-# 朗诵控制谱 v1.1 · 数据契约
+# 朗诵控制谱 v2.0 · 数据契约
 
 ## 1. 核心对象
 
@@ -35,12 +35,11 @@ interface Work {
 
 ### Asset（素材）
 
-正式持久化时，参考朗诵和 AI 示范音频作为独立资产；字节存 R2，元数据存 D1。正文以 `Work.sourceText` 为唯一作品输入，不在当前创建流程重复上传文稿文件。知识库是系统级资产，不属于单篇作品的前台输入。
+当前单人版只把 AI 示范音频作为在线资产；参考朗诵保留在本地分析工具中，不上传网站。在线音频字节存 R2，元数据存 D1。正文以 `Work.sourceText` 为唯一作品输入，不在当前创建流程重复上传文稿文件。
 
 ```ts
 type AssetKind =
-  | "reference_audio"
-  | "tts_audio";
+  | "ai_demo_audio";
 
 interface Asset {
   id: string;
@@ -61,7 +60,7 @@ interface Asset {
 
 ```ts
 interface ControlSpec {
-  schemaVersion: "1.0" | "1.1";
+  schemaVersion: "2.0";
   id: string;
   workId: string;
   version: number;
@@ -89,8 +88,8 @@ interface DocumentProfile {
 ## 2. 图谱句
 
 ```ts
-type ProsodyType = "crest" | "trough" | "rising" | "falling";
-type EndingTone = "rise" | "fall" | "level";
+type ProsodyType = "peak" | "valley" | "rising" | "falling";
+type EndingTone = "rising" | "falling" | "level";
 type Rhythm = "light" | "solemn" | "relaxed" | "tense" | "soaring" | "low";
 type VoiceQuality =
   | "solid"
@@ -258,7 +257,7 @@ interface AudioTimeline {
 }
 ```
 
-参考朗诵时间轴来自音频与正文对齐，负责分析和创作端试听；AI 示范时间轴来自最终生成结果，负责观看端跳转和高亮。即使当前演示临时复用同一段声音文件，两条音轨的身份和时间轴仍保持分离。
+参考朗诵的字符时间轴由本地分析工具保存进分析包，用于解释声音事实；AI 示范时间轴来自最终 TTS 结果，负责观看端跳转和高亮。两者始终是不同来源，网站不会把本地参考音频伪装成 AI 示范。
 
 ## 7. 渲染对齐约束
 
@@ -275,6 +274,4 @@ interface AudioTimeline {
 - `control_spec_versions`：版本号、完整 JSON、来源、校验状态。
 - `audio_versions`：供应商、Voice、Prompt、音频资产、时间轴 JSON、候选状态。
 - `publications`：稳定 slug、冻结的控制谱版本和音频版本。
-- `processing_jobs`：分析/TTS 任务状态、进度、错误与幂等键。
-
-实际查询需要的索引：`works(status, updated_at)`、`assets(work_id, kind)`、`control_spec_versions(work_id, version)`、`publications(slug)`、`processing_jobs(work_id, status)`。
+实际查询需要的索引：`works(status, updated_at)`、`assets(work_id, kind)`、`control_spec_versions(work_id, version)`、`publications(slug)`。

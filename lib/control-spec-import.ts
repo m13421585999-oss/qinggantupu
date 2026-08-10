@@ -6,7 +6,6 @@ import type {
   ProlongMark,
   ProsodyEvent,
   ProsodyType,
-  RecitationAnalysisPackage,
   RecitationSentence,
   Rhythm,
   TimedToken,
@@ -250,6 +249,132 @@ function parseRhythm(value: unknown): Rhythm {
   return rhythmAliases[String(typeof value === "string" ? value : entry.type ?? entry.label)] ?? "relaxed";
 }
 
+function string(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** Convert machine pinyin such as `xiang3`/`lv4` into user-facing tone marks. */
+export function displayPinyinFromMachine(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/u:/g, "ü").replace(/v/g, "ü");
+  const match = normalized.match(/^([a-zü]+)([0-5])$/i);
+  if (!match) return normalized;
+  const syllable = match[1];
+  const tone = Number(match[2]);
+  if (tone === 0 || tone === 5) return syllable;
+
+  const vowels = ["a", "o", "e", "i", "u", "ü"];
+  const marked: Record<string, string[]> = {
+    a: ["ā", "á", "ǎ", "à"],
+    o: ["ō", "ó", "ǒ", "ò"],
+    e: ["ē", "é", "ě", "è"],
+    i: ["ī", "í", "ǐ", "ì"],
+    u: ["ū", "ú", "ǔ", "ù"],
+    ü: ["ǖ", "ǘ", "ǚ", "ǜ"],
+  };
+  let target = syllable.indexOf("a");
+  if (target < 0) target = syllable.indexOf("e");
+  if (target < 0 && syllable.includes("ou")) target = syllable.indexOf("o");
+  if (target < 0) {
+    for (let position = syllable.length - 1; position >= 0; position -= 1) {
+      if (vowels.includes(syllable[position])) {
+        target = position;
+        break;
+      }
+    }
+  }
+  if (target < 0) return syllable;
+  const vowel = syllable[target];
+  return `${syllable.slice(0, target)}${marked[vowel][tone - 1]}${syllable.slice(target + 1)}`;
+}
+
+function validateSpan(
+  value: unknown,
+  sentenceNumber: number,
+  label: string,
+  min: number,
+  max: number,
+) {
+  if (value === undefined || value === null) return;
+  const item = object(value);
+  const pair = Array.isArray(value) ? value : undefined;
+  const start = integer(pair?.[0] ?? item.start ?? item.start_index ?? item.anchor_start);
+  const end = integer(pair?.[1] ?? item.end ?? item.end_index ?? item.anchor_end);
+  if (start === undefined || end === undefined || start < min || end > max || end < start) {
+    throw new Error(`第 ${sentenceNumber} 句的${label}超出本句 token 范围（${min}–${max}）。`);
+  }
+}
+
+function validateAnnotationIndexes(
+  entry: JsonObject,
+  sentenceNumber: number,
+  min: number,
+  max: number,
+) {
+  const ensure = (index: number | undefined, label: string) => {
+    if (index === undefined || index < min || index > max) {
+      throw new Error(`第 ${sentenceNumber} 句的${label}引用了无效 token index。`);
+    }
+  };
+
+  const focus = Array.isArray(entry.focus) ? entry.focus : [];
+  focus.forEach((value) => {
+    if (typeof value === "number") {
+      ensure(Math.trunc(value), "重音");
+      return;
+    }
+    const item = object(value);
+    const explicit = indexList(item.token_indexes ?? item.tokenIndexes ?? item.indexes ?? item.tokens);
+    const single = integer(item.token_index ?? item.tokenIndex ?? item.index);
+    if (explicit.length) explicit.forEach((index) => ensure(index, "重音"));
+    else if (single !== undefined) ensure(single, "重音");
+    else {
+      const span = item.span ?? item.active_span ?? item.activeSpan;
+      if (span === undefined) throw new Error(`第 ${sentenceNumber} 句存在无法识别的重音标记。`);
+      validateSpan(span, sentenceNumber, "重音区间", min, max);
+    }
+  });
+
+  const pauses = Array.isArray(entry.pauses) ? entry.pauses : [];
+  pauses.forEach((value) => {
+    const item = object(value);
+    ensure(integer(item.after_index ?? item.after_token_index ?? item.afterTokenIndex ?? item.token_index), "停顿");
+  });
+
+  const prolongations = Array.isArray(entry.prolongations)
+    ? entry.prolongations
+    : Array.isArray(entry.prolongs) ? entry.prolongs : [];
+  prolongations.forEach((value) => {
+    const item = object(value);
+    ensure(integer(item.token_index ?? item.tokenIndex ?? item.index ?? value), "拖音");
+  });
+
+  const prosody = Array.isArray(entry.prosody) ? entry.prosody : entry.prosody ? [entry.prosody] : [];
+  prosody.forEach((value) => {
+    const item = object(value);
+    if (!prosodyAliases[String(item.type ?? "")]) {
+      throw new Error(`第 ${sentenceNumber} 句包含不支持的语势类型。`);
+    }
+    const activeValue = item.active_span ?? item.activeSpan;
+    const coreValue = item.core_zone ?? item.coreZone;
+    validateSpan(activeValue, sentenceNumber, "语势区间", min, max);
+    const activeSpan = parseSpan(activeValue, { start: min, end: max }, min, max);
+    validateSpan(coreValue, sentenceNumber, "语势核心区", activeSpan.start, activeSpan.end);
+  });
+
+  const ending = object(entry.ending_intonation ?? entry.endingIntonation);
+  const endingLabel = typeof (entry.ending_intonation ?? entry.endingIntonation) === "string"
+    ? entry.ending_intonation ?? entry.endingIntonation
+    : ending.type;
+  if (endingLabel !== undefined && !endingAliases[String(endingLabel)]) {
+    throw new Error(`第 ${sentenceNumber} 句包含不支持的句尾语调。`);
+  }
+  const rhythm = object(entry.rhythm);
+  const rhythmLabel = typeof entry.rhythm === "string" ? entry.rhythm : rhythm.type ?? rhythm.label;
+  if (rhythmLabel !== undefined && !rhythmAliases[String(rhythmLabel)]) {
+    throw new Error(`第 ${sentenceNumber} 句包含不支持的节奏类型。`);
+  }
+}
+
 /** Extract JSON from plain text or a single Markdown code fence, with only safe punctuation repair. */
 export function parseControlSpecText(input: string): unknown {
   let text = input.trim().replace(/^\uFEFF/, "");
@@ -264,60 +389,101 @@ export function parseControlSpecText(input: string): unknown {
 
 export function importControlSpec(
   rawValue: unknown,
-  analysis: RecitationAnalysisPackage,
+  sourceText: string,
   workId: string,
   referenceAudioAssetId?: string,
 ): ControlSpec {
-  const raw = object(rawValue);
+  const envelope = object(rawValue);
+  const raw = Object.keys(object(envelope.control_spec)).length
+    ? object(envelope.control_spec)
+    : envelope;
   const rawTokens = raw.tokens;
   if (!Array.isArray(rawTokens)) {
-    throw new Error("控制谱必须包含 tokens 数组。请让 ChatGPT 保留分析包中的 token index 与字符。");
+    throw new Error("控制谱必须包含 tokens 数组，并保留本地分析结果中的时间戳与拼音。");
   }
-  if (rawTokens.length !== analysis.tokens.length) {
-    throw new Error(`tokens 数量不一致：正文为 ${analysis.tokens.length} 个 token，导入内容为 ${rawTokens.length} 个。`);
+  const sourceCharacters = Array.from(sourceText);
+  if (rawTokens.length !== sourceCharacters.length) {
+    throw new Error(`tokens 数量不一致：网站正文为 ${sourceCharacters.length} 个字符，导入内容为 ${rawTokens.length} 个。`);
   }
 
-  rawTokens.forEach((value, position) => {
+  let previousStart = 0;
+  const tokens: TimedToken[] = rawTokens.map((value, position) => {
     const item = object(value);
     const index = integer(item.index);
     const char = item.char;
-    const expected = analysis.tokens[position];
-    if (index !== expected.index || char !== expected.char) {
-      throw new Error(`token ${position} 与正文不一致；导入已停止，正文不会被修改。`);
+    const expected = sourceCharacters[position];
+    if (index !== position || char !== expected) {
+      throw new Error(`token ${position} 与网站正文不一致；导入已停止，正文不会被修改。`);
     }
+    const startValue = item.start_ms ?? item.startMs;
+    const endValue = item.end_ms ?? item.endMs;
+    const startMs = startValue === null || startValue === undefined ? undefined : number(startValue);
+    const endMs = endValue === null || endValue === undefined ? undefined : number(endValue);
+    if (startMs === undefined || endMs === undefined || startMs < 0 || endMs < startMs) {
+      throw new Error(`token ${position} 缺少有效的 start_ms / end_ms。`);
+    }
+    if (position > 0 && startMs < previousStart) {
+      throw new Error(`token ${position} 的时间戳早于前一个 token，无法建立可靠时间轴。`);
+    }
+    previousStart = startMs;
+    const machinePinyin = string(item.machine_pinyin ?? item.machinePinyin ?? item.pinyin);
+    const displayPinyin = string(item.display_pinyin ?? item.displayPinyin)
+      ?? (machinePinyin ? displayPinyinFromMachine(machinePinyin) : undefined);
+    if (/\p{Script=Han}/u.test(expected) && !displayPinyin) {
+      throw new Error(`token ${position}（${expected}）缺少拼音；请保留本地分析结果中的 pinyin。`);
+    }
+    return {
+      id: `token-${position}`,
+      index: position,
+      char: expected,
+      machinePinyin,
+      displayPinyin,
+      pronunciationSource: machinePinyin ? "dictionary" : undefined,
+      startMs,
+      endMs,
+      confidence: number(item.confidence) ?? 1,
+    };
   });
-
-  const tokens: TimedToken[] = analysis.tokens.map((token) => ({
-    id: `token-${token.index}`,
-    index: token.index,
-    char: token.char,
-    machinePinyin: token.machine_pinyin,
-    displayPinyin: token.display_pinyin,
-    pronunciationSource: token.machine_pinyin ? "dictionary" : undefined,
-    startMs: token.start_ms,
-    endMs: token.end_ms,
-    confidence: token.confidence ?? 1,
-  }));
   const tokensByIndex = new Map(tokens.map((token) => [token.index, token]));
   const rawSentences = raw.sentences;
   if (!Array.isArray(rawSentences)) throw new Error("控制谱必须包含 sentences 数组。");
-  if (rawSentences.length !== analysis.sentences.length) {
-    throw new Error(`句子数量不一致：分析包为 ${analysis.sentences.length} 句，导入内容为 ${rawSentences.length} 句。`);
+  if (!rawSentences.length) {
+    throw new Error("控制谱至少需要包含一个句子。");
   }
 
-  const sentences: RecitationSentence[] = analysis.sentences.map((base, position) => {
-    const entry = object(rawSentences[position]);
-    if (typeof entry.text === "string" && entry.text !== base.text) {
-      throw new Error(`第 ${position + 1} 句正文与分析包不一致；导入已停止。`);
+  let sentenceCursor = 0;
+  const sentences: RecitationSentence[] = rawSentences.map((value, position) => {
+    const sentenceNumber = position + 1;
+    const entry = object(value);
+    const explicitStart = integer(entry.start_index ?? entry.startIndex);
+    const explicitEnd = integer(entry.end_index ?? entry.endIndex);
+    const sentenceText = typeof entry.text === "string" ? entry.text : undefined;
+    const min = explicitStart ?? sentenceCursor;
+    let max = explicitEnd;
+    if (min !== sentenceCursor) {
+      throw new Error(`第 ${sentenceNumber} 句没有从 token ${sentenceCursor} 连续开始。`);
     }
-    const min = base.start_index;
-    const max = base.end_index;
+    if (max === undefined) {
+      if (sentenceText === undefined || !Array.from(sentenceText).length) {
+        throw new Error(`第 ${sentenceNumber} 句必须包含 text，或明确提供 start_index / end_index。`);
+      }
+      max = min + Array.from(sentenceText).length - 1;
+    }
+    if (max < min || max >= tokens.length) {
+      throw new Error(`第 ${sentenceNumber} 句的 token 范围无效。`);
+    }
+    const exactText = tokens.slice(min, max + 1).map((token) => token.char).join("");
+    if (sentenceText !== undefined && sentenceText !== exactText) {
+      throw new Error(`第 ${sentenceNumber} 句正文与网站正文不一致；导入已停止。`);
+    }
+    validateAnnotationIndexes(entry, sentenceNumber, min, max);
+    sentenceCursor = max + 1;
     const sentenceTokens = tokens.filter((token) => token.index >= min && token.index <= max);
-    const id = base.id || `sentence-${position + 1}`;
+    const id = `sentence-${sentenceNumber}`;
     return {
       id,
-      order: position + 1,
-      text: base.text,
+      order: sentenceNumber,
+      text: exactText,
       function: "",
       rhythm: parseRhythm(entry.rhythm),
       continuity: "connected",
@@ -337,13 +503,20 @@ export function importControlSpec(
       teachingCue: "",
       avoid: [],
       confidence: number(entry.confidence) ?? 0,
-      timeRange: { startMs: base.start_ms, endMs: base.end_ms },
+      timeRange: {
+        startMs: Math.min(...sentenceTokens.map((token) => token.startMs)),
+        endMs: Math.max(...sentenceTokens.map((token) => token.endMs)),
+      },
     };
   });
 
+  if (sentenceCursor !== tokens.length) {
+    throw new Error(`句子只覆盖到 token ${sentenceCursor - 1}，未完整覆盖网站正文。`);
+  }
+
   const joined = tokens.map((token) => token.char).join("");
-  if (joined !== analysis.work.full_text) {
-    throw new Error("分析包 token 与完整正文不一致，不能导入控制谱。");
+  if (joined !== sourceText) {
+    throw new Error("导入 token 与网站完整正文不一致，不能导入控制谱。");
   }
 
   const now = new Date().toISOString();
@@ -370,7 +543,7 @@ export function importControlSpec(
       referenceAudioAssetId,
       knowledgeAssetIds: [],
       knowledgeBase: { id: "recitation-expression", version: "1.0", scope: "system" },
-      pipelineVersion: "audio-facts-1.0",
+      pipelineVersion: "local-analyzer-import-1.0",
       alignmentModel: "elevenlabs-forced-alignment",
       acousticModel: "parselmouth",
       generatedAt: now,
