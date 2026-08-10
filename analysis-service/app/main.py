@@ -9,7 +9,15 @@ from typing import Any
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 
-from app.config import ConfigurationError, Settings
+from app.config import (
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL,
+    DEEPSEEK_PROVIDER,
+    DEEPSEEK_REASONING_EFFORTS,
+    DEEPSEEK_THINKING,
+    ConfigurationError,
+    Settings,
+)
 from app.pipeline import analyze_job
 from app.schemas.control_spec import JobRequest
 
@@ -116,6 +124,8 @@ async def _run_job(job: JobRequest, settings: Settings) -> str:
                     "alignment": "elevenlabs-forced-alignment",
                     "acoustics": "parselmouth",
                     "language_model": settings.llm_model,
+                    "thinking": settings.llm_thinking,
+                    "reasoning_effort": settings.llm_reasoning_effort,
                     "knowledge_base": "recitation-expression-v1.0",
                 },
             },
@@ -156,12 +166,17 @@ async def health() -> dict[str, Any]:
         "SITES_BYPASS_TOKEN",
     )
     configured = {name: bool(os.getenv(name, "").strip()) for name in required}
-    configured["LLM_AUTH"] = bool(
-        os.getenv("LLM_API_KEY", "").strip()
-        or os.getenv("AI_GATEWAY_API_KEY", "").strip()
-        or os.getenv("VERCEL_OIDC_TOKEN", "").strip()
-    )
-    return {"ok": all(configured.values()), "configured": configured}
+    configured["LLM_AUTH"] = bool(os.getenv("LLM_API_KEY", "").strip())
+    reasoning_effort = os.getenv("LLM_REASONING_EFFORT", "high").strip().lower()
+    configured["LLM_REASONING_EFFORT"] = reasoning_effort in DEEPSEEK_REASONING_EFFORTS
+    llm = {
+        "provider": DEEPSEEK_PROVIDER,
+        "base_url": DEEPSEEK_BASE_URL,
+        "model": DEEPSEEK_MODEL,
+        "thinking": DEEPSEEK_THINKING,
+        "reasoning_effort": reasoning_effort,
+    }
+    return {"ok": all(configured.values()), "configured": configured, "llm": llm}
 
 
 @app.post("/v1/jobs", status_code=status.HTTP_200_OK)

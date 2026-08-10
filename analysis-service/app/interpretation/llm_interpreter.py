@@ -135,6 +135,8 @@ async def interpret_control_spec(
     api_key: str,
     base_url: str,
     model: str,
+    thinking: str,
+    reasoning_effort: str,
     timeout_seconds: float,
 ) -> dict[str, Any]:
     rules_path = Path(__file__).resolve().parents[1] / "rules" / "recitation_expression_v1.md"
@@ -170,6 +172,8 @@ async def interpret_control_spec(
             model=model,
             schema=schema,
         ),
+        "thinking": {"type": thinking},
+        "reasoning_effort": reasoning_effort,
         "temperature": 0.1,
     }
     try:

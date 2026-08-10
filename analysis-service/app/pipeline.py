@@ -202,6 +202,8 @@ async def analyze_job(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         model=settings.llm_model,
+        thinking=settings.llm_thinking,
+        reasoning_effort=settings.llm_reasoning_effort,
         timeout_seconds=settings.request_timeout_seconds,
     )
     return analysis_package, control_spec

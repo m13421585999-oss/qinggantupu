@@ -25,16 +25,20 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 - `ANALYSIS_SERVICE_TOKEN`：网站 Worker 调用本服务的 Bearer token；
 - `ANALYSIS_CALLBACK_TOKEN`：本服务回调网站的 Bearer token，必须与网站端一致；
 - `SITES_BYPASS_TOKEN`：仅所有者可见的 Sites 跨服务访问 token；
-- `LLM_API_KEY`：DeepSeek 服务端 API Key。
+- `LLM_API_KEY`：DeepSeek 服务端 API Key；
+- `LLM_REASONING_EFFORT`：可选，默认 `high`，复杂作品可临时改为 `max` 后重新分析。
 
-正式版默认使用 DeepSeek 的 OpenAI 兼容接口：
+正式版固定使用 DeepSeek 官方 OpenAI 兼容接口，不读取环境变量自动切换 Provider 或模型：
 
 ```text
-LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-chat
+provider=deepseek
+base_url=https://api.deepseek.com
+model=deepseek-v4-flash
+thinking=enabled
+reasoning_effort=high
 ```
 
-`LLM_API_KEY` 优先于 `AI_GATEWAY_API_KEY` 和 Vercel OIDC。保留后两者仅作为可选的 AI Gateway 备用配置。
+服务端只从 `LLM_API_KEY` 读取 DeepSeek Key。不会使用 `deepseek-chat`、`deepseek-reasoner` 或 Vercel AI Gateway。`GET /health` 会返回上述非敏感的实际运行配置，便于部署后核对。
 
 部署完成后，把服务 HTTPS 根地址配置到网站端 `ANALYSIS_SERVICE_URL`。网站端与分析服务端的 `ANALYSIS_SERVICE_TOKEN`、`ANALYSIS_CALLBACK_TOKEN` 必须完全一致。
 

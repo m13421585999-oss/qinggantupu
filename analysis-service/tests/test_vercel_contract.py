@@ -10,8 +10,12 @@ import pytest
 
 from app.acoustics.parselmouth_analyzer import resolve_ffmpeg
 from app.config import ConfigurationError, Settings
-from app.interpretation.llm_interpreter import _response_format_for_provider
-from app.main import _callback, app, create_job
+from app.interpretation.llm_interpreter import (
+    InterpretationError,
+    _response_format_for_provider,
+    interpret_control_spec,
+)
+from app.main import _callback, app, create_job, health
 from app.pipeline import _sites_headers
 from app.schemas.control_spec import JobRequest
 from server import app as vercel_app
@@ -27,6 +31,7 @@ def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "VERCEL_OIDC_TOKEN",
         "LLM_BASE_URL",
         "LLM_MODEL",
+        "LLM_REASONING_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ELEVENLABS_API_KEY", "eleven-test")
@@ -47,46 +52,44 @@ def test_vercel_configuration_targets_entrypoint_and_portable_duration() -> None
     assert "rewrites" not in configuration
 
 
-def test_settings_use_vercel_oidc_and_gateway_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    _base_environment(monkeypatch)
-    monkeypatch.setenv("VERCEL_OIDC_TOKEN", "oidc-test")
-
-    settings = Settings.from_environment()
-
-    assert settings.llm_api_key == "oidc-test"
-    assert settings.llm_auth_source == "vercel_oidc"
-    assert settings.llm_base_url == "https://ai-gateway.vercel.sh/v1"
-    assert settings.llm_model == "openai/gpt-5.6-sol"
-
-
-def test_static_gateway_key_precedes_oidc(monkeypatch: pytest.MonkeyPatch) -> None:
-    _base_environment(monkeypatch)
-    monkeypatch.setenv("AI_GATEWAY_API_KEY", "gateway-test")
-    monkeypatch.setenv("VERCEL_OIDC_TOKEN", "oidc-test")
-
-    settings = Settings.from_environment()
-
-    assert settings.llm_api_key == "gateway-test"
-    assert settings.llm_auth_source == "ai_gateway_api_key"
-
-
-def test_provider_key_selects_deepseek_defaults_and_precedes_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settings_fix_deepseek_runtime_and_default_to_high(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
     monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
-    monkeypatch.setenv("AI_GATEWAY_API_KEY", "gateway-test")
+    monkeypatch.setenv("LLM_BASE_URL", "https://wrong.example/v1")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-chat")
 
     settings = Settings.from_environment()
 
     assert settings.llm_api_key == "deepseek-test"
     assert settings.llm_auth_source == "llm_api_key"
     assert settings.llm_base_url == "https://api.deepseek.com"
-    assert settings.llm_model == "deepseek-chat"
+    assert settings.llm_model == "deepseek-v4-flash"
+    assert settings.llm_thinking == "enabled"
+    assert settings.llm_reasoning_effort == "high"
+
+
+def test_reasoning_effort_can_be_raised_to_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "max")
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_reasoning_effort == "max"
+
+
+def test_invalid_reasoning_effort_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "xhigh")
+    with pytest.raises(ConfigurationError, match="LLM_REASONING_EFFORT"):
+        Settings.from_environment()
 
 
 def test_deepseek_uses_json_object_mode() -> None:
     assert _response_format_for_provider(
         base_url="https://api.deepseek.com",
-        model="deepseek-chat",
+        model="deepseek-v4-flash",
         schema={"type": "object"},
     ) == {"type": "json_object"}
 
@@ -103,10 +106,74 @@ def test_gateway_keeps_strict_json_schema_mode() -> None:
     assert response_format["json_schema"]["schema"] == schema
 
 
-def test_missing_gateway_auth_is_a_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_llm_api_key_is_a_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
     with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
         Settings.from_environment()
+
+
+def test_health_reports_the_effective_deepseek_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
+
+    result = asyncio.run(health())
+
+    assert result["ok"] is True
+    assert result["llm"] == {
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "thinking": "enabled",
+        "reasoning_effort": "high",
+    }
+
+
+def test_deepseek_request_enables_thinking_with_configured_effort() -> None:
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(500, text="intentional test response")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    analysis_package = {
+        "work": {"title": "test", "author": "", "full_text": "测试"},
+        "alignment_quality": {},
+        "tokens": [],
+        "segments": [],
+        "acoustic_evidence": {
+            "tokens": [],
+            "pauses": [],
+            "duration_outliers": [],
+            "energy_changes": [],
+        },
+    }
+    with patch(
+        "app.interpretation.llm_interpreter.httpx.AsyncClient",
+        side_effect=client_factory,
+    ), pytest.raises(InterpretationError, match="HTTP 500"):
+        asyncio.run(
+            interpret_control_spec(
+                analysis_package=analysis_package,
+                api_key="deepseek-test",
+                base_url="https://api.deepseek.com",
+                model="deepseek-v4-flash",
+                thinking="enabled",
+                reasoning_effort="high",
+                timeout_seconds=30,
+            )
+        )
+
+    assert captured["model"] == "deepseek-v4-flash"
+    assert captured["thinking"] == {"type": "enabled"}
+    assert captured["reasoning_effort"] == "high"
 
 
 def test_ffmpeg_falls_back_to_imageio_binary(tmp_path: Path) -> None:
@@ -127,13 +194,15 @@ def test_job_request_waits_for_pipeline_instead_of_background_task() -> None:
     )
     settings = Settings(
         elevenlabs_api_key="eleven",
-        llm_api_key="oidc",
-        llm_auth_source="vercel_oidc",
+        llm_api_key="deepseek",
+        llm_auth_source="llm_api_key",
         analysis_service_token="service",
         analysis_callback_token="callback",
         sites_bypass_token="sites",
-        llm_base_url="https://ai-gateway.vercel.sh/v1",
-        llm_model="openai/gpt-5.6-sol",
+        llm_base_url="https://api.deepseek.com",
+        llm_model="deepseek-v4-flash",
+        llm_thinking="enabled",
+        llm_reasoning_effort="high",
         request_timeout_seconds=180,
     )
     runner = AsyncMock(return_value="succeeded")
