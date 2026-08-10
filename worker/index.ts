@@ -900,6 +900,11 @@ function promptControlTrace(prompt: ReturnType<typeof compileElevenV3Prompt>) {
       sentence_id: control.sentenceId,
       token_index: control.tokenIndex,
       source_control_refs: control.sourceControlRefs,
+      evidence: control.evidence ? {
+        source: control.evidence.source,
+        local_duration_ratio: control.evidence.localDurationRatio,
+        confidence: control.evidence.confidence,
+      } : undefined,
     })),
     validation: prompt.executionPlan.validation,
   };

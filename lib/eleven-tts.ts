@@ -41,6 +41,11 @@ export interface PromptControlTrace {
   sentenceId?: string;
   tokenIndex?: number;
   sourceControlRefs: string[];
+  evidence?: {
+    source: "acoustic";
+    localDurationRatio: number;
+    confidence: number;
+  };
 }
 
 export interface PromptValidationCheck {
@@ -50,7 +55,8 @@ export interface PromptValidationCheck {
     | "all_special_controls_traced"
     | "sentence_tag_budget"
     | "no_duplicate_tags"
-    | "no_duplicate_pause_signals";
+    | "no_duplicate_pause_signals"
+    | "prolongations_have_acoustic_evidence";
   passed: true;
 }
 
@@ -611,6 +617,7 @@ function prosodyMotionPlans(
     avoid,
     "settling",
   );
+  const settleCue = allowedMotionCue("settling", avoid, "softening");
   const softenCue = allowedMotionCue("softening", avoid, "settling");
   const buildCue = allowedMotionCue("building", avoid);
   const events = (Array.isArray(sentence.prosody) ? sentence.prosody : [])
@@ -681,7 +688,7 @@ function prosodyMotionPlans(
     else if (event.type === "falling") add(fallCue, startBoundary);
     else if (event.type === "peak") {
       add(buildCue, startBoundary);
-      add(fallCue, transitionBoundary);
+      add(settleCue, transitionBoundary);
     } else if (event.type === "valley") {
       add(softenCue, startBoundary);
       add(buildCue, transitionBoundary);
@@ -785,10 +792,8 @@ function validateExecutionPlan(
   assertCheck(
     tagControls.every((control) => {
       const key = [
-        control.scope,
         control.sentenceId ?? "document",
         control.tokenIndex ?? "start",
-        control.emittedText,
       ].join(":");
       if (tagPositions.has(key)) return false;
       tagPositions.add(key);
@@ -808,6 +813,15 @@ function validateExecutionPlan(
       return true;
     });
   assertCheck(localSignalsUnique, "no_duplicate_pause_signals", "同一位置叠加了多个停顿或拖音信号。" );
+
+  assertCheck(
+    controls.filter((control) => control.kind === "prolongation").every((control) =>
+      control.evidence?.source === "acoustic"
+      && control.evidence.localDurationRatio >= 2.1
+      && control.evidence.confidence >= 0.85),
+    "prolongations_have_acoustic_evidence",
+    "拖音缺少足够的 local_duration_ratio 或 confidence 声学证据。",
+  );
 
   return { state: "valid", checks };
 }
@@ -901,17 +915,6 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
     const sentenceId = String(sentence.id ?? `sentence-${sentencePosition + 1}`);
     sentenceTokenIndexes.push({ sentenceId, tokenIndexes: sentenceIndexes });
     const sentenceCue = sentenceCues.get(sentencePosition);
-    if (sentenceCue) {
-      const tag = `[${sentenceCue.cue}]`;
-      appendInlineTag(tag);
-      addControl({
-        kind: "audio_tag",
-        scope: "sentence",
-        emittedText: tag,
-        sentenceId,
-        sourceControlRefs: sentenceCue.sourceControlRefs,
-      });
-    }
 
     const sentenceRef = `control_spec.sentences.${sentenceId}`;
     const pauses = new Map<number, { type: "short" | "long"; refs: string[] }>();
@@ -938,25 +941,59 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
       boundaries,
     ));
     const firstBoundaryIndex = boundaries[0]?.tokenIndex;
-    const sentenceCueTrace = controls.find((control) =>
-      control.kind === "audio_tag"
-      && control.scope === "sentence"
-      && control.sentenceId === sentenceId);
     const globalCueTrace = sentencePosition === 0
       ? controls.find((control) => control.kind === "audio_tag" && control.scope === "global")
       : undefined;
-    const motionCues = plannedMotionCues.filter((cue) => {
-      if (cue.tokenIndex !== firstBoundaryIndex) return true;
-      const matchingTrace = sentenceCue?.cue === cue.cue
-        ? sentenceCueTrace
-        : !sentenceCue && globalCue?.cue === cue.cue ? globalCueTrace : undefined;
-      if (!matchingTrace) return true;
-      matchingTrace.sourceControlRefs = [...new Set([
-        ...matchingTrace.sourceControlRefs,
-        ...cue.sourceControlRefs,
+    let sentenceCueToEmit = sentenceCue
+      ? { ...sentenceCue, sourceControlRefs: [...sentenceCue.sourceControlRefs] }
+      : undefined;
+    let motionCues = plannedMotionCues.map((cue) => ({
+      ...cue,
+      sourceControlRefs: [...cue.sourceControlRefs],
+    }));
+    const startMotionCue = motionCues.find((cue) => cue.tokenIndex === firstBoundaryIndex);
+    const controlsShareStartBoundary = firstBoundaryIndex === sentenceIndexes[0];
+    if (controlsShareStartBoundary && sentencePosition === 0 && globalCueTrace) {
+      globalCueTrace.sourceControlRefs = [...new Set([
+        ...globalCueTrace.sourceControlRefs,
+        ...(sentenceCueToEmit?.sourceControlRefs ?? []),
+        ...(startMotionCue?.sourceControlRefs ?? []),
       ])];
-      return false;
-    });
+      sentenceCueToEmit = undefined;
+      motionCues = motionCues.filter((cue) => cue !== startMotionCue);
+    } else if (controlsShareStartBoundary && sentenceCueToEmit && startMotionCue) {
+      if (sentenceCueToEmit.cue === startMotionCue.cue) {
+        sentenceCueToEmit.sourceControlRefs = [...new Set([
+          ...sentenceCueToEmit.sourceControlRefs,
+          ...startMotionCue.sourceControlRefs,
+        ])];
+        motionCues = motionCues.filter((cue) => cue !== startMotionCue);
+      } else if (startMotionCue.score + 0.75 >= sentenceCueToEmit.score) {
+        startMotionCue.sourceControlRefs = [...new Set([
+          ...startMotionCue.sourceControlRefs,
+          ...sentenceCueToEmit.sourceControlRefs,
+        ])];
+        sentenceCueToEmit = undefined;
+      } else {
+        sentenceCueToEmit.sourceControlRefs = [...new Set([
+          ...sentenceCueToEmit.sourceControlRefs,
+          ...startMotionCue.sourceControlRefs,
+        ])];
+        motionCues = motionCues.filter((cue) => cue !== startMotionCue);
+      }
+    }
+    if (sentenceCueToEmit) {
+      const tag = `[${sentenceCueToEmit.cue}]`;
+      appendInlineTag(tag);
+      addControl({
+        kind: "audio_tag",
+        scope: "sentence",
+        emittedText: tag,
+        sentenceId,
+        tokenIndex: sentenceIndexes[0],
+        sourceControlRefs: sentenceCueToEmit.sourceControlRefs,
+      });
+    }
     const motionCuesByIndex = new Map<number, MotionCueDecision[]>();
     motionCues.forEach((cue) => {
       const entries = motionCuesByIndex.get(cue.tokenIndex) ?? [];
@@ -968,6 +1005,8 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
       degree: number;
       confidence?: number;
       localDurationRatio?: number;
+      source: string;
+      hasExplicitSourceRef: boolean;
       refs: string[];
     }>();
     const prolongEntries = Array.isArray(sentence.prolongations)
@@ -978,6 +1017,12 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
       const degree = integer(prolongation.degree ?? prolongation.strength) ?? 1;
       const confidenceValue = prolongation.confidence;
       const ratioValue = prolongation.localDurationRatio ?? prolongation.local_duration_ratio;
+      const explicitRefs = stringArray(
+        prolongation.sourceControlRefs
+          ?? prolongation.source_control_refs
+          ?? prolongation.sourceControlRef
+          ?? prolongation.source_control_ref,
+      );
       const prolongationId = String(prolongation.id ?? position + 1);
       if (index !== undefined) prolongations.set(index, {
         degree,
@@ -987,6 +1032,8 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
         localDurationRatio: ratioValue === undefined
           ? undefined
           : finiteNumber(ratioValue, 0),
+        source: String(prolongation.source ?? ""),
+        hasExplicitSourceRef: explicitRefs.length > 0,
         refs: sourceControlRefs(prolongation, `${sentenceRef}.prolongations.${prolongationId}`),
       });
     });
@@ -994,8 +1041,12 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
     const renderedProlongations = new Map([...prolongations.entries()]
       .filter(([index, value]) =>
         value.degree >= 3
-        && (value.confidence === undefined || value.confidence >= 0.75)
-        && (value.localDurationRatio === undefined || value.localDurationRatio >= 2)
+        && value.source === "acoustic"
+        && value.hasExplicitSourceRef
+        && value.confidence !== undefined
+        && value.confidence >= 0.85
+        && value.localDurationRatio !== undefined
+        && value.localDurationRatio >= 2.1
         && isSpokenCharacter(tokenByIndex.get(index)?.char ?? ""))
       .sort((left, right) => right[1].degree - left[1].degree || left[0] - right[0])
       .slice(0, 1));
@@ -1041,6 +1092,11 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
           sentenceId,
           tokenIndex: index,
           sourceControlRefs: prolongation.refs,
+          evidence: {
+            source: "acoustic",
+            localDurationRatio: prolongation.localDurationRatio!,
+            confidence: prolongation.confidence!,
+          },
         });
       } else if (explicitPause?.[0] === index) {
         const punctuation = explicitPause[1].type === "long" ? "……" : "，";

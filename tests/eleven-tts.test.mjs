@@ -67,12 +67,12 @@ test("prompt compiler keeps medium-density phrase motion without splitting the s
   const spec = controlSpec();
   const prompt = compileElevenV3Prompt(spec);
 
-  assert.equal(prompt.text, "[softly]\n[softening] 面朝大海， [building] 春暖花开。");
+  assert.equal(prompt.text, "[softly]\n面朝大海， [building] 春暖花开。");
   assert.doesNotMatch(
     prompt.text,
     /carry the emotional focus|continue naturally|control_spec|tts_execution_plan|source_control_refs/u,
   );
-  assert.equal(prompt.text.match(/\[[^\]]+\]/g)?.length, 3);
+  assert.equal(prompt.text.match(/\[[^\]]+\]/g)?.length, 2);
   assert.equal(stripAudioTags(prompt.text), "面朝大海，春暖花开。");
   assert.doesNotMatch(prompt.text, /\n\n/u);
   assert.equal(prompt.sourceTokens.length, spec.tokens.length);
@@ -80,7 +80,7 @@ test("prompt compiler keeps medium-density phrase motion without splitting the s
   assert.ok(prompt.executionPlan.controls.every((control) => control.sourceControlRefs.length > 0));
   assert.deepEqual(
     prompt.executionPlan.controls.map((control) => control.kind),
-    ["audio_tag", "audio_tag", "audio_tag"],
+    ["audio_tag", "audio_tag"],
   );
 
   const promptCharacters = Array.from(prompt.text);
@@ -141,6 +141,7 @@ test("only one strong high-confidence prolongation becomes a standard dash", () 
           degree: 3,
           confidence: 0.95,
           local_duration_ratio: 2.4,
+          source: "acoustic",
           source_control_ref: "current-control-spec/prolongation/strong",
         },
       ],
@@ -157,6 +158,11 @@ test("only one strong high-confidence prolongation becomes a standard dash", () 
   assert.deepEqual(prolongations[0].sourceControlRefs, [
     "current-control-spec/prolongation/strong",
   ]);
+  assert.deepEqual(prolongations[0].evidence, {
+    source: "acoustic",
+    localDurationRatio: 2.4,
+    confidence: 0.95,
+  });
 });
 
 test("hidden performance profiles only select short whitelisted state cues", () => {
@@ -222,7 +228,7 @@ test("a new work with no control intent receives no invented TTS control", () =>
 
   assert.equal(prompt.text, text);
   assert.deepEqual(prompt.executionPlan.controls, []);
-  assert.equal(prompt.executionPlan.validation.checks.length, 6);
+  assert.equal(prompt.executionPlan.validation.checks.length, 7);
 });
 
 test("every generic special control preserves its current control spec reference", () => {
@@ -242,6 +248,9 @@ test("every generic special control preserves its current control spec reference
       prolongations: [{
         tokenIndex: 2,
         degree: 3,
+        source: "acoustic",
+        confidence: 0.95,
+        local_duration_ratio: 2.4,
         source_control_ref: "current-control-spec/prolongation/p1",
       }],
       prosody: [{
@@ -310,15 +319,13 @@ test("prosody motion follows ordered phrase boundaries instead of a fixed templa
   assert.equal(stripAudioTags(prompt.text), text);
 });
 
-test("peak and valley events use at most two motion cues at semantic phrase boundaries", () => {
+test("peak and valley compile in the correct direction at semantic phrase boundaries", () => {
   const text = "远山渐高，云开日出，余音渐远。";
   const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
   const prompt = compileElevenV3Prompt({
-    performance_profile: { voice_quality: "slightly_breathy" },
     tokens,
     sentences: [{
       id: "sentence-motion",
-      rhythm: "relaxed",
       tokens,
       focus: [], pauses: [], prolongations: [],
       prosody: [{
@@ -336,10 +343,35 @@ test("peak and valley events use at most two motion cues at semantic phrase boun
   );
 
   assert.equal(motionControls.length, 2);
-  assert.deepEqual(motionControls.map((control) => control.emittedText), ["[building]", "[softening]"]);
+  assert.deepEqual(motionControls.map((control) => control.emittedText), ["[building]", "[settling]"]);
   assert.deepEqual(motionControls.map((control) => control.tokenIndex), [0, 10]);
   assert.doesNotMatch(prompt.text, /\n\n/u);
   assert.equal(stripAudioTags(prompt.text), text);
+
+  const valleyPrompt = compileElevenV3Prompt({
+    tokens,
+    sentences: [{
+      id: "sentence-valley",
+      tokens,
+      focus: [], pauses: [], prolongations: [],
+      prosody: [{
+        type: "valley",
+        active_span: { start: 0, end: 13 },
+        core_zone: { start: 4, end: 8 },
+        strength: 3,
+        confidence: 0.95,
+        source_control_ref: "current-control-spec/prosody/valley",
+      }],
+    }],
+  });
+  const valleyControls = valleyPrompt.executionPlan.controls.filter(
+    (control) => control.kind === "audio_tag" && control.scope === "local",
+  );
+  assert.deepEqual(
+    valleyControls.map((control) => control.emittedText),
+    ["[softening]", "[building]"],
+  );
+  assert.deepEqual(valleyControls.map((control) => control.tokenIndex), [0, 10]);
 });
 
 test("a motion cue identical to the active delivery state is emitted only once", () => {
@@ -373,6 +405,67 @@ test("a motion cue identical to the active delivery state is emitted only once",
     "current-control-spec/profile",
     "current-control-spec/prosody/rising",
   ]);
+});
+
+test("conflicting delivery and motion cues merge into one cue at the same boundary", () => {
+  const text = "山河渐明。";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    tokens,
+    sentences: [{
+      id: "sentence-conflict",
+      performance_profile: {
+        emotion_tone: ["温暖"],
+        source_control_ref: "current-control-spec/profile/gentle",
+      },
+      tokens,
+      focus: [], pauses: [], prolongations: [],
+      prosody: [{
+        type: "rising",
+        active_span: { start: 0, end: 3 },
+        core_zone: { start: 2, end: 3 },
+        strength: 3,
+        confidence: 1,
+        source_control_ref: "current-control-spec/prosody/building",
+      }],
+    }],
+  });
+  const tags = prompt.executionPlan.controls.filter((control) => control.kind === "audio_tag");
+
+  assert.equal(prompt.text, "[building] 山河渐明。");
+  assert.equal(tags.length, 1);
+  assert.deepEqual(tags[0].sourceControlRefs, [
+    "current-control-spec/prosody/building",
+    "current-control-spec/profile/gentle",
+  ]);
+});
+
+test("sentence cues never replace source punctuation with a newline", () => {
+  const text = "从明天起，做一个幸福的人。";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    tokens,
+    sentences: [
+      {
+        id: "sentence-clause-1",
+        tokens: tokens.slice(0, 5),
+        focus: [], pauses: [], prolongations: [], prosody: [],
+      },
+      {
+        id: "sentence-clause-2",
+        performance_profile: {
+          emotion_tone: ["明亮"],
+          source_control_ref: "current-control-spec/profile/bright",
+        },
+        tokens: tokens.slice(5),
+        focus: [], pauses: [], prolongations: [], prosody: [],
+      },
+    ],
+  });
+
+  assert.equal(prompt.text, "从明天起， [brightly] 做一个幸福的人。");
+  assert.equal(stripAudioTags(prompt.text), text);
+  assert.doesNotMatch(prompt.text, /，\s*\n/u);
 });
 
 test("golden sample wording is absent from runtime compiler and general rules", () => {

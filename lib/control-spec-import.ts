@@ -360,12 +360,24 @@ function parseProlongations(
     if (index === undefined || index < min || index > max) return [];
     const token = tokensByIndex.get(index);
     if (!token) return [];
+    const sourceValue = String(entry.source ?? "legacy");
+    const source = sourceValue === "acoustic" || sourceValue === "human"
+      ? sourceValue
+      : "legacy";
+    const explicitSourceRef = string(entry.source_control_ref ?? entry.sourceControlRef);
     return [{
       id: `${sentenceId}-prolong-${position + 1}`,
-      sourceControlRef: string(entry.source_control_ref ?? entry.sourceControlRef),
+      sourceControlRef: explicitSourceRef
+        ?? (source === "acoustic"
+          ? `analysis.acoustic_evidence.duration_outliers.token-${index}`
+          : undefined),
       tokenId: token.id,
       tokenIndex: index,
       degree: parseStrength(entry.degree ?? entry.strength ?? 1),
+      localDurationRatio: number(entry.local_duration_ratio ?? entry.localDurationRatio),
+      confidence: number(entry.confidence),
+      observedDurationMs: number(entry.duration_ms ?? entry.durationMs),
+      source,
       purpose: typeof entry.purpose === "string" ? entry.purpose : undefined,
     }];
   });

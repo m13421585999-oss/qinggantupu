@@ -138,6 +138,9 @@ def _acoustic_prolongations(
         result.append(
             {
                 "token_index": index,
+                "source_control_ref": (
+                    f"analysis.acoustic_evidence.duration_outliers.token-{index}"
+                ),
                 "degree": degree,
                 "duration_ms": int(item.get("duration_ms") or 0),
                 "local_duration_ratio": round(ratio, 3),

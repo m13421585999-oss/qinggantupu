@@ -48,7 +48,15 @@ test("control spec import preserves hidden performance profiles without changing
         confidence: 0.9,
       }],
       pauses: [],
-      prolongations: [],
+      prolongations: [{
+        token_index: 0,
+        degree: 3,
+        duration_ms: 230,
+        local_duration_ratio: 2.35,
+        confidence: 0.94,
+        source: "acoustic",
+        source_control_ref: "analysis.acoustic_evidence.duration_outliers.token-0",
+      }],
       prosody: [],
       ending_intonation: { type: "level", strength: 1 },
       confidence: 0.8,
@@ -67,4 +75,16 @@ test("control spec import preserves hidden performance profiles without changing
     end: "solid",
   });
   assert.equal(imported.sentences[0].focus[0].preferredRealization, "combined");
+  assert.deepEqual(imported.sentences[0].prolongations[0], {
+    id: "sentence-1-prolong-1",
+    sourceControlRef: "analysis.acoustic_evidence.duration_outliers.token-0",
+    tokenId: "token-0",
+    tokenIndex: 0,
+    degree: 3,
+    localDurationRatio: 2.35,
+    confidence: 0.94,
+    observedDurationMs: 230,
+    source: "acoustic",
+    purpose: undefined,
+  });
 });

@@ -103,6 +103,11 @@ export interface ProlongMark {
   tokenId: string;
   tokenIndex: number;
   degree: 1 | 2 | 3;
+  /** Preserved acoustic evidence; TTS will not infer missing values. */
+  localDurationRatio?: number;
+  confidence?: number;
+  observedDurationMs?: number;
+  source?: "acoustic" | "human" | "legacy";
   purpose?: string;
 }
 
