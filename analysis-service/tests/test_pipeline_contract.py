@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.acoustics.contour import continuous_macro_prosody_path, macro_contour
 from app.acoustics.parselmouth_analyzer import _ending_intonation
+from app.acoustics.timing_profile import derive_timing_profile
 from app.interpretation.llm_interpreter import assemble_control_spec
 from app.providers.eleven_alignment import map_to_source, normalize_payload
 from app.schemas.control_spec import LlmInterpretation
@@ -80,6 +81,46 @@ def test_alignment_preserves_exact_source_indexes() -> None:
     assert quality["character_coverage"] == 1
 
 
+def test_dynamic_timing_profile_uses_current_acoustic_evidence() -> None:
+    package = {
+        "alignment_quality": {"character_coverage": 0.98},
+        "tokens": [
+            {"index": 0, "char": "甲", "start_ms": 0, "end_ms": 300},
+            {"index": 1, "char": "乙", "start_ms": 300, "end_ms": 700},
+            {"index": 2, "char": "，", "start_ms": 700, "end_ms": 700},
+            {"index": 3, "char": "丙", "start_ms": 1200, "end_ms": 1500},
+            {"index": 4, "char": "丁", "start_ms": 1500, "end_ms": 2000},
+            {"index": 5, "char": "。", "start_ms": 2000, "end_ms": 2000},
+        ],
+        "segments": [{"id": "sentence-1", "start_index": 0, "end_index": 5}],
+        "acoustic_evidence": {
+            "tokens": [
+                {"token_index": 0, "silence_gap_after_ms": 0},
+                {"token_index": 1, "silence_gap_after_ms": 500},
+                {"token_index": 3, "silence_gap_after_ms": 0},
+                {"token_index": 4, "silence_gap_after_ms": 0},
+            ],
+            "pauses": [{"after_index": 1, "gap_ms": 500}],
+            "duration_outliers": [{
+                "token_index": 4,
+                "local_duration_ratio": 2.5,
+                "confidence": 0.95,
+            }],
+        },
+    }
+
+    timing = derive_timing_profile(package)
+
+    assert timing is not None
+    assert timing["global_pace"]["value"] == "slow"
+    assert timing["pause_hierarchy"][0]["level"] == "marked"
+    assert timing["prolongation_strength"][0]["strength"] == "strong"
+    assert all(
+        entry["source_control_ref"].startswith("analysis.")
+        for entry in timing["phrase_duration_profile"]
+    )
+
+
 def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
     package = {
         "tokens": [
@@ -142,6 +183,7 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
         "confidence": 0.8,
         "source": "acoustic",
     }
+    package["timing_profile"] = derive_timing_profile(package)
     interpretation = LlmInterpretation.model_validate(
         {
             "performance_profile": {
@@ -202,6 +244,7 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
     assert spec["sentences"][0]["focus"][0]["focus_style"] == "breathy_to_supported"
     assert spec["performance_profile"]["voice_quality"] == "slightly_breathy"
     assert spec["sentences"][0]["performance_profile"]["focus_style"] == "breathy_to_supported"
+    assert spec["timing_profile"] == package["timing_profile"]
 
 
 def test_control_spec_allows_no_focus_or_teaching_prosody_when_evidence_is_weak() -> None:

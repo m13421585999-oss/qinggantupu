@@ -7,6 +7,7 @@ import {
   buildElevenV3Request,
   compileElevenV3Prompt,
 } from "@/lib/eleven-tts";
+import { withDynamicTimingProfile } from "@/lib/timing-profile";
 
 interface Env {
   ASSETS: Fetcher;
@@ -147,6 +148,31 @@ function analysisTimeline(analysis: Record<string, unknown> | undefined) {
       endMs: Number(sentence.end_ms),
     })),
   };
+}
+
+async function latestAnalysisPackage(
+  env: Env,
+  workId: string,
+  sourceText: string,
+): Promise<Record<string, unknown> | undefined> {
+  const row = await first<Row>(env.DB.prepare(
+    `SELECT output_json
+       FROM processing_jobs
+      WHERE work_id = ? AND type = 'reference_analysis' AND status = 'succeeded'
+      ORDER BY created_at DESC LIMIT 1`,
+  ).bind(workId));
+  const output = parseJson<Record<string, unknown>>(row?.output_json as string | null);
+  const analysisPackage = output?.analysis_package;
+  if (!analysisPackage || typeof analysisPackage !== "object" || Array.isArray(analysisPackage)) {
+    return undefined;
+  }
+  const analysisWork = (analysisPackage as Record<string, unknown>).work;
+  const analyzedText = analysisWork && typeof analysisWork === "object" && !Array.isArray(analysisWork)
+    ? String((analysisWork as Record<string, unknown>).full_text ?? "")
+    : "";
+  return analyzedText === sourceText
+    ? analysisPackage as Record<string, unknown>
+    : undefined;
 }
 
 async function getWorkPayload(env: Env, workId: string, published = false) {
@@ -786,7 +812,10 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
 
   let normalizedSpec: Record<string, unknown>;
   try {
-    normalizedSpec = importControlSpec(rawControlSpec, String(work.source_text), String(work.id), input.assetId) as unknown as Record<string, unknown>;
+    normalizedSpec = withDynamicTimingProfile(
+      importControlSpec(rawControlSpec, String(work.source_text), String(work.id), input.assetId),
+      analysisPackage,
+    );
     const provenance = normalizedSpec.analysisProvenance && typeof normalizedSpec.analysisProvenance === "object"
       ? normalizedSpec.analysisProvenance as Record<string, unknown>
       : {};
@@ -858,8 +887,10 @@ async function saveControlSpec(request: Request, env: Env, workId: string) {
   const body = await request.json() as Record<string, unknown>;
   const spec = body.control_spec as Record<string, unknown> | undefined;
   if (!spec) return apiError(400, "CONTROL_SPEC_REQUIRED", "请提供 control_spec。");
+  const analysisPackage = await latestAnalysisPackage(env, workId, String(work.source_text));
+  const specWithTiming = withDynamicTimingProfile(spec, analysisPackage);
   try {
-    validateControlSpec(spec, String(work.source_text));
+    validateControlSpec(specWithTiming, String(work.source_text));
   } catch (error) {
     return apiError(422, "INVALID_CONTROL_SPEC", error instanceof Error ? error.message : String(error));
   }
@@ -868,14 +899,14 @@ async function saveControlSpec(request: Request, env: Env, workId: string) {
   ).bind(workId));
   const version = Number(latest?.version ?? 0) + 1;
   const specId = id("spec");
-  const updated = { ...spec, id: specId, workId, version };
+  const updated = { ...specWithTiming, id: specId, workId, version };
   const createdAt = now();
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO control_spec_versions
        (id, work_id, version, schema_version, source, spec_json, validation_state, created_by, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 'valid', 'creator', ?)`,
-    ).bind(specId, workId, version, String(spec.schemaVersion ?? "2.0"), String(body.source ?? "human"), JSON.stringify(updated), createdAt),
+    ).bind(specId, workId, version, String(specWithTiming.schemaVersion ?? "2.0"), String(body.source ?? "human"), JSON.stringify(updated), createdAt),
     env.DB.prepare(
       "UPDATE works SET current_spec_version_id = ?, status = 'review', published_revision_id = NULL, updated_at = ? WHERE id = ?",
     ).bind(specId, createdAt, workId),
@@ -903,9 +934,17 @@ function promptControlTrace(prompt: ReturnType<typeof compileElevenV3Prompt>) {
       evidence: control.evidence ? {
         source: control.evidence.source,
         local_duration_ratio: control.evidence.localDurationRatio,
+        timing_strength: control.evidence.timingStrength,
+        phrase_expansion: control.evidence.phraseExpansion,
+        speaking_rate_chars_per_sec: control.evidence.speakingRateCharsPerSec,
+        global_pace: control.evidence.globalPace,
+        pause_level: control.evidence.pauseLevel,
+        observed_gap_ms: control.evidence.observedGapMs,
+        relative_ratio: control.evidence.relativeRatio,
         confidence: control.evidence.confidence,
       } : undefined,
     })),
+    timing_profile: prompt.executionPlan.timingProfile ?? null,
     validation: prompt.executionPlan.validation,
   };
 }
@@ -924,10 +963,12 @@ async function getAiDemoPromptDebug(env: Env, workId: string) {
   ).bind(work.current_spec_version_id));
   const spec = parseJson<Record<string, unknown>>(specRow?.spec_json as string | null);
   if (!spec) return apiError(500, "INVALID_STORED_SPEC", "保存的控制谱无法读取。");
+  const analysisPackage = await latestAnalysisPackage(env, workId, String(work.source_text));
+  const specWithTiming = withDynamicTimingProfile(spec, analysisPackage);
 
   let prompt: ReturnType<typeof compileElevenV3Prompt>;
   try {
-    prompt = compileElevenV3Prompt(spec);
+    prompt = compileElevenV3Prompt(specWithTiming);
   } catch (error) {
     return apiError(422, "TTS_PROMPT_COMPILE_FAILED", error instanceof Error ? error.message : String(error));
   }
@@ -984,9 +1025,11 @@ async function generateAiDemo(env: Env, workId: string) {
   const specRow = await first<Row>(env.DB.prepare("SELECT * FROM control_spec_versions WHERE id = ?").bind(work.current_spec_version_id));
   const spec = parseJson<Record<string, unknown>>(specRow?.spec_json as string);
   if (!spec) return apiError(500, "INVALID_STORED_SPEC", "保存的控制谱无法读取。");
+  const analysisPackage = await latestAnalysisPackage(env, workId, String(work.source_text));
+  const specWithTiming = withDynamicTimingProfile(spec, analysisPackage);
   let prompt: ReturnType<typeof compileElevenV3Prompt>;
   try {
-    prompt = compileElevenV3Prompt(spec);
+    prompt = compileElevenV3Prompt(specWithTiming);
   } catch (error) {
     return apiError(422, "TTS_PROMPT_COMPILE_FAILED", error instanceof Error ? error.message : String(error));
   }
@@ -1032,7 +1075,7 @@ async function generateAiDemo(env: Env, workId: string) {
   if (!audioBase64) return apiError(502, "ELEVEN_TTS_EMPTY_AUDIO", "Eleven v3 没有返回音频。");
   let timeline: ReturnType<typeof buildElevenTimeline>;
   try {
-    timeline = buildElevenTimeline(spec, prompt, providerResponse);
+    timeline = buildElevenTimeline(specWithTiming, prompt, providerResponse);
   } catch (error) {
     return apiError(502, "ELEVEN_TTS_ALIGNMENT_FAILED", error instanceof Error ? error.message : String(error));
   }

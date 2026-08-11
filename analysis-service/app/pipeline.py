@@ -17,6 +17,7 @@ from app.acoustics.parselmouth_analyzer import (
     convert_to_mono_wav,
     split_sentence_ranges,
 )
+from app.acoustics.timing_profile import derive_timing_profile
 from app.config import Settings
 from app.interpretation.llm_interpreter import interpret_control_spec
 from app.providers.eleven_alignment import (
@@ -197,6 +198,9 @@ async def analyze_job(
             "energy_changes": acoustics["energy_changes"],
         },
     }
+    timing_profile = derive_timing_profile(analysis_package)
+    if timing_profile is not None:
+        analysis_package["timing_profile"] = timing_profile
     control_spec = await interpret_control_spec(
         analysis_package=analysis_package,
         api_key=settings.llm_api_key,

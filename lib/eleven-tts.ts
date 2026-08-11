@@ -43,7 +43,14 @@ export interface PromptControlTrace {
   sourceControlRefs: string[];
   evidence?: {
     source: "acoustic";
-    localDurationRatio: number;
+    localDurationRatio?: number;
+    timingStrength?: "subtle" | "clear" | "strong";
+    phraseExpansion?: "compressed" | "baseline" | "expanded" | "strongly_expanded";
+    speakingRateCharsPerSec?: number;
+    globalPace?: "slow" | "moderately_slow" | "medium" | "brisk";
+    pauseLevel?: "light" | "marked" | "paragraph";
+    observedGapMs?: number;
+    relativeRatio?: number;
     confidence: number;
   };
 }
@@ -58,12 +65,14 @@ export interface PromptValidationCheck {
     | "sentence_tag_budget"
     | "no_duplicate_tags"
     | "no_duplicate_pause_signals"
-    | "prolongations_have_acoustic_evidence";
+    | "prolongations_have_acoustic_evidence"
+    | "global_pace_preserved";
   passed: true;
 }
 
 export interface TtsExecutionPlan {
   controls: PromptControlTrace[];
+  timingProfile?: JsonObject;
   validation: {
     state: "valid";
     checks: PromptValidationCheck[];
@@ -106,6 +115,10 @@ function rhythmKey(value: unknown): string | undefined {
 }
 
 type MinimalCue =
+  | "slowly"
+  | "unhurried"
+  | "steady"
+  | "briskly"
   | "softly"
   | "brightly"
   | "solemnly"
@@ -121,6 +134,10 @@ type MinimalCue =
   | "slightly breathy";
 
 export const ELEVEN_V3_MINIMAL_AUDIO_TAGS: readonly MinimalCue[] = [
+  "slowly",
+  "unhurried",
+  "steady",
+  "briskly",
   "softly",
   "brightly",
   "solemnly",
@@ -135,6 +152,13 @@ export const ELEVEN_V3_MINIMAL_AUDIO_TAGS: readonly MinimalCue[] = [
   "softening",
   "slightly breathy",
 ] as const;
+
+const GLOBAL_PACE_CUES: Record<string, MinimalCue> = {
+  slow: "slowly",
+  moderately_slow: "unhurried",
+  medium: "steady",
+  brisk: "briskly",
+};
 
 export const ELEVEN_V3_PROSODY_MOTION_DIRECTIONS = {
   rising: { entry: "building" },
@@ -220,6 +244,11 @@ function profile(value: unknown) {
   return object(source.performanceProfile ?? source.performance_profile);
 }
 
+function timingProfile(value: unknown) {
+  const source = object(value);
+  return object(source.timingProfile ?? source.timing_profile);
+}
+
 function stringArray(value: unknown): string[] {
   return (Array.isArray(value) ? value : value === undefined || value === null ? [] : [value])
     .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
@@ -258,6 +287,32 @@ interface CueDecision {
   cue: MinimalCue;
   score: number;
   sourceControlRefs: string[];
+  evidence?: PromptControlTrace["evidence"];
+}
+
+function globalPaceCue(spec: JsonObject): CueDecision | undefined {
+  const timing = timingProfile(spec);
+  if (timing.source !== "acoustic") return undefined;
+  const pace = object(timing.globalPace ?? timing.global_pace);
+  const value = String(pace.value ?? "");
+  const cue = GLOBAL_PACE_CUES[value];
+  const refs = cueSourceControlRefs(pace);
+  const rate = finiteNumber(
+    pace.speakingRateCharsPerSec ?? pace.speaking_rate_chars_per_sec,
+    0,
+  );
+  if (!cue || !refs.length || rate <= 0) return undefined;
+  return {
+    cue,
+    score: 100,
+    sourceControlRefs: refs,
+    evidence: {
+      source: "acoustic",
+      speakingRateCharsPerSec: rate,
+      globalPace: value as NonNullable<PromptControlTrace["evidence"]>["globalPace"],
+      confidence: Math.max(0, Math.min(1, finiteNumber(pace.confidence, 0.8))),
+    },
+  };
 }
 
 function addCueScore(
@@ -556,6 +611,97 @@ function phraseBoundaries(
     .sort((left, right) => left.sentenceOffset - right.sentenceOffset);
 }
 
+function phraseTimingCues(
+  spec: JsonObject,
+  sentenceIndexes: number[],
+  boundaries: PhraseBoundary[],
+): MotionCueDecision[] {
+  const timing = timingProfile(spec);
+  if (timing.source !== "acoustic") return [];
+  const global = object(timing.globalPace ?? timing.global_pace);
+  const globalPace = String(global.value ?? "");
+  const entries = Array.isArray(timing.phraseDurationProfile)
+    ? timing.phraseDurationProfile
+    : Array.isArray(timing.phrase_duration_profile) ? timing.phrase_duration_profile : [];
+  const sentenceMin = sentenceIndexes[0];
+  const sentenceMax = sentenceIndexes.at(-1)!;
+  return entries.map(object).flatMap((entry) => {
+    const start = integer(entry.startIndex ?? entry.start_index);
+    const end = integer(entry.endIndex ?? entry.end_index);
+    const expansion = String(entry.expansion ?? "");
+    const confidence = Math.max(0, Math.min(1, finiteNumber(entry.confidence, 0.8)));
+    const refs = cueSourceControlRefs(entry);
+    if (
+      start === undefined
+      || end === undefined
+      || start < sentenceMin
+      || end > sentenceMax
+      || confidence < 0.6
+      || !refs.length
+    ) return [];
+
+    let cue: MinimalCue | undefined;
+    if (expansion === "strongly_expanded" && globalPace !== "slow") {
+      cue = "slowly";
+    } else if (
+      expansion === "expanded"
+      && globalPace !== "slow"
+      && globalPace !== "moderately_slow"
+    ) {
+      cue = "unhurried";
+    }
+    if (!cue || cue === GLOBAL_PACE_CUES[globalPace]) return [];
+
+    const boundary = boundaries.find((candidate) => candidate.tokenIndex === start)
+      ?? boundaries.find((candidate) => candidate.tokenIndex >= start && candidate.tokenIndex <= end);
+    if (!boundary) return [];
+    return [{
+      cue,
+      score: expansion === "strongly_expanded" ? 20 + confidence : 15 + confidence,
+      tokenIndex: boundary.tokenIndex,
+      sourceControlRefs: refs,
+      evidence: {
+        source: "acoustic" as const,
+        phraseExpansion: expansion as NonNullable<PromptControlTrace["evidence"]>["phraseExpansion"],
+        speakingRateCharsPerSec: finiteNumber(
+          entry.speakingRateCharsPerSec ?? entry.speaking_rate_chars_per_sec,
+          0,
+        ),
+        globalPace: globalPace as NonNullable<PromptControlTrace["evidence"]>["globalPace"],
+        confidence,
+      },
+    }];
+  });
+}
+
+function mergeSentenceLocalCues(
+  timingCues: MotionCueDecision[],
+  motionCues: MotionCueDecision[],
+) {
+  const selected: MotionCueDecision[] = [];
+  const add = (candidate: MotionCueDecision) => {
+    const sameBoundary = selected.find((cue) => cue.tokenIndex === candidate.tokenIndex);
+    if (sameBoundary) {
+      if (sameBoundary.cue === candidate.cue) {
+        sameBoundary.sourceControlRefs = [...new Set([
+          ...sameBoundary.sourceControlRefs,
+          ...candidate.sourceControlRefs,
+        ])];
+        sameBoundary.evidence ??= candidate.evidence;
+      }
+      return;
+    }
+    if (selected.length < 2) selected.push({
+      ...candidate,
+      sourceControlRefs: [...candidate.sourceControlRefs],
+    });
+  };
+
+  [...timingCues].sort((left, right) => right.score - left.score).forEach(add);
+  [...motionCues].sort((left, right) => right.score - left.score).forEach(add);
+  return selected.sort((left, right) => left.tokenIndex - right.tokenIndex);
+}
+
 function softFallingPreferred(spec: JsonObject, sentence: JsonObject) {
   const sentenceProfile = profile(sentence);
   const documentProfile = profile(spec);
@@ -747,6 +893,7 @@ function validateExecutionPlan(
   renderedSourceIndexes: number[],
   sentenceTokenIndexes: CompiledTtsPrompt["sentenceTokenIndexes"],
   controls: PromptControlTrace[],
+  activeTimingProfile: JsonObject,
 ): TtsExecutionPlan["validation"] {
   const checks: PromptValidationCheck[] = [];
   const assertCheck = (condition: boolean, code: PromptValidationCheck["code"], message: string) => {
@@ -869,10 +1016,28 @@ function validateExecutionPlan(
   assertCheck(
     controls.filter((control) => control.kind === "prolongation").every((control) =>
       control.evidence?.source === "acoustic"
-      && control.evidence.localDurationRatio >= 2.1
-      && control.evidence.confidence >= 0.85),
+      && (control.evidence.timingStrength !== undefined
+        ? control.evidence.timingStrength === "strong"
+          && control.evidence.confidence >= 0.8
+        : (control.evidence.localDurationRatio ?? 0) >= 2.1
+          && control.evidence.confidence >= 0.85)),
     "prolongations_have_acoustic_evidence",
     "拖音缺少足够的 local_duration_ratio 或 confidence 声学证据。",
+  );
+
+  const timingGlobal = object(activeTimingProfile.globalPace ?? activeTimingProfile.global_pace);
+  const timingPace = String(timingGlobal.value ?? "");
+  const expectedPaceCue = GLOBAL_PACE_CUES[timingPace];
+  const globalPacePreserved = activeTimingProfile.source !== "acoustic"
+    || Boolean(expectedPaceCue && controls.some((control) =>
+      control.kind === "audio_tag"
+      && control.scope === "global"
+      && control.emittedText === `[${expectedPaceCue}]`
+      && control.sourceControlRefs.length > 0));
+  assertCheck(
+    globalPacePreserved,
+    "global_pace_preserved",
+    "当前参考朗诵的全局速度没有进入 Eleven Prompt。",
   );
 
   return { state: "valid", checks };
@@ -900,6 +1065,26 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
     return { id: String(token.id ?? `token-${position}`), index: position, char };
   });
   const tokenByIndex = new Map(canonicalTokens.map((token) => [token.index, token]));
+  const activeTimingProfile = timingProfile(spec);
+  const hasAcousticTimingProfile = activeTimingProfile.source === "acoustic";
+  const timingPauseEntries = Array.isArray(activeTimingProfile.pauseHierarchy)
+    ? activeTimingProfile.pauseHierarchy
+    : Array.isArray(activeTimingProfile.pause_hierarchy) ? activeTimingProfile.pause_hierarchy : [];
+  const timingPausesByIndex = new Map<number, JsonObject>();
+  timingPauseEntries.map(object).forEach((entry) => {
+    const index = integer(entry.afterTokenIndex ?? entry.after_token_index ?? entry.after_index);
+    if (index !== undefined) timingPausesByIndex.set(index, entry);
+  });
+  const timingProlongationEntries = Array.isArray(activeTimingProfile.prolongationStrength)
+    ? activeTimingProfile.prolongationStrength
+    : Array.isArray(activeTimingProfile.prolongation_strength)
+      ? activeTimingProfile.prolongation_strength
+      : [];
+  const timingProlongationsByIndex = new Map<number, JsonObject>();
+  timingProlongationEntries.map(object).forEach((entry) => {
+    const index = integer(entry.tokenIndex ?? entry.token_index);
+    if (index !== undefined) timingProlongationsByIndex.set(index, entry);
+  });
 
   let text = "";
   let expectedIndex = 0;
@@ -928,8 +1113,10 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
     controls.push({ id: `prompt-control-${controls.length + 1}`, ...control });
   };
 
-  const globalCue = globalDeliveryCue(spec, sentences);
-  const sentenceCues = planSentenceCues(spec, sentences, globalCue);
+  const performanceGlobalCue = globalDeliveryCue(spec, sentences);
+  const paceCue = globalPaceCue(spec);
+  const globalCue = paceCue ?? performanceGlobalCue;
+  const sentenceCues = planSentenceCues(spec, sentences, performanceGlobalCue);
   if (globalCue) {
     const tag = `[${globalCue.cue}]`;
     append(tag);
@@ -938,6 +1125,7 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
       scope: "global",
       emittedText: tag,
       sourceControlRefs: globalCue.sourceControlRefs,
+      evidence: globalCue.evidence,
     });
     ensureNewlines(1);
   }
@@ -969,15 +1157,45 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
     const sentenceCue = sentenceCues.get(sentencePosition);
 
     const sentenceRef = `control_spec.sentences.${sentenceId}`;
-    const pauses = new Map<number, { type: "short" | "long"; refs: string[] }>();
+    const pauses = new Map<number, {
+      type: "short" | "long";
+      level: "light" | "marked" | "paragraph";
+      refs: string[];
+      evidence?: PromptControlTrace["evidence"];
+    }>();
     const pauseEntries = Array.isArray(sentence.pauses) ? sentence.pauses.map(object) : [];
     pauseEntries.forEach((pause, position) => {
       const index = integer(pause.afterTokenIndex ?? pause.after_index);
       const pauseId = String(pause.id ?? position + 1);
-      if (index !== undefined) pauses.set(index, {
-        type: pause.type === "long" ? "long" : "short",
-        refs: sourceControlRefs(pause, `${sentenceRef}.pauses.${pauseId}`),
-      });
+      if (index !== undefined) {
+        const timingPause = timingPausesByIndex.get(index);
+        const timingLevel = String(timingPause?.level ?? "");
+        const level = (["light", "marked", "paragraph"] as string[]).includes(timingLevel)
+          ? timingLevel as "light" | "marked" | "paragraph"
+          : pause.type === "long" ? "paragraph" : "marked";
+        const timingRefs = timingPause ? cueSourceControlRefs(timingPause) : [];
+        pauses.set(index, {
+          type: pause.type === "long" ? "long" : "short",
+          level,
+          refs: [...new Set([
+            ...sourceControlRefs(pause, `${sentenceRef}.pauses.${pauseId}`),
+            ...timingRefs,
+          ])],
+          evidence: timingPause ? {
+            source: "acoustic",
+            pauseLevel: level,
+            observedGapMs: finiteNumber(
+              timingPause.observedGapMs ?? timingPause.observed_gap_ms ?? timingPause.gap_ms,
+              0,
+            ),
+            relativeRatio: finiteNumber(
+              timingPause.relativeRatio ?? timingPause.relative_ratio,
+              1,
+            ),
+            confidence: Math.max(0, Math.min(1, finiteNumber(timingPause.confidence, 0.8))),
+          } : undefined,
+        });
+      }
     });
 
     const boundaries = phraseBoundaries(
@@ -991,6 +1209,7 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
       sentenceIndexes,
       boundaries,
     ));
+    const plannedTimingCues = phraseTimingCues(spec, sentenceIndexes, boundaries);
     const firstBoundaryIndex = boundaries[0]?.tokenIndex;
     const globalCueTrace = sentencePosition === 0
       ? controls.find((control) => control.kind === "audio_tag" && control.scope === "global")
@@ -998,18 +1217,25 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
     let sentenceCueToEmit = sentenceCue
       ? { ...sentenceCue, sourceControlRefs: [...sentenceCue.sourceControlRefs] }
       : undefined;
-    let motionCues = plannedMotionCues.map((cue) => ({
+    let motionCues = mergeSentenceLocalCues(plannedTimingCues, plannedMotionCues).map((cue) => ({
       ...cue,
       sourceControlRefs: [...cue.sourceControlRefs],
     }));
     const startMotionCue = motionCues.find((cue) => cue.tokenIndex === firstBoundaryIndex);
     const controlsShareStartBoundary = firstBoundaryIndex === sentenceIndexes[0];
     if (controlsShareStartBoundary && sentencePosition === 0 && globalCueTrace) {
-      globalCueTrace.sourceControlRefs = [...new Set([
-        ...globalCueTrace.sourceControlRefs,
-        ...(sentenceCueToEmit?.sourceControlRefs ?? []),
-        ...(startMotionCue?.sourceControlRefs ?? []),
-      ])];
+      if (sentenceCueToEmit && sentenceCueToEmit.cue === globalCue?.cue) {
+        globalCueTrace.sourceControlRefs = [...new Set([
+          ...globalCueTrace.sourceControlRefs,
+          ...sentenceCueToEmit.sourceControlRefs,
+        ])];
+      }
+      if (startMotionCue && startMotionCue.cue === globalCue?.cue) {
+        globalCueTrace.sourceControlRefs = [...new Set([
+          ...globalCueTrace.sourceControlRefs,
+          ...startMotionCue.sourceControlRefs,
+        ])];
+      }
       sentenceCueToEmit = undefined;
       motionCues = motionCues.filter((cue) => cue !== startMotionCue);
     } else if (controlsShareStartBoundary && sentenceCueToEmit && startMotionCue) {
@@ -1043,19 +1269,16 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
         sentenceId,
         tokenIndex: sentenceIndexes[0],
         sourceControlRefs: sentenceCueToEmit.sourceControlRefs,
+        evidence: sentenceCueToEmit.evidence,
       });
     }
-    const motionCuesByIndex = new Map<number, MotionCueDecision[]>();
-    motionCues.forEach((cue) => {
-      const entries = motionCuesByIndex.get(cue.tokenIndex) ?? [];
-      entries.push(cue);
-      motionCuesByIndex.set(cue.tokenIndex, entries);
-    });
 
     const prolongations = new Map<number, {
       degree: number;
       confidence?: number;
       localDurationRatio?: number;
+      timingStrength?: "subtle" | "clear" | "strong";
+      phraseExpansion?: "compressed" | "baseline" | "expanded" | "strongly_expanded";
       source: string;
       hasExplicitSourceRef: boolean;
       refs: string[];
@@ -1075,18 +1298,42 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
           ?? prolongation.source_control_ref,
       );
       const prolongationId = String(prolongation.id ?? position + 1);
-      if (index !== undefined) prolongations.set(index, {
-        degree,
-        confidence: confidenceValue === undefined
-          ? undefined
-          : Math.max(0, Math.min(1, finiteNumber(confidenceValue, 0))),
-        localDurationRatio: ratioValue === undefined
-          ? undefined
-          : finiteNumber(ratioValue, 0),
-        source: String(prolongation.source ?? ""),
-        hasExplicitSourceRef: explicitRefs.length > 0,
-        refs: sourceControlRefs(prolongation, `${sentenceRef}.prolongations.${prolongationId}`),
-      });
+      if (index !== undefined) {
+        const timingEntry = timingProlongationsByIndex.get(index);
+        const timingStrength = String(timingEntry?.strength ?? "");
+        const phraseExpansion = String(
+          timingEntry?.phraseExpansion ?? timingEntry?.phrase_expansion ?? "",
+        );
+        const timingRefs = timingEntry ? cueSourceControlRefs(timingEntry) : [];
+        const timingConfidence = timingEntry?.confidence;
+        const timingRatio = timingEntry?.localDurationRatio ?? timingEntry?.local_duration_ratio;
+        prolongations.set(index, {
+          degree,
+          confidence: timingConfidence !== undefined
+            ? Math.max(0, Math.min(1, finiteNumber(timingConfidence, 0)))
+            : confidenceValue === undefined
+              ? undefined
+              : Math.max(0, Math.min(1, finiteNumber(confidenceValue, 0))),
+          localDurationRatio: timingRatio !== undefined
+            ? finiteNumber(timingRatio, 0)
+            : ratioValue === undefined
+              ? undefined
+              : finiteNumber(ratioValue, 0),
+          timingStrength: (["subtle", "clear", "strong"] as string[]).includes(timingStrength)
+            ? timingStrength as "subtle" | "clear" | "strong"
+            : undefined,
+          phraseExpansion: (["compressed", "baseline", "expanded", "strongly_expanded"] as string[])
+            .includes(phraseExpansion)
+            ? phraseExpansion as "compressed" | "baseline" | "expanded" | "strongly_expanded"
+            : undefined,
+          source: timingEntry ? "acoustic" : String(prolongation.source ?? ""),
+          hasExplicitSourceRef: timingRefs.length > 0 || explicitRefs.length > 0,
+          refs: [...new Set([
+            ...sourceControlRefs(prolongation, `${sentenceRef}.prolongations.${prolongationId}`),
+            ...timingRefs,
+          ])],
+        });
+      }
     });
 
     const renderedProlongations = new Map([...prolongations.entries()]
@@ -1094,24 +1341,52 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
         value.degree >= 3
         && value.source === "acoustic"
         && value.hasExplicitSourceRef
-        && value.confidence !== undefined
-        && value.confidence >= 0.85
-        && value.localDurationRatio !== undefined
-        && value.localDurationRatio >= 2.1
+        && (hasAcousticTimingProfile
+          ? value.timingStrength === "strong"
+            && value.confidence !== undefined
+            && value.confidence >= 0.8
+          : value.confidence !== undefined
+            && value.confidence >= 0.85
+            && value.localDurationRatio !== undefined
+            && value.localDurationRatio >= 2.1)
         && isSpokenCharacter(tokenByIndex.get(index)?.char ?? ""))
       .sort((left, right) => right[1].degree - left[1].degree || left[0] - right[0])
       .slice(0, 1));
     const pauseCandidates = [...pauses.entries()]
-      .sort((left, right) => (right[1].type === "long" ? 1 : 0) - (left[1].type === "long" ? 1 : 0));
-    const explicitPause = pauseCandidates.find(([index]) => {
+      .filter(([index, pause]) => {
+        const offset = sentenceIndexes.indexOf(index);
+        const current = tokenByIndex.get(index)?.char ?? "";
+        const next = tokenByIndex.get(sentenceIndexes[offset + 1])?.char ?? "";
+        return pause.level !== "light"
+          && offset >= 0
+          && offset < sentenceIndexes.length - 1
+          && !renderedProlongations.has(index)
+          && !/[，。！？、；：,!?;:\s]/u.test(current)
+          && !/[，。！？、；：,!?;:\s]/u.test(next);
+      })
+      .sort((left, right) => {
+        const levelScore = (value: "light" | "marked" | "paragraph") =>
+          value === "paragraph" ? 2 : value === "marked" ? 1 : 0;
+        return levelScore(right[1].level) - levelScore(left[1].level)
+          || finiteNumber(right[1].evidence?.relativeRatio, 1)
+            - finiteNumber(left[1].evidence?.relativeRatio, 1);
+      })
+      .slice(0, 2)
+      .sort((left, right) => left[0] - right[0]);
+    const explicitPauses = new Map(pauseCandidates);
+    const pauseProtectedBoundaries = new Set<number>();
+    explicitPauses.forEach((_, index) => {
       const offset = sentenceIndexes.indexOf(index);
-      const current = tokenByIndex.get(index)?.char ?? "";
-      const next = tokenByIndex.get(sentenceIndexes[offset + 1])?.char ?? "";
-      return offset >= 0
-        && offset < sentenceIndexes.length - 1
-        && !renderedProlongations.has(index)
-        && !/[，。！？、；：,!?;:\s]/u.test(current)
-        && !/[，。！？、；：,!?;:\s]/u.test(next);
+      const nextSpoken = sentenceIndexes.slice(offset + 1)
+        .find((candidate) => isSpokenCharacter(tokenByIndex.get(candidate)?.char ?? ""));
+      if (nextSpoken !== undefined) pauseProtectedBoundaries.add(nextSpoken);
+    });
+    motionCues = motionCues.filter((cue) => !pauseProtectedBoundaries.has(cue.tokenIndex));
+    const motionCuesByIndex = new Map<number, MotionCueDecision[]>();
+    motionCues.forEach((cue) => {
+      const entries = motionCuesByIndex.get(cue.tokenIndex) ?? [];
+      entries.push(cue);
+      motionCuesByIndex.set(cue.tokenIndex, entries);
     });
 
     sentenceIndexes.forEach((index) => {
@@ -1125,6 +1400,7 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
           sentenceId,
           tokenIndex: index,
           sourceControlRefs: motionCue.sourceControlRefs,
+          evidence: motionCue.evidence,
         });
       });
       const token = tokenByIndex.get(index)!;
@@ -1146,11 +1422,18 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
           evidence: {
             source: "acoustic",
             localDurationRatio: prolongation.localDurationRatio!,
+            ...(prolongation.timingStrength
+              ? { timingStrength: prolongation.timingStrength }
+              : {}),
+            ...(prolongation.phraseExpansion
+              ? { phraseExpansion: prolongation.phraseExpansion }
+              : {}),
             confidence: prolongation.confidence!,
           },
         });
-      } else if (explicitPause?.[0] === index) {
-        const punctuation = explicitPause[1].type === "long" ? "……" : "，";
+      } else if (explicitPauses.has(index)) {
+        const pause = explicitPauses.get(index)!;
+        const punctuation = pause.level === "paragraph" ? "……" : "，";
         append(punctuation);
         addControl({
           kind: "pause",
@@ -1158,7 +1441,8 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
           emittedText: punctuation,
           sentenceId,
           tokenIndex: index,
-          sourceControlRefs: explicitPause[1].refs,
+          sourceControlRefs: pause.refs,
+          evidence: pause.evidence,
         });
       }
     });
@@ -1175,13 +1459,18 @@ export function compileElevenV3Prompt(specValue: unknown): CompiledTtsPrompt {
     renderedSourceIndexes,
     sentenceTokenIndexes,
     controls,
+    activeTimingProfile,
   );
   return {
     text,
     sourceOffsets,
     sourceTokens: canonicalTokens,
     sentenceTokenIndexes,
-    executionPlan: { controls, validation },
+    executionPlan: {
+      controls,
+      timingProfile: hasAcousticTimingProfile ? activeTimingProfile : undefined,
+      validation,
+    },
   };
 }
 

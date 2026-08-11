@@ -45,6 +45,52 @@ export interface HiddenPerformanceProfile {
   avoid?: string[];
 }
 
+export type GlobalPace = "slow" | "moderately_slow" | "medium" | "brisk";
+export type PauseHierarchyLevel = "light" | "marked" | "paragraph";
+export type PhraseExpansion =
+  | "compressed"
+  | "baseline"
+  | "expanded"
+  | "strongly_expanded";
+export type ProlongationTimingStrength = "subtle" | "clear" | "strong";
+
+export interface TimingProfile {
+  source: "acoustic";
+  sourceControlRef: string;
+  globalPace: {
+    value: GlobalPace;
+    speakingRateCharsPerSec: number;
+    confidence: number;
+    sourceControlRef: string;
+  };
+  pauseHierarchy: Array<{
+    afterTokenIndex: number;
+    level: PauseHierarchyLevel;
+    observedGapMs: number;
+    relativeRatio: number;
+    confidence: number;
+    sourceControlRef: string;
+  }>;
+  phraseDurationProfile: Array<{
+    sentenceId?: string;
+    startIndex: number;
+    endIndex: number;
+    speakingRateCharsPerSec: number;
+    relativeExpansion: number;
+    expansion: PhraseExpansion;
+    confidence: number;
+    sourceControlRef: string;
+  }>;
+  prolongationStrength: Array<{
+    tokenIndex: number;
+    localDurationRatio: number;
+    strength: ProlongationTimingStrength;
+    phraseExpansion: PhraseExpansion;
+    confidence: number;
+    sourceControlRef: string;
+  }>;
+}
+
 export type FocusRealization =
   | "free"
   | "stronger"
@@ -203,6 +249,8 @@ export interface ControlSpec {
   source: "ai" | "human" | "hybrid";
   /** Optional whole-piece TTS profile; intentionally hidden from the graph UI. */
   performanceProfile?: HiddenPerformanceProfile;
+  /** Acoustic timing organization used only by the TTS execution layer. */
+  timingProfile?: TimingProfile;
   documentProfile: DocumentProfile;
   tokens: TimedToken[];
   sentences: RecitationSentence[];
@@ -331,7 +379,7 @@ export interface AnalysisSentenceSummary {
 }
 
 export interface RecitationAnalysisPackage {
-  schema_version: "1.0";
+  schema_version: "1.0" | "recitation-analysis-1.0";
   generated_at: string;
   work: {
     title: string;
@@ -346,6 +394,8 @@ export interface RecitationAnalysisPackage {
   pitch: Array<Record<string, unknown>>;
   energy: Array<Record<string, unknown>>;
   sentences: AnalysisSentenceSummary[];
+  /** Deterministic timing organization derived from this reference performance. */
+  timing_profile?: Record<string, unknown>;
   audio: {
     duration_ms: number;
     sample_rate?: number;

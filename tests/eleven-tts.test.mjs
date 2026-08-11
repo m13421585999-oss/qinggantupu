@@ -236,7 +236,7 @@ test("a new work with no control intent receives no invented TTS control", () =>
 
   assert.equal(prompt.text, text);
   assert.deepEqual(prompt.executionPlan.controls, []);
-  assert.equal(prompt.executionPlan.validation.checks.length, 9);
+  assert.equal(prompt.executionPlan.validation.checks.length, 10);
 });
 
 test("fields without an explicit current control spec source never invent cues", () => {
@@ -570,6 +570,137 @@ test("audio tags preserve every original punctuation mark, source line break, an
   assert.ok(prompt.executionPlan.validation.checks.some(
     (check) => check.code === "audio_tags_are_insertions_only",
   ));
+});
+
+test("dynamic timing keeps a global pace cue and prioritizes expanded phrase timing", () => {
+  const text = "甲乙丙，丁戊己。";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    timing_profile: {
+      source: "acoustic",
+      source_control_ref: "analysis.timing_profile",
+      global_pace: {
+        value: "medium",
+        speaking_rate_chars_per_sec: 4.1,
+        confidence: 0.94,
+        source_control_ref: "analysis.timing_profile.global_pace",
+      },
+      pause_hierarchy: [{
+        after_token_index: 5,
+        level: "marked",
+        observed_gap_ms: 420,
+        relative_ratio: 1.45,
+        confidence: 0.9,
+        source_control_ref: "analysis.timing_profile.pause_hierarchy.0",
+      }],
+      phrase_duration_profile: [{
+        start_index: 4,
+        end_index: 6,
+        speaking_rate_chars_per_sec: 2.2,
+        relative_expansion: 1.86,
+        expansion: "strongly_expanded",
+        confidence: 0.92,
+        source_control_ref: "analysis.timing_profile.phrase_duration_profile.1",
+      }],
+      prolongation_strength: [{
+        token_index: 5,
+        local_duration_ratio: 2.4,
+        strength: "clear",
+        phrase_expansion: "strongly_expanded",
+        confidence: 0.94,
+        source_control_ref: "analysis.timing_profile.prolongation_strength.0",
+      }],
+    },
+    tokens,
+    sentences: [{
+      id: "sentence-timing",
+      tokens,
+      focus: [],
+      pauses: [{
+        afterTokenIndex: 5,
+        type: "short",
+        source_control_ref: "current-control-spec/pause/1",
+      }],
+      prolongations: [{
+        tokenIndex: 5,
+        degree: 3,
+        source: "acoustic",
+        local_duration_ratio: 2.4,
+        confidence: 0.94,
+        source_control_ref: "current-control-spec/prolongation/1",
+      }],
+      prosody: [{
+        type: "rising",
+        activeSpan: { start: 4, end: 6 },
+        coreZone: { start: 5, end: 6 },
+        strength: 3,
+        confidence: 0.95,
+        source_control_ref: "current-control-spec/prosody/1",
+      }],
+    }],
+  });
+
+  assert.equal(prompt.text, "[steady]\n甲乙丙， [slowly] 丁戊，己。");
+  assert.doesNotMatch(prompt.text, /——/u);
+  assert.equal(prompt.executionPlan.timingProfile?.source, "acoustic");
+  const pace = prompt.executionPlan.controls[0];
+  assert.equal(pace.emittedText, "[steady]");
+  assert.equal(pace.evidence?.globalPace, "medium");
+  const phraseCue = prompt.executionPlan.controls.find((control) =>
+    control.evidence?.phraseExpansion === "strongly_expanded");
+  assert.equal(phraseCue?.emittedText, "[slowly]");
+  const pause = prompt.executionPlan.controls.find((control) => control.kind === "pause");
+  assert.equal(pause?.evidence?.pauseLevel, "marked");
+});
+
+test("only dynamically strong prolongation survives the timing profile", () => {
+  const text = "甲乙丙。";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    timingProfile: {
+      source: "acoustic",
+      sourceControlRef: "analysis.timing_profile",
+      globalPace: {
+        value: "moderately_slow",
+        speakingRateCharsPerSec: 3.2,
+        confidence: 0.95,
+        sourceControlRef: "analysis.timing_profile.global_pace",
+      },
+      pauseHierarchy: [],
+      phraseDurationProfile: [],
+      prolongationStrength: [{
+        tokenIndex: 1,
+        localDurationRatio: 2.45,
+        strength: "strong",
+        phraseExpansion: "baseline",
+        confidence: 0.9,
+        sourceControlRef: "analysis.timing_profile.prolongation_strength.0",
+      }],
+    },
+    tokens,
+    sentences: [{
+      id: "sentence-strong-prolongation",
+      tokens,
+      focus: [], pauses: [], prosody: [],
+      prolongations: [{
+        tokenIndex: 1,
+        degree: 3,
+        source: "acoustic",
+        localDurationRatio: 2.45,
+        confidence: 0.9,
+        source_control_ref: "current-control-spec/prolongation/1",
+      }],
+    }],
+  });
+
+  assert.equal(prompt.text, "[unhurried]\n甲乙——丙。");
+  const prolongation = prompt.executionPlan.controls.find((control) =>
+    control.kind === "prolongation");
+  assert.equal(prolongation?.evidence?.timingStrength, "strong");
+  assert.deepEqual(prolongation?.sourceControlRefs, [
+    "current-control-spec/prolongation/1",
+    "analysis.timing_profile.prolongation_strength.0",
+  ]);
 });
 
 test("golden sample wording is absent from runtime compiler and general rules", () => {

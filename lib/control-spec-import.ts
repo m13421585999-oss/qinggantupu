@@ -12,10 +12,12 @@ import type {
   ProsodyType,
   RecitationSentence,
   Rhythm,
+  TimingProfile,
   TimedToken,
   TokenSpan,
   VoiceQuality,
 } from "./recitation-schema";
+import { normalizeTimingProfile } from "./timing-profile.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -209,6 +211,34 @@ function parsePerformanceProfile(value: unknown): HiddenPerformanceProfile | und
   };
 
   return Object.values(profile).some((item) => item !== undefined) ? profile : undefined;
+}
+
+function parseTimingProfile(value: unknown): TimingProfile | undefined {
+  if (value === undefined || value === null) return undefined;
+  const timingProfile = normalizeTimingProfile(value);
+  if (!timingProfile) {
+    throw new Error("timing_profile 必须来自 acoustic evidence，并包含有效的 global_pace。");
+  }
+  return timingProfile;
+}
+
+function validateTimingProfileIndexes(timingProfile: TimingProfile, tokenCount: number) {
+  const validIndex = (value: number) => value >= 0 && value < tokenCount;
+  timingProfile.pauseHierarchy.forEach((entry) => {
+    if (!validIndex(entry.afterTokenIndex)) {
+      throw new Error("timing_profile.pause_hierarchy 引用了无效 token index。");
+    }
+  });
+  timingProfile.phraseDurationProfile.forEach((entry) => {
+    if (!validIndex(entry.startIndex) || !validIndex(entry.endIndex) || entry.endIndex < entry.startIndex) {
+      throw new Error("timing_profile.phrase_duration_profile 引用了无效 token 区间。");
+    }
+  });
+  timingProfile.prolongationStrength.forEach((entry) => {
+    if (!validIndex(entry.tokenIndex)) {
+      throw new Error("timing_profile.prolongation_strength 引用了无效 token index。");
+    }
+  });
 }
 
 function voiceQualityRange(value: VoiceQuality | undefined): RecitationSentence["voiceQuality"] {
@@ -632,6 +662,7 @@ export function importControlSpec(
     ? object(envelope.control_spec)
     : envelope;
   const performanceProfile = parsePerformanceProfile(raw);
+  const timingProfile = parseTimingProfile(raw.timing_profile ?? raw.timingProfile);
   const rawTokens = raw.tokens;
   if (!Array.isArray(rawTokens)) {
     throw new Error("控制谱必须包含 tokens 数组，并保留本地分析结果中的时间戳与拼音。");
@@ -680,6 +711,7 @@ export function importControlSpec(
     };
   });
   const tokensByIndex = new Map(tokens.map((token) => [token.index, token]));
+  if (timingProfile) validateTimingProfileIndexes(timingProfile, tokens.length);
   const rawSentences = raw.sentences;
   if (!Array.isArray(rawSentences)) throw new Error("控制谱必须包含 sentences 数组。");
   if (!rawSentences.length) {
@@ -769,6 +801,7 @@ export function importControlSpec(
     version: 1,
     source: "hybrid",
     performanceProfile,
+    timingProfile,
     tokens,
     documentProfile: {
       deliveryMode: performanceProfile?.deliveryMode ?? "lyrical_recitation",

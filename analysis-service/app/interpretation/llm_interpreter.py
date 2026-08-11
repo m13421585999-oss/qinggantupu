@@ -250,6 +250,11 @@ def assemble_control_spec(
             if interpretation.performance_profile is not None
             else {}
         ),
+        **(
+            {"timing_profile": analysis_package["timing_profile"]}
+            if isinstance(analysis_package.get("timing_profile"), dict)
+            else {}
+        ),
         "tokens": tokens,
         "sentences": sentences,
     }
