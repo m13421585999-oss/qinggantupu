@@ -53,8 +53,8 @@ function alignmentFor(text) {
 
 function stripAudioTags(text) {
   return text
-    .replace(/^\[[^\]]+\]\n/u, "")
-    .replace(/\s*\[[^\]]+\]\s*/gu, "");
+    .replace(/^(?:\[[^\]\r\n]+\][ \t]*)+\r?\n/gmu, "")
+    .replace(/\[[^\]\r\n]+\]/gu, "");
 }
 
 test("Eleven with-timestamps request explicitly selects v3 and Natural stability", () => {
@@ -72,12 +72,12 @@ test("prompt compiler keeps medium-density phrase motion without splitting the s
   const spec = controlSpec();
   const prompt = compileElevenV3Prompt(spec);
 
-  assert.equal(prompt.text, "[softly]\n面朝大海， [building] 春暖花开。");
+  assert.equal(prompt.text, "[calm]\n[softening]面朝大海，[building]春暖花开。");
   assert.doesNotMatch(
     prompt.text,
     /carry the emotional focus|continue naturally|control_spec|tts_execution_plan|source_control_refs/u,
   );
-  assert.equal(prompt.text.match(/\[[^\]]+\]/g)?.length, 2);
+  assert.equal(prompt.text.match(/\[[^\]]+\]/g)?.length, 3);
   assert.equal(stripAudioTags(prompt.text), "面朝大海，春暖花开。");
   assert.doesNotMatch(prompt.text, /\n\n/u);
   assert.equal(prompt.sourceTokens.length, spec.tokens.length);
@@ -85,7 +85,7 @@ test("prompt compiler keeps medium-density phrase motion without splitting the s
   assert.ok(prompt.executionPlan.controls.every((control) => control.sourceControlRefs.length > 0));
   assert.deepEqual(
     prompt.executionPlan.controls.map((control) => control.kind),
-    ["audio_tag", "audio_tag"],
+    ["audio_tag", "audio_tag", "audio_tag"],
   );
 
   const promptCharacters = Array.from(prompt.text);
@@ -119,14 +119,13 @@ test("prompt compiler does not duplicate source newlines or pause signals", () =
   const prompt = compileElevenV3Prompt(spec);
   const spokenBody = prompt.text.replace(/^\[[^\]]+\]\n/u, "");
 
-  assert.equal((spokenBody.match(/\n/g) ?? []).length, 1);
-  assert.doesNotMatch(spokenBody, /\n\n|short pause|continue naturally/);
+  assert.equal((spokenBody.match(/\[short pause\]/g) ?? []).length, 1);
+  assert.doesNotMatch(spokenBody, /\n\n|continue naturally/);
   assert.equal((prompt.text.match(/——/g) ?? []).length, 0);
   assert.ok((prompt.text.match(/\[[^\]]+\]/g) ?? []).length <= 3);
   const prolongation = prompt.executionPlan.controls.find((control) => control.kind === "prolongation");
   assert.equal(prolongation, undefined);
-  const promptWithoutInsertedTags = prompt.text.replace(/ ?\[[^\]\r\n]+\] ?/gu, "");
-  assert.equal(promptWithoutInsertedTags, text);
+  assert.equal(stripAudioTags(prompt.text), text);
 });
 
 test("only one strong high-confidence prolongation becomes a standard dash", () => {
@@ -209,13 +208,12 @@ test("hidden performance profiles only select short whitelisted state cues", () 
   const tags = [...prompt.text.matchAll(/\[([^\]]+)\]/g)].map((match) => match[1]);
 
   assert.equal(tags[0], "slightly breathy");
-  assert.ok(tags.includes("focused"));
+  assert.ok(tags.includes("firmly"));
   assert.ok(tags.length <= 1 + spec.sentences.length);
   assert.ok(tags.every((tag) => ELEVEN_V3_MINIMAL_AUDIO_TAGS.includes(tag)));
   assert.ok(tags.every((tag) => !/[\p{Script=Han},;，；]/u.test(tag) && tag.length <= 20));
   assert.doesNotMatch(prompt.text, /\]\s*\n\s*\[/u);
-  assert.equal(stripAudioTags(prompt.text), text);
-  assert.equal((prompt.text.match(/\n/g) ?? []).length, 1);
+  assert.equal(stripAudioTags(prompt.text).replace(/\r?\n/gu, ""), text);
   assert.ok(prompt.executionPlan.controls.every((control) => control.sourceControlRefs.length > 0));
 });
 
@@ -239,7 +237,7 @@ test("a new work with no control intent receives no invented TTS control", () =>
   assert.equal(prompt.executionPlan.validation.checks.length, 10);
 });
 
-test("fields without an explicit current control spec source never invent cues", () => {
+test("current control fields without explicit refs receive traceable generic paths", () => {
   const text = "无来源时保持原文。";
   const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
   const prompt = compileElevenV3Prompt({
@@ -273,8 +271,10 @@ test("fields without an explicit current control spec source never invent cues",
     }],
   });
 
-  assert.equal(prompt.text, text);
-  assert.deepEqual(prompt.executionPlan.controls, []);
+  assert.equal(prompt.text, "[slightly breathy]\n[brightly]\n[building]无来源时保持原文。");
+  assert.ok(prompt.executionPlan.controls.length >= 3);
+  assert.ok(prompt.executionPlan.controls.every((control) =>
+    control.sourceControlRefs.every((ref) => ref.startsWith("control_spec."))));
 });
 
 test("every generic special control preserves its current control spec reference", () => {
@@ -310,7 +310,7 @@ test("every generic special control preserves its current control spec reference
     }],
   });
 
-  assert.equal(prompt.text, "[building] 风起云——涌灯，火渐明");
+  assert.equal(prompt.text, "[building]风起云——涌灯，火渐明");
   assert.deepEqual(
     prompt.executionPlan.controls.map((control) => ({
       kind: control.kind,
@@ -354,7 +354,7 @@ test("prosody motion follows ordered phrase boundaries instead of a fixed templa
     }],
   });
 
-  assert.equal(prompt.text, "[settling] 甲乙丙， [building] 丁戊己");
+  assert.equal(prompt.text, "[settling]甲乙丙，[building]丁戊己");
   assert.deepEqual(
     prompt.executionPlan.controls.map((control) => control.sourceControlRefs),
     [
@@ -459,7 +459,7 @@ test("a motion cue identical to the active delivery state is emitted only once",
   ]);
 });
 
-test("conflicting delivery and motion cues merge into one cue at the same boundary", () => {
+test("sentence delivery and motion cues can coexist without splitting source text", () => {
   const text = "山河渐明。";
   const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
   const prompt = compileElevenV3Prompt({
@@ -484,11 +484,11 @@ test("conflicting delivery and motion cues merge into one cue at the same bounda
   });
   const tags = prompt.executionPlan.controls.filter((control) => control.kind === "audio_tag");
 
-  assert.equal(prompt.text, "[building] 山河渐明。");
-  assert.equal(tags.length, 1);
-  assert.deepEqual(tags[0].sourceControlRefs, [
-    "current-control-spec/prosody/building",
-    "current-control-spec/profile/gentle",
+  assert.equal(prompt.text, "[gentle]\n[building]山河渐明。");
+  assert.equal(tags.length, 2);
+  assert.deepEqual(tags.map((tag) => tag.sourceControlRefs), [
+    ["current-control-spec/profile/gentle"],
+    ["current-control-spec/prosody/building"],
   ]);
 });
 
@@ -515,7 +515,7 @@ test("sentence cues never replace source punctuation with a newline", () => {
     ],
   });
 
-  assert.equal(prompt.text, "从明天起， [brightly] 做一个幸福的人。");
+  assert.equal(prompt.text, "从明天起，[brightly]做一个幸福的人。");
   assert.equal(stripAudioTags(prompt.text), text);
   assert.doesNotMatch(prompt.text, /，\s*\n/u);
 });
@@ -558,8 +558,7 @@ test("audio tags preserve every original punctuation mark, source line break, an
     ],
   });
 
-  const promptWithoutInsertedTags = prompt.text.replace(/ ?\[[^\]\r\n]+\] ?/gu, "");
-  assert.equal(promptWithoutInsertedTags, text);
+  assert.equal(stripAudioTags(prompt.text), text);
   assert.equal((prompt.text.match(/\n/g) ?? []).length, (text.match(/\n/g) ?? []).length);
   for (const token of tokens.filter((token) => /[\p{P}\r\n]/u.test(token.char))) {
     assert.equal(Array.from(prompt.text)[prompt.sourceOffsets.get(token.index)], token.char);
@@ -640,7 +639,7 @@ test("dynamic timing keeps a global pace cue and prioritizes expanded phrase tim
     }],
   });
 
-  assert.equal(prompt.text, "[steady]\n甲乙丙， [slowly] 丁戊，己。");
+  assert.equal(prompt.text, "[steady]\n甲乙丙，[slowly]丁戊，己。");
   assert.doesNotMatch(prompt.text, /——/u);
   assert.equal(prompt.executionPlan.timingProfile?.source, "acoustic");
   const pace = prompt.executionPlan.controls[0];
@@ -651,6 +650,80 @@ test("dynamic timing keeps a global pace cue and prioritizes expanded phrase tim
   assert.equal(phraseCue?.emittedText, "[slowly]");
   const pause = prompt.executionPlan.controls.find((control) => control.kind === "pause");
   assert.equal(pause?.evidence?.pauseLevel, "marked");
+});
+
+test("sentence state, phrase motion, and relative inter-sentence pause compile together", () => {
+  const text = "甲乙，丙丁。\n戊己庚辛。";
+  const tokens = Array.from(text).map((char, index) => ({ id: `token-${index}`, index, char }));
+  const prompt = compileElevenV3Prompt({
+    performance_profile: {
+      emotion_tone: ["沉思"],
+      source_control_ref: "current-control-spec/performance-profile",
+    },
+    timing_profile: {
+      source: "acoustic",
+      source_control_ref: "analysis.timing_profile",
+      global_pace: {
+        value: "slow",
+        speaking_rate_chars_per_sec: 2.6,
+        confidence: 0.95,
+        source_control_ref: "analysis.timing_profile.global_pace",
+      },
+      pause_hierarchy: [{
+        after_token_index: 4,
+        level: "paragraph",
+        observed_gap_ms: 980,
+        relative_ratio: 2.4,
+        confidence: 0.93,
+        source_control_ref: "analysis.timing_profile.pause_hierarchy.0",
+      }],
+      phrase_duration_profile: [],
+      prolongation_strength: [],
+    },
+    tokens,
+    sentences: [
+      {
+        id: "sentence-state-motion-1",
+        tokens: tokens.slice(0, 7),
+        focus: [],
+        pauses: [{
+          afterTokenIndex: 4,
+          type: "long",
+          source_control_ref: "current-control-spec/pause/paragraph",
+        }],
+        prolongations: [],
+        prosody: [{
+          type: "rising",
+          active_span: { start: 3, end: 4 },
+          core_zone: { start: 3, end: 4 },
+          strength: 3,
+          confidence: 0.95,
+          source_control_ref: "current-control-spec/prosody/rising",
+        }],
+      },
+      {
+        id: "sentence-state-motion-2",
+        tokens: tokens.slice(7),
+        focus: [], pauses: [], prolongations: [],
+        prosody: [{
+          type: "falling",
+          active_span: { start: 7, end: 10 },
+          core_zone: { start: 8, end: 9 },
+          strength: 2,
+          confidence: 0.9,
+          source_control_ref: "current-control-spec/prosody/falling",
+        }],
+      },
+    ],
+  });
+
+  assert.equal(
+    prompt.text,
+    "[thoughtful] [slowly]\n甲乙，[building]丙丁。\n[long pause]\n[softening]戊己庚辛。",
+  );
+  assert.equal(stripAudioTags(prompt.text), text);
+  assert.equal(prompt.executionPlan.controls.filter((control) => control.kind === "prolongation").length, 0);
+  assert.ok(prompt.executionPlan.controls.every((control) => control.sourceControlRefs.length > 0));
 });
 
 test("only dynamically strong prolongation survives the timing profile", () => {
