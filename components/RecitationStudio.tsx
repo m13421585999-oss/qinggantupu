@@ -11,6 +11,13 @@ import {
 } from "react";
 import { importControlSpec, parseControlSpecText } from "@/lib/control-spec-import";
 import {
+  buildGraphTrackColumns,
+  graphTrackMinimumWidth,
+  graphTrackTemplate,
+  isGraphPunctuation,
+} from "@/lib/graph-track";
+import { sentencePlaybackWindow } from "@/lib/sentence-playback";
+import {
   ENDING_LABELS,
   PROSODY_LABELS,
   RHYTHM_LABELS,
@@ -55,7 +62,36 @@ function formatTime(ms: number) {
 }
 
 function punctuationOnly(char: string) {
-  return /[，。！？、；：\s]/.test(char);
+  return isGraphPunctuation(char);
+}
+
+async function seekAudioBeforePlayback(audio: HTMLAudioElement, targetSeconds: number) {
+  const duration = Number.isFinite(audio.duration) ? audio.duration : undefined;
+  const target = Math.max(
+    0,
+    duration === undefined ? targetSeconds : Math.min(targetSeconds, Math.max(0, duration - 0.001)),
+  );
+  const needsSeek = Math.abs(audio.currentTime - target) > 0.015;
+  if (!needsSeek) {
+    audio.currentTime = target;
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let timeout = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      audio.removeEventListener("seeked", finish);
+      resolve();
+    };
+    audio.addEventListener("seeked", finish, { once: true });
+    timeout = window.setTimeout(finish, 1600);
+    audio.currentTime = target;
+  });
 }
 
 function focusSet(sentence: RecitationSentence) {
@@ -431,6 +467,7 @@ function IndexedGraphTrack({
     [sentence.tokens],
   );
   const lastSpokenIndex = spokenTokens.at(-1)?.index;
+  const trackColumns = buildGraphTrackColumns(sentence);
 
   const measure = useCallback(() => {
     const track = trackRef.current;
@@ -494,18 +531,9 @@ function IndexedGraphTrack({
     };
   }, [measure]);
 
-  const columns = sentence.tokens
-    .map((token) =>
-      punctuationOnly(token.char) ? "minmax(20px, .58fr)" : "minmax(42px, 1fr)",
-    )
-    .join(" ");
-  const minWidth = sentence.tokens.reduce(
-    (total, token) => total + (punctuationOnly(token.char) ? 20 : 42),
-    0,
-  );
   const trackStyle = {
-    "--track-columns": columns,
-    "--track-min-width": `${minWidth}px`,
+    "--track-columns": graphTrackTemplate(trackColumns),
+    "--track-min-width": `${graphTrackMinimumWidth(trackColumns)}px`,
   } as CSSProperties;
 
   return (
@@ -518,26 +546,68 @@ function IndexedGraphTrack({
       <div className="indexed-track-scroll">
         <div className="indexed-track" ref={trackRef} style={trackStyle}>
           <div className="indexed-row pinyin-row" aria-label="拼音">
-            {sentence.tokens.map((token) => (
+            {trackColumns.map((column) => column.kind === "token" ? (
               <span
-                className={`token-cell ${punctuationOnly(token.char) ? "punctuation-token" : ""} ${activeTokenId === token.id ? "playing-token" : ""}`}
-                key={`pinyin-${token.id}`}
+                className={`token-cell ${punctuationOnly(column.token.char) ? "punctuation-token" : ""} ${activeTokenId === column.token.id ? "playing-token" : ""}`}
+                key={`pinyin-${column.key}`}
                 aria-hidden="true"
               >
-                {token.displayPinyin ?? " "}
+                {column.token.displayPinyin ?? " "}
               </span>
+            ) : (
+              <span
+                className={`track-spacer-cell marker-spacer-${column.kind}`}
+                key={`pinyin-${column.key}`}
+                aria-hidden="true"
+              />
             ))}
           </div>
           <div className="indexed-row text-row" aria-label={sentence.text}>
-            {sentence.tokens.map((token) => {
-              const pause = pauseAfter(sentence, token.index);
-              const prolong = prolongFor(sentence, token.index);
+            {trackColumns.map((column) => {
+              if (column.kind === "prolongation") {
+                return (
+                  <span
+                    className="track-marker-cell prolongation-cell"
+                    data-marker="prolongation"
+                    data-token-index={column.tokenIndex}
+                    key={column.key}
+                  >
+                    <span className="prolong-mark" aria-hidden="true" />
+                  </span>
+                );
+              }
+              if (column.kind === "pause") {
+                return (
+                  <span
+                    className={`track-marker-cell pause-mark pause-${column.mark.type}`}
+                    data-marker="pause"
+                    data-boundary-after-index={column.afterTokenIndex}
+                    key={column.key}
+                  >
+                    {column.mark.type === "long" ? "///" : "/"}
+                  </span>
+                );
+              }
+              if (column.kind === "ending") {
+                return (
+                  <span
+                    className="track-marker-cell ending-cell"
+                    data-marker="ending-intonation"
+                    data-token-index={column.tokenIndex}
+                    key={column.key}
+                  >
+                    <ToneArrow type={column.tone} />
+                  </span>
+                );
+              }
+
+              const token = column.token;
               const tokenClass = [
                 "token-cell",
                 focused.has(token.index) ? "focus-token" : "",
                 activeTokenId === token.id ? "playing-token" : "",
                 punctuationOnly(token.char) ? "punctuation-token" : "",
-                prolong ? "prolong-token" : "",
+                prolongFor(sentence, token.index) ? "prolong-token" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -552,15 +622,6 @@ function IndexedGraphTrack({
                   }}
                 >
                   <span className="token-char">{token.char}</span>
-                  {prolong ? <span className="prolong-mark">——</span> : null}
-                  {pause ? (
-                    <span className={`pause-mark pause-${pause.type}`}>
-                      {pause.type === "long" ? "///" : "/"}
-                    </span>
-                  ) : null}
-                  {token.index === lastSpokenIndex ? (
-                    <ToneArrow type={sentence.endingIntonation.type} />
-                  ) : null}
                 </span>
               );
             })}
@@ -2655,10 +2716,18 @@ export function RecitationStudio() {
     const audio = audioRef.current;
     const timing = sentenceTiming(activeTrack?.timeline, sentence.id);
     if (!audio || !timing) { showToast("当前音频还没有这句话的真实时间戳"); return; }
-    audio.currentTime = timing.startMs / 1000;
-    setCurrentMs(timing.startMs);
-    setSegmentEndMs(timing.endMs);
-    try { await audio.play(); } catch { showToast("浏览器暂时无法播放，请再点一次“听本句”"); }
+    const playbackWindow = sentencePlaybackWindow(timing, activeTrack?.durationMs);
+    audio.pause();
+    setSegmentEndMs(null);
+    try {
+      await seekAudioBeforePlayback(audio, playbackWindow.startMs / 1000);
+      setCurrentMs(playbackWindow.startMs);
+      setSegmentEndMs(playbackWindow.endMs);
+      await audio.play();
+    } catch {
+      setSegmentEndMs(null);
+      showToast("浏览器暂时无法播放，请再点一次“听本句”");
+    }
   };
 
   const seekSentence = (sentence: RecitationSentence) => {

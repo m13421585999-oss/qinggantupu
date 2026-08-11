@@ -1142,40 +1142,60 @@ p {
   font-weight: 800;
 }
 
-.pause-mark {
-  position: absolute;
+.track-spacer-cell {
+  min-width: 0;
+  height: 100%;
+}
+
+.track-marker-cell {
+  position: static;
   z-index: 2;
-  right: -8px;
-  bottom: -7px;
+  display: inline-flex;
+  min-width: 0;
+  height: auto;
+  align-self: baseline;
+  align-items: baseline;
+  justify-content: center;
   color: var(--red);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.pause-mark {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  font-weight: 900;
+  font-size: clamp(15px, 1.35vw, 20px);
+  font-weight: 700;
+  letter-spacing: -0.08em;
 }
 
 .pause-long {
-  right: -14px;
+  font-weight: 700;
+  letter-spacing: -0.14em;
+}
+
+.prolongation-cell {
+  align-items: center;
+  padding-bottom: 0.18em;
 }
 
 .prolong-mark {
-  position: absolute;
-  right: -5px;
-  bottom: -5px;
-  left: 5px;
-  overflow: hidden;
+  position: static;
+  display: inline-block;
+  width: calc(100% - 2px);
+  min-width: 24px;
+  height: 9px;
+  border-bottom: 2.5px solid currentColor;
   color: var(--red);
-  font-size: 10px;
-  letter-spacing: -2px;
 }
 
 .tone-arrow {
-  position: absolute;
-  right: -17px;
-  top: -5px;
+  position: static;
+  display: inline-block;
   color: var(--red);
   font-family: Arial, sans-serif;
-  font-size: 15px;
+  font-size: clamp(18px, 1.65vw, 24px);
   font-weight: 800;
+  line-height: 0.9;
 }
 
 .curve-layer {
@@ -2432,6 +2452,11 @@ p {
   align-items: center;
 }
 
+.indexed-row.text-row {
+  align-items: baseline;
+  padding-top: 6px;
+}
+
 .indexed-row .token-cell,
 .viewer-sentence-wrap .indexed-row .token-cell,
 .viewer-sentence-wrap .indexed-row .punctuation-token {
@@ -2450,6 +2475,10 @@ p {
 }
 
 .indexed-row.text-row .token-cell {
+  height: auto;
+  min-height: 32px;
+  align-self: baseline;
+  align-items: baseline;
   font-size: clamp(21px, 2vw, 30px);
 }
 
@@ -2478,14 +2507,14 @@ p {
 
 .curve-path {
   fill: none;
-  stroke-width: 2.5;
+  stroke-width: 2.25;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
 .curve-path.active {
-  stroke-width: 3.5;
+  stroke-width: 2.5;
   filter: drop-shadow(0 2px 5px rgba(189, 63, 45, 0.2));
 }
 
@@ -2506,14 +2535,6 @@ p {
 
 .curve-dot.active {
   fill: var(--red);
-}
-
-.indexed-row .prolong-mark {
-  right: -18px;
-  bottom: -4px;
-  left: auto;
-  width: max-content;
-  letter-spacing: -3px;
 }
 
 .sentence-drawer-backdrop {
