@@ -3,9 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
-  buildGraphTrackColumns,
-  graphTrackMinimumWidth,
-  graphTrackTemplate,
+  buildGraphTokenUnits,
 } from "../lib/graph-track.ts";
 import {
   SENTENCE_PRE_ROLL_MS,
@@ -40,47 +38,51 @@ function sentenceFixture() {
   };
 }
 
-function renderedTrackText(columns) {
-  return columns.map((column) => {
-    if (column.kind === "token") return column.token.char;
-    if (column.kind === "prolongation") return "——";
-    if (column.kind === "pause") return column.mark.type === "long" ? "///" : "/";
-    return column.tone === "rising" ? "↗" : column.tone === "falling" ? "↘" : "→";
+function renderedTrackText(units) {
+  return units.map((unit) => {
+    const ending = unit.endingTone === "rising"
+      ? "↗"
+      : unit.endingTone === "falling"
+        ? "↘"
+        : unit.endingTone === "level"
+          ? "→"
+          : "";
+    const pause = unit.pause?.type === "long" ? "///" : unit.pause ? "/" : "";
+    return [
+      unit.prefixPunctuation.map((token) => token.char).join(""),
+      unit.token.char,
+      unit.prolongation ? "——" : "",
+      ending,
+      pause,
+      unit.suffixPunctuation.map((token) => token.char).join(""),
+    ].join("");
   }).join("");
 }
 
-test("source punctuation suppresses pause marks while preserving inline marker order", () => {
-  const columns = buildGraphTrackColumns(sentenceFixture());
-  const tokenThreePosition = columns.findIndex(
-    (column) => column.kind === "token" && column.token.index === 3,
-  );
-  assert.deepEqual(
-    columns.slice(tokenThreePosition, tokenThreePosition + 3).map((column) => column.kind),
-    ["token", "prolongation", "token"],
-    "a source comma must replace the pause mark after 大海",
-  );
+test("punctuation and recitation marks attach to character hosts in manuscript order", () => {
+  const sentence = sentenceFixture();
+  const units = buildGraphTokenUnits(sentence);
+  const spokenTokens = sentence.tokens.filter((token) => !/[\p{P}\s]/u.test(token.char));
+  assert.equal(units.length, spokenTokens.length, "only spoken characters create token units");
+  assert.ok(units.every((unit) => !/[\p{P}\s]/u.test(unit.token.char)));
 
-  const extraPausePosition = columns.findIndex(
-    (column) => column.kind === "token" && column.token.index === 6,
-  );
-  assert.deepEqual(
-    columns.slice(extraPausePosition, extraPausePosition + 3).map((column) => column.kind),
-    ["token", "pause", "token"],
-    "a pause without source punctuation remains visible",
-  );
+  const sea = units.find((unit) => unit.token.index === 3);
+  assert.ok(sea?.prolongation);
+  assert.equal(sea?.pause, undefined, "the source comma replaces the pause mark after 大海");
+  assert.equal(sea?.suffixPunctuation.map((token) => token.char).join(""), "，");
+  assert.deepEqual(sea?.sourceTokenIndexes, [3, 4]);
 
-  const lastSpokenTokenPosition = columns.findIndex(
-    (column) => column.kind === "token" && column.token.index === 8,
-  );
-  assert.deepEqual(
-    columns.slice(lastSpokenTokenPosition, lastSpokenTokenPosition + 4).map((column) => column.kind),
-    ["token", "prolongation", "ending", "token"],
-    "the ending arrow belongs before the original sentence punctuation",
-  );
-  assert.equal(columns.filter((column) => column.kind === "pause").length, 1);
-  assert.equal(renderedTrackText(columns), "面朝大海——，春暖///花开——↗。");
-  assert.ok(graphTrackTemplate(columns).split(" ").length >= columns.length);
-  assert.ok(graphTrackMinimumWidth(columns) > sentenceFixture().tokens.length * 20);
+  const warm = units.find((unit) => unit.token.index === 6);
+  assert.equal(warm?.pause?.type, "long", "a pause without source punctuation stays attached");
+  assert.equal(warm?.suffixPunctuation.length, 0);
+
+  const open = units.find((unit) => unit.token.index === 8);
+  assert.ok(open?.prolongation);
+  assert.equal(open?.endingTone, "rising");
+  assert.equal(open?.suffixPunctuation.map((token) => token.char).join(""), "。");
+
+  assert.equal(units.filter((unit) => unit.pause).length, 1);
+  assert.equal(renderedTrackText(units), "面朝大海——，春暖///花开——↗。");
 });
 
 test("comma enumeration comma and period each fully replace adjacent pause marks", () => {
@@ -104,9 +106,10 @@ test("comma enumeration comma and period each fully replace adjacent pause marks
     })),
     endingIntonation: { type: "level" },
   };
-  const columns = buildGraphTrackColumns(sentence);
-  assert.equal(columns.filter((column) => column.kind === "pause").length, 0);
-  assert.equal(renderedTrackText(columns), "甲、乙，丙→。");
+  const units = buildGraphTokenUnits(sentence);
+  assert.equal(units.length, 3);
+  assert.equal(units.filter((unit) => unit.pause).length, 0);
+  assert.equal(renderedTrackText(units), "甲、乙，丙→。");
 });
 
 test("sentence playback adds pre-roll and tail padding without changing timestamps", () => {
@@ -121,19 +124,29 @@ test("sentence playback adds pre-roll and tail padding without changing timestam
   );
 });
 
-test("graph markers use inline flow and sentence playback waits for seek completion", async () => {
+test("graph decorations stay attached while sentence playback waits for seek completion", async () => {
   const [studio, css] = await Promise.all([
     readFile(new URL("../components/RecitationStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
+  assert.match(studio, /buildGraphTokenUnits/);
+  assert.match(studio, /className="graph-token-unit"/);
+  assert.match(studio, /className="attached-decorations"/);
+  assert.match(studio, /data-attached-to-index/);
+  assert.match(studio, /data-source-token-index/);
   assert.match(studio, /data-boundary-after-index/);
   assert.match(studio, /data-marker="prolongation"/);
   assert.match(studio, /data-marker="ending-intonation"/);
   assert.match(studio, /addEventListener\("seeked"/);
   assert.match(studio, /await seekAudioBeforePlayback/);
-  assert.match(css, /\.track-marker-cell\s*\{[^}]*position:\s*static/s);
-  assert.match(css, /\.prolong-mark\s*\{[^}]*border-bottom:\s*2\.5px/s);
+  assert.doesNotMatch(studio, /trackColumns|buildGraphTrackColumns|track-marker-cell/);
+  assert.match(css, /\.token-unit-flow\s*\{[^}]*flex-wrap:\s*wrap/s);
+  assert.match(css, /\.graph-token-unit\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(css, /\.prolong-mark::after\s*\{[^}]*border-top:\s*2\.5px/s);
+  assert.match(css, /\.pause-mark\s*\{[^}]*font-weight:\s*700/s);
+  assert.match(css, /\.tone-arrow\s*\{[^}]*font-weight:\s*700/s);
   assert.match(css, /\.curve-path\s*\{[^}]*stroke-width:\s*2\.25/s);
+  assert.doesNotMatch(css, /\.track-marker-cell|\.track-spacer-cell|--track-columns/);
   assert.doesNotMatch(css, /\.pause-mark\s*\{[^}]*position:\s*absolute/s);
   assert.doesNotMatch(css, /\.tone-arrow\s*\{[^}]*position:\s*absolute/s);
 });

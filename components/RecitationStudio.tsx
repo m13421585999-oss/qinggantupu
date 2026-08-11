@@ -11,9 +11,7 @@ import {
 } from "react";
 import { importControlSpec, parseControlSpecText } from "@/lib/control-spec-import";
 import {
-  buildGraphTrackColumns,
-  graphTrackMinimumWidth,
-  graphTrackTemplate,
+  buildGraphTokenUnits,
   isGraphPunctuation,
 } from "@/lib/graph-track";
 import { sentencePlaybackWindow } from "@/lib/sentence-playback";
@@ -63,6 +61,12 @@ function formatTime(ms: number) {
 
 function punctuationOnly(char: string) {
   return isGraphPunctuation(char);
+}
+
+function sourceDecorationText(char: string) {
+  if (/\r|\n/u.test(char)) return "";
+  if (/^\s+$/u.test(char)) return " ";
+  return char;
 }
 
 async function seekAudioBeforePlayback(audio: HTMLAudioElement, targetSeconds: number) {
@@ -248,16 +252,24 @@ interface CurveMetrics {
   tokenCenters: Record<number, number>;
 }
 
+interface CurveRowMetrics extends CurveMetrics {
+  key: string;
+  top: number;
+  overlapsProsody: boolean;
+}
+
 function ProsodyCurve({
   type,
   strength,
   metrics,
   active,
+  gradientKey,
 }: {
   type: ProsodyType;
   strength: 1 | 2 | 3;
   metrics: CurveMetrics;
   active: boolean;
+  gradientKey: string;
 }) {
   const { width, height } = metrics;
   if (width <= 0) return null;
@@ -295,7 +307,7 @@ function ProsodyCurve({
     path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${coreLeft} ${middle - amplitude * 0.35}, ${coreRight} ${dotY - 5}, ${activeRight} ${dotY} L ${right} ${dotY}`;
   }
 
-  const gradientId = `curve-${type}-${active ? "active" : "idle"}`;
+  const gradientId = `curve-${gradientKey}-${type}-${active ? "active" : "idle"}`;
   return (
     <svg
       className="prosody-curve"
@@ -348,10 +360,12 @@ function AcousticProsodyCurve({
   sentence,
   metrics,
   active,
+  levelDomain,
 }: {
   sentence: RecitationSentence;
   metrics: CurveMetrics;
   active: boolean;
+  levelDomain?: readonly [number, number];
 }) {
   const macro = sentence.macroProsodyPath;
   const acousticPoints = (macro?.points ?? []).flatMap((point) => {
@@ -362,8 +376,8 @@ function AcousticProsodyCurve({
 
   const height = metrics.height;
   const levels = acousticPoints.map((point) => point.normalizedLevel);
-  const rawMin = Math.min(...levels);
-  const rawMax = Math.max(...levels);
+  const rawMin = levelDomain?.[0] ?? Math.min(...levels);
+  const rawMax = levelDomain?.[1] ?? Math.max(...levels);
   const center = (rawMin + rawMax) / 2;
   const range = Math.max(2, rawMax - rawMin + 0.8);
   const yFor = (level: number) => height / 2 - ((level - center) / range) * (height - 16);
@@ -449,63 +463,129 @@ function IndexedGraphTrack({
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const tokenRefs = useRef(new Map<number, HTMLSpanElement>());
-  const [metrics, setMetrics] = useState<CurveMetrics>({
-    width: 0,
-    height: 64,
-    trackStart: 0,
-    trackEnd: 0,
-    activeStart: 0,
-    activeEnd: 0,
-    coreStart: 0,
-    coreEnd: 0,
-    tokenCenters: {},
-  });
+  const unitRefs = useRef(new Map<number, HTMLSpanElement>());
+  const curveSlotRefs = useRef(new Map<number, HTMLSpanElement>());
+  const [curveRows, setCurveRows] = useState<CurveRowMetrics[]>([]);
   const prosody = primaryProsody(sentence);
   const focused = focusSet(sentence);
-  const spokenTokens = useMemo(
-    () => sentence.tokens.filter((token) => !punctuationOnly(token.char)),
-    [sentence.tokens],
+  const tokenUnits = useMemo(
+    () => buildGraphTokenUnits(sentence),
+    [sentence],
   );
-  const lastSpokenIndex = spokenTokens.at(-1)?.index;
-  const trackColumns = buildGraphTrackColumns(sentence);
+  const activeTokenIndex = sentence.tokens.find((token) => token.id === activeTokenId)?.index;
+  const acousticLevelDomain = useMemo(() => {
+    const levels = sentence.macroProsodyPath?.points.map((point) => point.normalizedLevel) ?? [];
+    return levels.length
+      ? [Math.min(...levels), Math.max(...levels)] as const
+      : undefined;
+  }, [sentence.macroProsodyPath]);
 
   const measure = useCallback(() => {
     const track = trackRef.current;
-    const first = spokenTokens[0] && tokenRefs.current.get(spokenTokens[0].index);
-    const last = lastSpokenIndex === undefined ? undefined : tokenRefs.current.get(lastSpokenIndex);
-    const activeStart = prosody && tokenRefs.current.get(prosody.activeSpan.start);
-    const activeEnd = prosody && tokenRefs.current.get(prosody.activeSpan.end);
-    const coreStart = prosody && tokenRefs.current.get(prosody.coreZone.start);
-    const coreEnd = prosody && tokenRefs.current.get(prosody.coreZone.end);
-    if (!track || !first || !last) return;
+    if (!track || !tokenUnits.length) {
+      setCurveRows([]);
+      return;
+    }
 
     const trackRect = track.getBoundingClientRect();
-    const firstRect = first.getBoundingClientRect();
-    const lastRect = last.getBoundingClientRect();
-    const activeStartRect = activeStart?.getBoundingClientRect();
-    const activeEndRect = activeEnd?.getBoundingClientRect();
-    const coreStartRect = coreStart?.getBoundingClientRect();
-    const coreEndRect = coreEnd?.getBoundingClientRect();
-    const tokenCenters = Object.fromEntries(
-      sentence.tokens.flatMap((token) => {
-        const element = tokenRefs.current.get(token.index);
+    const visualRows: Array<{
+      unitTop: number;
+      curveTop: number;
+      curveHeight: number;
+      indexes: number[];
+      characters: HTMLSpanElement[];
+    }> = [];
+
+    for (const unit of tokenUnits) {
+      const unitElement = unitRefs.current.get(unit.token.index);
+      const characterElement = tokenRefs.current.get(unit.token.index);
+      const curveSlot = curveSlotRefs.current.get(unit.token.index);
+      if (!unitElement || !characterElement || !curveSlot) continue;
+
+      const unitRect = unitElement.getBoundingClientRect();
+      const curveRect = curveSlot.getBoundingClientRect();
+      const unitTop = unitRect.top - trackRect.top;
+      let row = visualRows.find((candidate) => Math.abs(candidate.unitTop - unitTop) < 2);
+      if (!row) {
+        row = {
+          unitTop,
+          curveTop: curveRect.top - trackRect.top,
+          curveHeight: curveRect.height,
+          indexes: [],
+          characters: [],
+        };
+        visualRows.push(row);
+      }
+      row.indexes.push(...unit.sourceTokenIndexes);
+      row.characters.push(characterElement);
+    }
+
+    const closestElement = (indexes: number[], target: number) => {
+      const closestIndex = indexes.reduce((closest, index) => (
+        Math.abs(index - target) < Math.abs(closest - target) ? index : closest
+      ));
+      return tokenRefs.current.get(closestIndex);
+    };
+
+    setCurveRows(visualRows.map((row, rowIndex) => {
+      const first = row.characters[0];
+      const last = row.characters.at(-1)!;
+      const firstRect = first.getBoundingClientRect();
+      const lastRect = last.getBoundingClientRect();
+      const uniqueIndexes = [...new Set(row.indexes)].sort((left, right) => left - right);
+      const rowStartIndex = uniqueIndexes[0];
+      const rowEndIndex = uniqueIndexes.at(-1)!;
+      const activeStartElement = prosody
+        ? closestElement(uniqueIndexes, Math.max(rowStartIndex, prosody.activeSpan.start))
+        : undefined;
+      const activeEndElement = prosody
+        ? closestElement(uniqueIndexes, Math.min(rowEndIndex, prosody.activeSpan.end))
+        : undefined;
+      const coreStartElement = prosody
+        ? closestElement(uniqueIndexes, Math.max(rowStartIndex, prosody.coreZone.start))
+        : undefined;
+      const coreEndElement = prosody
+        ? closestElement(uniqueIndexes, Math.min(rowEndIndex, prosody.coreZone.end))
+        : undefined;
+      const activeStartRect = activeStartElement?.getBoundingClientRect();
+      const activeEndRect = activeEndElement?.getBoundingClientRect();
+      const coreStartRect = coreStartElement?.getBoundingClientRect();
+      const coreEndRect = coreEndElement?.getBoundingClientRect();
+      const tokenCenters = Object.fromEntries(uniqueIndexes.flatMap((index) => {
+        const element = tokenRefs.current.get(index);
         if (!element) return [];
         const rect = element.getBoundingClientRect();
-        return [[token.index, rect.left - trackRect.left + rect.width / 2]];
-      }),
-    );
-    setMetrics({
-      width: trackRect.width,
-      height: 64,
-      trackStart: firstRect.left - trackRect.left + firstRect.width / 2,
-      trackEnd: lastRect.left - trackRect.left + lastRect.width / 2,
-      activeStart: activeStartRect ? activeStartRect.left - trackRect.left : firstRect.left - trackRect.left,
-      activeEnd: activeEndRect ? activeEndRect.right - trackRect.left : lastRect.right - trackRect.left,
-      coreStart: coreStartRect ? coreStartRect.left - trackRect.left : firstRect.left - trackRect.left,
-      coreEnd: coreEndRect ? coreEndRect.right - trackRect.left : lastRect.right - trackRect.left,
-      tokenCenters,
-    });
-  }, [lastSpokenIndex, prosody, sentence.tokens, spokenTokens]);
+        return [[index, rect.left - trackRect.left + rect.width / 2]];
+      }));
+
+      return {
+        key: `${sentence.id}-curve-row-${rowIndex}`,
+        top: row.curveTop,
+        width: trackRect.width,
+        height: row.curveHeight,
+        trackStart: firstRect.left - trackRect.left + firstRect.width / 2,
+        trackEnd: lastRect.left - trackRect.left + lastRect.width / 2,
+        activeStart: activeStartRect
+          ? activeStartRect.left - trackRect.left
+          : firstRect.left - trackRect.left,
+        activeEnd: activeEndRect
+          ? activeEndRect.right - trackRect.left
+          : lastRect.right - trackRect.left,
+        coreStart: coreStartRect
+          ? coreStartRect.left - trackRect.left
+          : firstRect.left - trackRect.left,
+        coreEnd: coreEndRect
+          ? coreEndRect.right - trackRect.left
+          : lastRect.right - trackRect.left,
+        tokenCenters,
+        overlapsProsody: Boolean(
+          prosody
+          && prosody.activeSpan.start <= rowEndIndex
+          && prosody.activeSpan.end >= rowStartIndex
+        ),
+      };
+    }));
+  }, [prosody, sentence.id, tokenUnits]);
 
   useLayoutEffect(() => {
     const track = trackRef.current;
@@ -531,11 +611,6 @@ function IndexedGraphTrack({
     };
   }, [measure]);
 
-  const trackStyle = {
-    "--track-columns": graphTrackTemplate(trackColumns),
-    "--track-min-width": `${graphTrackMinimumWidth(trackColumns)}px`,
-  } as CSSProperties;
-
   return (
     <div className="graph-track-layout">
       <div className="track-labels" aria-hidden="true">
@@ -543,104 +618,132 @@ function IndexedGraphTrack({
         <span className="strong">文稿</span>
         <span>语势</span>
       </div>
-      <div className="indexed-track-scroll">
-        <div className="indexed-track" ref={trackRef} style={trackStyle}>
-          <div className="indexed-row pinyin-row" aria-label="拼音">
-            {trackColumns.map((column) => column.kind === "token" ? (
-              <span
-                className={`token-cell ${punctuationOnly(column.token.char) ? "punctuation-token" : ""} ${activeTokenId === column.token.id ? "playing-token" : ""}`}
-                key={`pinyin-${column.key}`}
-                aria-hidden="true"
-              >
-                {column.token.displayPinyin ?? " "}
-              </span>
-            ) : (
-              <span
-                className={`track-spacer-cell marker-spacer-${column.kind}`}
-                key={`pinyin-${column.key}`}
-                aria-hidden="true"
-              />
-            ))}
-          </div>
-          <div className="indexed-row text-row" aria-label={sentence.text}>
-            {trackColumns.map((column) => {
-              if (column.kind === "prolongation") {
-                return (
-                  <span
-                    className="track-marker-cell prolongation-cell"
-                    data-marker="prolongation"
-                    data-token-index={column.tokenIndex}
-                    key={column.key}
-                  >
-                    <span className="prolong-mark" aria-hidden="true" />
-                  </span>
-                );
-              }
-              if (column.kind === "pause") {
-                return (
-                  <span
-                    className={`track-marker-cell pause-mark pause-${column.mark.type}`}
-                    data-marker="pause"
-                    data-boundary-after-index={column.afterTokenIndex}
-                    key={column.key}
-                  >
-                    {column.mark.type === "long" ? "///" : "/"}
-                  </span>
-                );
-              }
-              if (column.kind === "ending") {
-                return (
-                  <span
-                    className="track-marker-cell ending-cell"
-                    data-marker="ending-intonation"
-                    data-token-index={column.tokenIndex}
-                    key={column.key}
-                  >
-                    <ToneArrow type={column.tone} />
-                  </span>
-                );
-              }
-
-              const token = column.token;
-              const tokenClass = [
-                "token-cell",
-                focused.has(token.index) ? "focus-token" : "",
-                activeTokenId === token.id ? "playing-token" : "",
-                punctuationOnly(token.char) ? "punctuation-token" : "",
-                prolongFor(sentence, token.index) ? "prolong-token" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
+      <div className="graph-track-viewport">
+        <div className="attached-token-track">
+          <div className="token-unit-flow" ref={trackRef} aria-label={sentence.text}>
+            {tokenUnits.map((unit) => {
+              const unitIsPlaying = activeTokenIndex !== undefined
+                && unit.sourceTokenIndexes.includes(activeTokenIndex);
               return (
                 <span
-                  className={tokenClass}
-                  data-token-index={token.index}
-                  key={token.id}
+                  className="graph-token-unit"
+                  data-host-token-index={unit.token.index}
+                  key={unit.key}
                   ref={(element) => {
-                    if (element) tokenRefs.current.set(token.index, element);
-                    else tokenRefs.current.delete(token.index);
+                    if (element) unitRefs.current.set(unit.token.index, element);
+                    else unitRefs.current.delete(unit.token.index);
                   }}
                 >
-                  <span className="token-char">{token.char}</span>
+                  <span
+                    className={`token-pinyin ${unitIsPlaying ? "playing-token" : ""}`}
+                    aria-hidden="true"
+                  >
+                    {unit.token.displayPinyin ?? " "}
+                  </span>
+                  <span className="manuscript-token">
+                    <span className="attached-prefix">
+                      {unit.prefixPunctuation.map((punctuation) => (
+                        <span
+                          className={`source-punctuation ${activeTokenId === punctuation.id ? "playing-punctuation" : ""}`}
+                          data-source-token-index={punctuation.index}
+                          key={punctuation.id}
+                        >
+                          {sourceDecorationText(punctuation.char)}
+                        </span>
+                      ))}
+                    </span>
+                    <span
+                      className={`token-char ${focused.has(unit.token.index) ? "focus-token" : ""} ${unitIsPlaying ? "playing-token" : ""}`}
+                      data-token-index={unit.token.index}
+                      ref={(element) => {
+                        for (const sourceIndex of unit.sourceTokenIndexes) {
+                          if (element) tokenRefs.current.set(sourceIndex, element);
+                          else tokenRefs.current.delete(sourceIndex);
+                        }
+                      }}
+                    >
+                      {unit.token.char}
+                    </span>
+                    <span
+                      className="attached-decorations"
+                      data-attached-to-index={unit.token.index}
+                    >
+                      {unit.prolongation ? (
+                        <span
+                          className="attached-decoration prolongation-decoration"
+                          data-marker="prolongation"
+                          data-token-index={unit.token.index}
+                          aria-label="拖音"
+                        >
+                          <span className="prolong-mark" aria-hidden="true" />
+                        </span>
+                      ) : null}
+                      {unit.endingTone ? (
+                        <span
+                          className="attached-decoration ending-decoration"
+                          data-marker="ending-intonation"
+                          data-token-index={unit.token.index}
+                        >
+                          <ToneArrow type={unit.endingTone} />
+                        </span>
+                      ) : null}
+                      {unit.pause ? (
+                        <span
+                          className={`attached-decoration pause-mark pause-${unit.pause.type}`}
+                          data-marker="pause"
+                          data-boundary-after-index={unit.pause.afterTokenIndex}
+                        >
+                          {unit.pause.type === "long" ? "///" : "/"}
+                        </span>
+                      ) : null}
+                      {unit.suffixPunctuation.map((punctuation) => (
+                        <span
+                          className={`source-punctuation ${activeTokenId === punctuation.id ? "playing-punctuation" : ""}`}
+                          data-source-token-index={punctuation.index}
+                          key={punctuation.id}
+                        >
+                          {sourceDecorationText(punctuation.char)}
+                        </span>
+                      ))}
+                    </span>
+                  </span>
+                  <span
+                    className="token-curve-slot"
+                    aria-hidden="true"
+                    ref={(element) => {
+                      if (element) curveSlotRefs.current.set(unit.token.index, element);
+                      else curveSlotRefs.current.delete(unit.token.index);
+                    }}
+                  />
                 </span>
               );
             })}
-          </div>
-          <div className="curve-layer">
-            {sentence.macroProsodyPath?.points.length ? (
-              <AcousticProsodyCurve
-                sentence={sentence}
-                metrics={metrics}
-                active={active}
-              />
-            ) : prosody ? (
-              <ProsodyCurve
-                type={prosody.type}
-                strength={prosody.strength}
-                metrics={metrics}
-                active={active}
-              />
-            ) : null}
+            <div className="wrapped-curve-layer">
+              {curveRows.map((row) => (
+                <div
+                  className="curve-line"
+                  key={row.key}
+                  style={{ top: `${row.top}px`, height: `${row.height}px` }}
+                >
+                  {sentence.macroProsodyPath?.points.length ? (
+                    <AcousticProsodyCurve
+                      sentence={sentence}
+                      metrics={row}
+                      active={active}
+                      levelDomain={acousticLevelDomain}
+                    />
+                  ) : prosody && row.overlapsProsody ? (
+                    <ProsodyCurve
+                      type={prosody.type}
+                      strength={prosody.strength}
+                      metrics={row}
+                      active={active}
+                      gradientKey={row.key.replace(/[^a-zA-Z0-9_-]/g, "-")}
+                    />
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
