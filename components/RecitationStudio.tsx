@@ -33,7 +33,7 @@ import {
 
 type ProductMode = "studio" | "viewer";
 type WorkflowStep = 1 | 2 | 3 | 4 | 5;
-type AudioSource = "reference" | "ai_demo";
+type AudioSource = "reference" | "standard";
 type AnalysisJobStatus = "idle" | "queued" | "processing" | "succeeded" | "failed";
 
 const workflowSteps: Array<{
@@ -213,23 +213,6 @@ interface AnalysisJobPayload {
   error?: string | { message?: string };
   control_spec?: unknown;
   work?: RecitationWork;
-}
-
-interface ElevenPromptDebugSnapshot {
-  request_state: "preview" | "sent";
-  model_id: string;
-  voice_id: string;
-  stability: number;
-  stability_preset: string;
-  final_eleven_text: string;
-  control_spec_version_id?: string;
-  audio_version_id?: string;
-  generated_at?: string;
-}
-
-interface ElevenPromptDebugPayload {
-  preview: ElevenPromptDebugSnapshot;
-  last_sent: ElevenPromptDebugSnapshot | null;
 }
 
 function analysisErrorMessage(error: AnalysisJobPayload["error"]) {
@@ -905,7 +888,7 @@ function Player({
   onRateChange,
   onSourceChange,
   hasReference,
-  hasAiDemo,
+  hasStandard,
   compact = false,
 }: {
   title: string;
@@ -920,7 +903,7 @@ function Player({
   onRateChange: (rate: number) => void;
   onSourceChange?: (source: AudioSource) => void;
   hasReference: boolean;
-  hasAiDemo: boolean;
+  hasStandard: boolean;
   compact?: boolean;
 }) {
   const progress = track.durationMs > 0
@@ -964,7 +947,7 @@ function Player({
         </div>
       </div>
       <div className="player-controls">
-        {!compact && onSourceChange && hasReference && hasAiDemo ? (
+        {!compact && onSourceChange && hasReference && hasStandard ? (
           <div className="audio-source-switch" aria-label="播放音频源">
             <button
               type="button"
@@ -975,8 +958,8 @@ function Player({
             </button>
             <button
               type="button"
-              className={source === "ai_demo" ? "active" : ""}
-              onClick={() => onSourceChange("ai_demo")}
+              className={source === "standard" ? "active" : ""}
+              onClick={() => onSourceChange("standard")}
             >
               标准 AI
             </button>
@@ -1778,121 +1761,14 @@ function EditorStage({
   );
 }
 
-function ElevenPromptDebugDrawer({
-  debug,
-  onClose,
-  onCopy,
-}: {
-  debug: ElevenPromptDebugPayload | null;
-  onClose: () => void;
-  onCopy: (text: string) => void;
-}) {
-  if (!debug) return null;
-  const sections = [
-    debug.last_sent ? {
-      key: "sent",
-      kicker: "最近一次实际发送",
-      title: "已保存的 Eleven 请求",
-      snapshot: debug.last_sent,
-    } : null,
-    {
-      key: "preview",
-      kicker: "当前生成前预览",
-      title: "此刻重新生成将发送",
-      snapshot: debug.preview,
-    },
-  ].filter(Boolean) as Array<{
-    key: string;
-    kicker: string;
-    title: string;
-    snapshot: ElevenPromptDebugSnapshot;
-  }>;
-
-  return (
-    <div className="sentence-drawer-backdrop prompt-debug-backdrop">
-      <button
-        type="button"
-        className="sentence-drawer-scrim"
-        aria-label="关闭 Eleven 提示词面板"
-        onClick={onClose}
-      />
-      <aside
-        className="sentence-drawer prompt-debug-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="eleven-prompt-debug-title"
-      >
-        <div className="sentence-drawer-heading">
-          <div>
-            <p className="eyebrow">仅创作端可见 · 不包含 API Key</p>
-            <h2 id="eleven-prompt-debug-title">Eleven 最终提示词</h2>
-          </div>
-          <button type="button" className="drawer-close" onClick={onClose} aria-label="关闭提示词面板">
-            ×
-          </button>
-        </div>
-        <div className="sentence-drawer-body prompt-debug-body">
-          {!debug.last_sent ? (
-            <div className="prompt-debug-empty">
-              当前控制谱还没有实际生成记录；下面显示生成前预览。
-            </div>
-          ) : null}
-          {sections.map(({ key, kicker, title, snapshot }) => (
-            <section className="drawer-section prompt-debug-section" key={key}>
-              <div className="prompt-debug-title-row">
-                <div>
-                  <p className="eyebrow">{kicker}</p>
-                  <h3>{title}</h3>
-                </div>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => onCopy(snapshot.final_eleven_text)}
-                >
-                  复制正文
-                </button>
-              </div>
-              <dl className="prompt-debug-meta">
-                <div><dt>model_id</dt><dd>{snapshot.model_id}</dd></div>
-                <div><dt>voice_id</dt><dd>{snapshot.voice_id || "未配置"}</dd></div>
-                <div><dt>stability</dt><dd>{snapshot.stability} · {snapshot.stability_preset}</dd></div>
-                {snapshot.generated_at ? (
-                  <div><dt>generated_at</dt><dd>{snapshot.generated_at}</dd></div>
-                ) : null}
-              </dl>
-              <div className="prompt-debug-text-heading">
-                <span>final_eleven_text</span>
-                <small>{Array.from(snapshot.final_eleven_text).length} 字符</small>
-              </div>
-              <pre className="prompt-debug-text">{snapshot.final_eleven_text}</pre>
-            </section>
-          ))}
-        </div>
-      </aside>
-    </div>
-  );
-}
-
 function AudioStage({
   work,
-  isGenerating,
-  isPromptDebugLoading,
-  promptDebug,
-  onGenerate,
-  onViewPrompt,
-  onClosePrompt,
-  onCopyPrompt,
+  onPlay,
   onContinue,
   onBack,
 }: {
   work: RecitationWork;
-  isGenerating: boolean;
-  isPromptDebugLoading: boolean;
-  promptDebug: ElevenPromptDebugPayload | null;
-  onGenerate: () => void;
-  onViewPrompt: () => void;
-  onClosePrompt: () => void;
-  onCopyPrompt: (text: string) => void;
+  onPlay: () => void;
   onContinue: () => void;
   onBack: () => void;
 }) {
@@ -1910,11 +1786,13 @@ function AudioStage({
       <div className="stage-heading">
         <div>
           <p className="eyebrow">04 · 示范声音</p>
-          <h1>{standardAudio ? "核对与图谱同源的标准 AI 朗诵" : "旧作品示范声音兼容入口"}</h1>
+          <h1>{standardAudio ? "核对与图谱同源的标准 AI 朗诵" : "核对历史作品的示范声音"}</h1>
           <p className="stage-lead">
             {standardAudio
               ? "这条声音由真人参考朗诵经 Voice Changer 生成；Forced Alignment、Parselmouth、控制谱和播放器都使用它。"
-              : "这篇旧作品还没有同源标准声音，可暂时使用原有 Eleven v3 示范流程；新作品不会走这条旧链路。"}
+              : legacyDemo
+                ? "这篇旧作品保留已有示范声音供播放；旧生成链已停用，新作品统一使用同源标准声音。"
+                : "当前作品没有可播放的标准 AI 声音，请返回准备作品并重新运行正式分析。"}
           </p>
         </div>
         <span className={`provider-chip ${isSynced ? "ready" : ""}`}>
@@ -1932,9 +1810,9 @@ function AudioStage({
         <span className="source-arrow" aria-hidden="true">→</span>
         <div className={`paper-card audio-source-card source-ai ${playback ? "ready" : ""}`}>
           <span className="source-kicker">分析与播放对象</span>
-          <strong>{standardAudio ? "标准 AI 朗诵" : "旧版 AI 示范"}</strong>
-          <p>{playback?.filename ?? "等待生成"}</p>
-          <small>{playback ? `${formatTime(playback.durationMs)} · 字符时间轴已就绪` : "旧作品可生成兼容示范"}</small>
+          <strong>{standardAudio ? "标准 AI 朗诵" : "历史示范声音"}</strong>
+          <p>{playback?.filename ?? "尚无标准声音"}</p>
+          <small>{playback ? `${formatTime(playback.durationMs)} · 字符时间轴已就绪` : "请从第一步重新生成标准 AI 声音"}</small>
         </div>
       </div>
 
@@ -1943,14 +1821,14 @@ function AudioStage({
           <div className="card-title-row">
             <div>
               <p className="eyebrow">当前标准声音</p>
-              <h2>{standardAudio ? "同源标准 AI 朗诵" : "旧版 AI 示范"}</h2>
+              <h2>{standardAudio ? "同源标准 AI 朗诵" : "历史示范声音"}</h2>
             </div>
             <span className={`status-pill ${playback ? "ready" : ""}`}>
               {playback ? "已就绪" : "待生成"}
             </span>
           </div>
 
-          <div className={`waveform ${isGenerating ? "generating" : ""}`} aria-hidden="true">
+          <div className="waveform" aria-hidden="true">
             {Array.from({ length: 68 }, (_, index) => (
               <span key={index} style={{ "--bar": `${20 + ((index * 37) % 70)}%` } as CSSProperties} />
             ))}
@@ -1962,35 +1840,23 @@ function AudioStage({
             <span>字符级时间轴</span>
           </div>
 
-          <div className="generation-button-row">
-            <button
-              type="button"
-              className="primary-button generate-wide"
-              onClick={onGenerate}
-              disabled={isGenerating}
-            >
-              {isGenerating ? <span className="button-spinner" /> : <span aria-hidden="true">✦</span>}
-              {standardAudio
-                ? "试听标准 AI 朗诵"
-                : isGenerating ? "正在生成旧版示范" : legacyDemo ? "重新生成旧版示范" : "生成旧版兼容示范"}
-            </button>
-            {!standardAudio ? (
-              <button
-                type="button"
-                className="secondary-button prompt-debug-button"
-                onClick={onViewPrompt}
-                disabled={isPromptDebugLoading}
-              >
-                {isPromptDebugLoading ? "正在读取" : "查看旧版 Eleven 提示词"}
-              </button>
-            ) : null}
-          </div>
+          <button
+            type="button"
+            className="primary-button generate-wide"
+            onClick={onPlay}
+            disabled={!playback?.timeline}
+          >
+            <span aria-hidden="true">▶</span>
+            {standardAudio ? "试听标准 AI 朗诵" : legacyDemo ? "试听历史示范声音" : "暂无可播放声音"}
+          </button>
           <p className="demo-disclaimer">
             {standardAudio
               ? isSynced
                 ? "当前图谱由这条声音分析得到，播放与逐字高亮使用同一时间轴。"
                 : "你已经人工修改图谱，标准声音仍可播放，但可能不再完全对应最新图谱。"
-              : "仅用于旧作品兼容；新作品统一使用 Voice Changer 生成的同源标准声音。"}
+              : legacyDemo
+                ? "历史声音仅保留播放兼容，不再提供重新生成或提示词调试。"
+                : "正式流程必须先生成 standard_ai_audio，再分析并生成图谱。"}
           </p>
         </div>
       </div>
@@ -2006,14 +1872,6 @@ function AudioStage({
           进入发布预览 <span aria-hidden="true">→</span>
         </button>
       </div>
-
-      {!standardAudio ? (
-        <ElevenPromptDebugDrawer
-          debug={promptDebug}
-          onClose={onClosePrompt}
-          onCopy={onCopyPrompt}
-        />
-      ) : null}
     </section>
   );
 }
@@ -2107,9 +1965,6 @@ function StudioView({
   editingSentenceId,
   analysisJobStatus,
   analysisStatus,
-  isGenerating,
-  isPromptDebugLoading,
-  promptDebug,
   currentMs,
   activeTokenId,
   timeline,
@@ -2126,10 +1981,7 @@ function StudioView({
   onPlaySentence,
   onSave,
   onGenerateStage,
-  onGenerate,
-  onViewPrompt,
-  onClosePrompt,
-  onCopyPrompt,
+  onPlayStandard,
   onPublishStage,
   onPreview,
   onPublish,
@@ -2140,9 +1992,6 @@ function StudioView({
   editingSentenceId: string | null;
   analysisJobStatus: AnalysisJobStatus;
   analysisStatus: string;
-  isGenerating: boolean;
-  isPromptDebugLoading: boolean;
-  promptDebug: ElevenPromptDebugPayload | null;
   currentMs: number;
   activeTokenId?: string;
   timeline?: AudioTimeline;
@@ -2159,10 +2008,7 @@ function StudioView({
   onPlaySentence: (sentence: RecitationSentence) => void;
   onSave: () => void;
   onGenerateStage: () => void;
-  onGenerate: () => void;
-  onViewPrompt: () => void;
-  onClosePrompt: () => void;
-  onCopyPrompt: (text: string) => void;
+  onPlayStandard: () => void;
   onPublishStage: () => void;
   onPreview: () => void;
   onPublish: () => void;
@@ -2223,13 +2069,7 @@ function StudioView({
         {step === 4 ? (
           <AudioStage
             work={work}
-            isGenerating={isGenerating}
-            isPromptDebugLoading={isPromptDebugLoading}
-            promptDebug={promptDebug}
-            onGenerate={onGenerate}
-            onViewPrompt={onViewPrompt}
-            onClosePrompt={onClosePrompt}
-            onCopyPrompt={onCopyPrompt}
+            onPlay={onPlayStandard}
             onContinue={onPublishStage}
             onBack={() => onStep(3)}
           />
@@ -2352,9 +2192,6 @@ export function RecitationStudio() {
   const [audioSource, setAudioSource] = useState<AudioSource>("reference");
   const [analysisJobStatus, setAnalysisJobStatus] = useState<AnalysisJobStatus>("idle");
   const [analysisStatus, setAnalysisStatus] = useState("等待参考朗诵");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isPromptDebugLoading, setIsPromptDebugLoading] = useState(false);
-  const [promptDebug, setPromptDebug] = useState<ElevenPromptDebugPayload | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -2385,10 +2222,10 @@ export function RecitationStudio() {
         setIsWorkDirty(false);
         if (params.get("view") === "1") {
           setMode("viewer");
-          setAudioSource("ai_demo");
+          setAudioSource("standard");
         } else if (stored.controlSpec) {
           setStep(3);
-          setAudioSource((stored.standardAiAudio ?? stored.aiDemoAudio)?.timeline ? "ai_demo" : "reference");
+          setAudioSource((stored.standardAiAudio ?? stored.aiDemoAudio)?.timeline ? "standard" : "reference");
         } else {
           setStep(1);
           setAudioSource("reference");
@@ -2479,9 +2316,9 @@ export function RecitationStudio() {
     setStep(next);
     setEditingSentenceId(null);
     if (next <= 3) {
-      setAudioSource(work.controlSpec && standardPlayback?.timeline ? "ai_demo" : "reference");
+      setAudioSource(work.controlSpec && standardPlayback?.timeline ? "standard" : "reference");
     }
-    if (next >= 4 && standardPlayback) setAudioSource("ai_demo");
+    if (next >= 4 && standardPlayback) setAudioSource("standard");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -2728,7 +2565,7 @@ export function RecitationStudio() {
           setIsWorkDirty(false);
           setAnalysisJobStatus("succeeded");
           setAnalysisStatus("标准 AI 朗诵解析完成，声音与图谱同源");
-          setAudioSource("ai_demo");
+          setAudioSource("standard");
           setStep(3);
           window.scrollTo({ top: 0, behavior: "smooth" });
           showToast(`同源控制谱已生成：${completedWork.controlSpec.sentences.length} 句`);
@@ -2763,7 +2600,7 @@ export function RecitationStudio() {
       }),
     );
     setWork(result.work);
-    setAudioSource(result.work.standardAiAudio?.timeline ? "ai_demo" : "reference");
+    setAudioSource(result.work.standardAiAudio?.timeline ? "standard" : "reference");
     setStep(3);
     window.scrollTo({ top: 0, behavior: "smooth" });
     showToast(`控制谱已校验并保存：${result.control_spec.sentences.length} 句`);
@@ -2795,7 +2632,7 @@ export function RecitationStudio() {
       controlSpec: nextSpec,
     }));
     setEditingSentenceId(null);
-    setAudioSource(work.standardAiAudio?.timeline ? "ai_demo" : "reference");
+    setAudioSource(work.standardAiAudio?.timeline ? "standard" : "reference");
     try {
       await persistControlSpec(nextSpec, `第 ${nextSentence.order} 句图谱已保存`);
     } catch (error) {
@@ -2858,65 +2695,23 @@ export function RecitationStudio() {
     if (nextTrack) setAudioSource(source);
   };
 
-  const handleViewElevenPrompt = async () => {
-    if (isPromptDebugLoading) return;
-    if (work.id.startsWith("draft-") || !work.controlSpec) {
-      showToast("请先保存并确认控制谱");
+  const handlePlayStandard = () => {
+    const track = standardPlayback;
+    if (!track?.timeline) {
+      showToast("当前作品没有可播放的标准 AI 声音");
       return;
     }
-    setIsPromptDebugLoading(true);
-    try {
-      const result = await apiJson<ElevenPromptDebugPayload>(
-        await fetch(`/api/works/${encodeURIComponent(work.id)}/ai-demo-prompt`),
-      );
-      setPromptDebug(result);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsPromptDebugLoading(false);
-    }
-  };
-
-  const handleCopyElevenPrompt = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      showToast("final_eleven_text 已复制");
-    } catch {
-      showToast("浏览器未允许复制，请在面板中手动选择文本");
-    }
-  };
-
-  const handleGenerate = async () => {
-    if (isGenerating) return;
-    if (!work.controlSpec) { showToast("请先导入并确认情感图谱"); return; }
-    if (work.standardAiAudio?.timeline) {
-      setAudioSource("ai_demo");
-      setSegmentEndMs(null);
-      window.setTimeout(() => {
-        const audio = audioRef.current;
-        if (!audio) return;
-        if (audio.currentTime * 1000 >= work.standardAiAudio!.durationMs - 100) {
-          audio.currentTime = 0;
-          setCurrentMs(0);
-        }
-        void audio.play().catch(() => showToast("浏览器暂时无法播放，请再点一次试听"));
-      }, 0);
-      return;
-    }
-    setIsGenerating(true);
-    try {
-      const result = await apiJson<{ work: RecitationWork }>(
-        await fetch(`/api/works/${encodeURIComponent(work.id)}/ai-demo`, { method: "POST" }),
-      );
-      setWork(result.work);
-      setPromptDebug(null);
-      setAudioSource("ai_demo");
-      showToast("旧版 Eleven v3 示范与字符时间戳已保存");
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsGenerating(false);
-    }
+    setAudioSource("standard");
+    setSegmentEndMs(null);
+    window.setTimeout(() => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      if (audio.currentTime * 1000 >= track.durationMs - 100) {
+        audio.currentTime = 0;
+        setCurrentMs(0);
+      }
+      void audio.play().catch(() => showToast("浏览器暂时无法播放，请再点一次试听"));
+    }, 0);
   };
 
   const handlePublish = async () => {
@@ -2926,7 +2721,7 @@ export function RecitationStudio() {
       );
       setWork(result.work);
       window.history.replaceState({}, "", result.public_url);
-      setAudioSource("ai_demo");
+      setAudioSource("standard");
       setMode("viewer");
       showToast("作品已发布，当前显示用户观看端");
     } catch (error) {
@@ -2961,14 +2756,14 @@ export function RecitationStudio() {
             className={mode === "studio" ? "active" : ""}
             onClick={() => {
               setMode("studio");
-              setAudioSource(work.controlSpec && standardPlayback?.timeline ? "ai_demo" : "reference");
+              setAudioSource(work.controlSpec && standardPlayback?.timeline ? "standard" : "reference");
             }}
           ><span aria-hidden="true">✦</span> 创作端</button>
           <button
             type="button"
             className={mode === "viewer" ? "active" : ""}
             disabled={!standardPlayback?.timeline}
-            onClick={() => { setAudioSource("ai_demo"); setMode("viewer"); }}
+            onClick={() => { setAudioSource("standard"); setMode("viewer"); }}
           ><span aria-hidden="true">◉</span> 用户观看端</button>
         </nav>
 
@@ -2987,9 +2782,6 @@ export function RecitationStudio() {
           editingSentenceId={editingSentenceId}
           analysisJobStatus={analysisJobStatus}
           analysisStatus={analysisStatus}
-          isGenerating={isGenerating}
-          isPromptDebugLoading={isPromptDebugLoading}
-          promptDebug={promptDebug}
           currentMs={currentMs}
           activeTokenId={activeTokenId}
           timeline={activeTrack?.timeline}
@@ -3006,12 +2798,9 @@ export function RecitationStudio() {
           onPlaySentence={playSentence}
           onSave={() => work.controlSpec && void persistControlSpec(work.controlSpec, "控制谱草稿已保存")}
           onGenerateStage={() => setWorkflowStep(4)}
-          onGenerate={handleGenerate}
-          onViewPrompt={handleViewElevenPrompt}
-          onClosePrompt={() => setPromptDebug(null)}
-          onCopyPrompt={(text) => void handleCopyElevenPrompt(text)}
+          onPlayStandard={handlePlayStandard}
           onPublishStage={() => setWorkflowStep(5)}
-          onPreview={() => { setAudioSource("ai_demo"); setMode("viewer"); }}
+          onPreview={() => { setAudioSource("standard"); setMode("viewer"); }}
           onPublish={handlePublish}
         />
       ) : (
@@ -3040,7 +2829,7 @@ export function RecitationStudio() {
           onRateChange={changeRate}
           onSourceChange={mode === "studio" ? changeAudioSource : undefined}
           hasReference={Boolean(work.referenceAudio)}
-          hasAiDemo={Boolean(standardPlayback?.timeline)}
+          hasStandard={Boolean(standardPlayback?.timeline)}
           compact={mode === "viewer"}
         />
       ) : null}

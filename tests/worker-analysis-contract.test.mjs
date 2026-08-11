@@ -40,15 +40,8 @@ test("worker exposes the production standard-audio analysis contract", async () 
   assert.match(worker, /analyzedAudioRole/);
   assert.match(worker, /audio_sha256|checksum/);
   assert.match(worker, /status = 'succeeded'/);
-  assert.match(worker, /ai-demo-prompt/);
-  assert.match(worker, /eleven_tts_request/);
-  assert.match(worker, /final_eleven_text/);
-  assert.match(worker, /prompt_control_trace/);
-  assert.match(worker, /source_control_refs/);
-  assert.match(worker, /prompt_trace_json/);
-  assert.match(worker, /JSON\.stringify\(persistedPromptTrace\)/);
-  assert.match(worker, /prompt_control_trace: lastSentPromptTrace \?\? null/);
-  assert.doesNotMatch(worker, /voice_settings: \{ stability: 0\.5, similarity_boost/);
+  assert.doesNotMatch(worker, /ai-demo-prompt|eleven_tts_request|final_eleven_text/);
+  assert.doesNotMatch(worker, /\/v1\/text-to-speech\//);
   assert.doesNotMatch(worker, /DEMO_CONTROL_SPEC|createDemoControlSpec|月光下的中国/);
 
   assert.match(env, /ANALYSIS_SERVICE_URL/);
@@ -57,7 +50,7 @@ test("worker exposes the production standard-audio analysis contract", async () 
   assert.doesNotMatch(env, /LLM_API_KEY/);
 });
 
-test("D1 schema and migrations retain analysis data and exact TTS prompt traces", async () => {
+test("D1 schema and migrations retain analysis data and legacy audio metadata", async () => {
   const [schema, migration, promptTraceMigration, standardAudioMigration] = await Promise.all([
     readFile(schemaUrl, "utf8"),
     readFile(migrationUrl, "utf8"),

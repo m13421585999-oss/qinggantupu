@@ -16,9 +16,8 @@
 ## 项目结构
 
 - `app/`、`components/`：现有创作端、编辑器与观看端。
-- `worker/`：D1/R2、Voice Changer、分析任务、安全交接和发布接口；旧 Eleven v3 TTS 路由只为旧作品兼容保留。
+- `worker/`：D1/R2、Voice Changer、分析任务、安全交接和发布接口。
 - `analysis-service/`：云端 FastAPI 分析服务。
-- `local-analyzer/`：保留的 Windows 离线声音事实工具，不是正式生产链路的数据源。
 - `db/`、`drizzle/`：D1 结构与迁移。
 
 ## 本地验证

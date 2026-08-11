@@ -523,7 +523,6 @@ p {
 .manuscript-card,
 .asset-card,
 .generation-card,
-.compiler-card,
 .publish-checklist {
   padding: 26px;
 }
@@ -1345,16 +1344,6 @@ p {
 .waveform span:nth-child(3n) { opacity: 0.42; }
 .waveform span:nth-child(5n) { opacity: 0.9; }
 
-.waveform.generating span {
-  animation: pulse-wave 900ms ease-in-out infinite alternate;
-  animation-delay: calc(var(--bar) * -8ms);
-}
-
-@keyframes pulse-wave {
-  from { transform: scaleY(0.32); opacity: 0.35; }
-  to { transform: scaleY(1); opacity: 1; }
-}
-
 .audio-metadata {
   display: flex;
   flex-wrap: wrap;
@@ -1366,16 +1355,6 @@ p {
 
 .generate-wide {
   width: 100%;
-}
-
-.generation-button-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(210px, 0.55fr);
-  gap: 10px;
-}
-
-.prompt-debug-button {
-  min-height: 44px;
 }
 
 .demo-disclaimer {
@@ -1391,79 +1370,6 @@ p {
   border-color: #d5c8b7;
   font-size: 8px;
 }
-
-.prompt-preview {
-  padding: 18px;
-  border: 1px solid #e1d5c7;
-  border-radius: 14px;
-  background: #2b2927;
-  color: #fff8ef;
-}
-
-.prompt-tag {
-  display: block;
-  color: #e2a876;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 9px;
-  line-height: 1.55;
-}
-
-.prompt-preview p {
-  margin-top: 14px;
-  font-family: "Songti SC", STSong, serif;
-  font-size: 17px;
-  line-height: 1.8;
-}
-
-.compiler-facts {
-  display: grid;
-  margin: 18px 0 16px;
-}
-
-.compiler-facts div {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-  padding: 9px 0;
-  border-bottom: 1px solid #eee8df;
-  font-size: 10px;
-}
-
-.compiler-facts dt { color: var(--ink-faint); }
-.compiler-facts dd { margin: 0; color: var(--ink); font-weight: 700; }
-
-.adapter-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 7px;
-}
-
-.adapter {
-  display: flex;
-  min-height: 46px;
-  flex-direction: column;
-  justify-content: center;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #f8f4ed;
-  color: var(--ink-soft);
-  font-size: 9px;
-  font-weight: 750;
-}
-
-.adapter b {
-  margin-top: 3px;
-  color: var(--ink-faint);
-  font-size: 7px;
-}
-
-.adapter.active {
-  border-color: rgba(185, 64, 46, 0.35);
-  background: var(--red-soft);
-  color: var(--red-dark);
-}
-
-.adapter.active b { color: var(--red); }
 
 .stage-footer-actions {
   display: flex;
@@ -2513,111 +2419,6 @@ p {
   box-shadow: -20px 0 60px rgba(43, 33, 24, 0.18);
 }
 
-.prompt-debug-drawer {
-  width: min(760px, 96vw);
-}
-
-.prompt-debug-body {
-  background: #f7f3ed;
-}
-
-.prompt-debug-empty {
-  margin: 20px 26px 0;
-  padding: 12px 14px;
-  border: 1px solid #dfd3c5;
-  border-radius: 10px;
-  background: #fffaf3;
-  color: var(--ink-soft);
-  font-size: 10px;
-  line-height: 1.6;
-}
-
-.prompt-debug-section {
-  margin: 18px;
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: 15px;
-  background: var(--paper);
-}
-
-.prompt-debug-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.prompt-debug-title-row h3 {
-  margin-top: 4px;
-  font-family: "Songti SC", STSong, serif;
-  font-size: 18px;
-}
-
-.prompt-debug-meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 16px 0;
-}
-
-.prompt-debug-meta div {
-  min-width: 0;
-  padding: 9px 10px;
-  border-radius: 9px;
-  background: #f4efe8;
-}
-
-.prompt-debug-meta dt {
-  color: var(--ink-faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 8px;
-}
-
-.prompt-debug-meta dd {
-  margin-top: 4px;
-  overflow-wrap: anywhere;
-  color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.prompt-debug-text-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 7px;
-}
-
-.prompt-debug-text-heading span {
-  color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 9px;
-  font-weight: 800;
-}
-
-.prompt-debug-text-heading small {
-  color: var(--ink-faint);
-  font-size: 8px;
-}
-
-.prompt-debug-text {
-  max-height: 320px;
-  margin: 0;
-  padding: 15px;
-  overflow: auto;
-  border: 1px solid #3f3a36;
-  border-radius: 12px;
-  background: #272422;
-  color: #fff8ef;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.75;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .sentence-drawer-heading {
   display: flex;
   align-items: flex-start;
@@ -3268,21 +3069,13 @@ button.annotation-char:hover {
 
   .two-fields,
   .split-controls,
-  .publish-actions,
-  .generation-button-row,
-  .prompt-debug-meta {
+  .publish-actions {
     grid-template-columns: 1fr;
-  }
-
-  .prompt-debug-section {
-    margin: 12px;
-    padding: 16px;
   }
 
   .manuscript-card,
   .asset-card,
   .generation-card,
-  .compiler-card,
   .publish-checklist {
     padding: 20px;
   }

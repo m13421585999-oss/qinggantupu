@@ -823,7 +823,7 @@ export function importControlSpec(
       analyzedAudioRole: referenceAudioOriginalAssetId ? "standard_ai_audio" : "reference_audio",
       knowledgeAssetIds: [],
       knowledgeBase: { id: "recitation-expression", version: "1.0", scope: "system" },
-      pipelineVersion: "local-analyzer-import-1.0",
+      pipelineVersion: "control-spec-import-1.0",
       alignmentModel: "elevenlabs-forced-alignment",
       acousticModel: "parselmouth",
       generatedAt: now,

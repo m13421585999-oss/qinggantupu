@@ -32,5 +32,3 @@
 ## 运行条件
 
 Python 服务使用 3.12，必须能够执行 FFmpeg，并安装 `praat-parselmouth`。`analysis-service/Dockerfile` 已包含这些运行条件。
-
-Windows `local-analyzer` 仍可作为离线排查工具，但其 JSON 不会自动成为正式作品控制谱，也不会替代云端生产任务。

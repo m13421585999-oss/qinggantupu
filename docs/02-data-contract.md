@@ -30,7 +30,7 @@ interface Work {
   referenceAudio?: AudioTrack;
   referenceAudioOriginal?: AudioTrack;
   standardAiAudio?: AudioTrack;
-  // 旧作品兼容字段；新作品指向 standardAiAudio。
+  // 只用于读取旧作品已经生成的历史示范声音。
   aiDemoAudio?: AudioTrack;
   controlSpec?: ControlSpec;
   createdAt: string;
