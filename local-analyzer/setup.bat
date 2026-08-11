@@ -70,7 +70,7 @@ if not exist ".env" (
     exit /b 1
   )
   > ".env" echo ELEVENLABS_API_KEY=!ELEVEN_KEY!
-  >> ".env" echo ELEVENLABS_VOICE_ID=DowyQ68vDpgFYdWVGjc3
+  >> ".env" echo ELEVENLABS_VOICE_ID=TPfHozk12Z3YP6tI688y
   set "ELEVEN_KEY="
   echo [4/4] 本地 .env 已创建。
 ) else (
