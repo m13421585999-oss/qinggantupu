@@ -12,8 +12,26 @@ export type GraphTrackColumn =
   | { kind: "ending"; key: string; tokenIndex: number; tone: EndingTone }
   | { kind: "pause"; key: string; afterTokenIndex: number; mark: PauseMark };
 
+export function isSourcePunctuation(char: string) {
+  return /\p{P}/u.test(char);
+}
+
 export function isGraphPunctuation(char: string) {
-  return /[，。！？、；：\s]/u.test(char);
+  return isSourcePunctuation(char) || /^\s+$/u.test(char);
+}
+
+function pauseBoundaryHasSourcePunctuation(
+  tokens: TimedToken[],
+  tokenPosition: number,
+) {
+  let left = tokenPosition;
+  while (left >= 0 && tokens[left].char.trim().length === 0) left -= 1;
+
+  let right = tokenPosition + 1;
+  while (right < tokens.length && tokens[right].char.trim().length === 0) right += 1;
+
+  return (left >= 0 && isSourcePunctuation(tokens[left].char))
+    || (right < tokens.length && isSourcePunctuation(tokens[right].char));
 }
 
 export function buildGraphTrackColumns(sentence: RecitationSentence): GraphTrackColumn[] {
@@ -24,10 +42,12 @@ export function buildGraphTrackColumns(sentence: RecitationSentence): GraphTrack
     sentence.pauses.map((mark) => [mark.afterTokenIndex, mark]),
   );
   const endingAnchorIndex = sentence.tokens.findLast(
+    (token) => token.char.trim().length > 0 && !isSourcePunctuation(token.char),
+  )?.index ?? sentence.tokens.findLast(
     (token) => token.char.trim().length > 0,
   )?.index;
 
-  return sentence.tokens.flatMap((token): GraphTrackColumn[] => {
+  return sentence.tokens.flatMap((token, tokenPosition): GraphTrackColumn[] => {
     const columns: GraphTrackColumn[] = [{
       kind: "token",
       key: `token-${token.id}`,
@@ -51,7 +71,7 @@ export function buildGraphTrackColumns(sentence: RecitationSentence): GraphTrack
       });
     }
     const pause = pauses.get(token.index);
-    if (pause) {
+    if (pause && !pauseBoundaryHasSourcePunctuation(sentence.tokens, tokenPosition)) {
       columns.push({
         kind: "pause",
         key: `pause-${pause.id}`,

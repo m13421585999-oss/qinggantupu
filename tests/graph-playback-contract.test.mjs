@@ -23,37 +23,90 @@ function sentenceFixture() {
     endMs: (index + 1) * 200,
     confidence: 1,
   }));
-  const endingIndex = tokens.at(-1).index;
   return {
     id: "sentence-1",
     tokens,
-    prolongations: [{ id: "prolong-3", tokenIndex: 3 }],
+    prolongations: [
+      { id: "prolong-3", tokenIndex: 3 },
+      { id: "prolong-8", tokenIndex: 8 },
+    ],
     pauses: [
       { id: "pause-3", afterTokenIndex: 3, type: "short" },
-      { id: "pause-ending", afterTokenIndex: endingIndex, type: "long" },
+      { id: "pause-4", afterTokenIndex: 4, type: "long" },
+      { id: "pause-6", afterTokenIndex: 6, type: "long" },
+      { id: "pause-ending", afterTokenIndex: 9, type: "long" },
     ],
     endingIntonation: { type: "rising" },
   };
 }
 
-test("graph markers occupy token and boundary columns in document order", () => {
+function renderedTrackText(columns) {
+  return columns.map((column) => {
+    if (column.kind === "token") return column.token.char;
+    if (column.kind === "prolongation") return "——";
+    if (column.kind === "pause") return column.mark.type === "long" ? "///" : "/";
+    return column.tone === "rising" ? "↗" : column.tone === "falling" ? "↘" : "→";
+  }).join("");
+}
+
+test("source punctuation suppresses pause marks while preserving inline marker order", () => {
   const columns = buildGraphTrackColumns(sentenceFixture());
   const tokenThreePosition = columns.findIndex(
     (column) => column.kind === "token" && column.token.index === 3,
   );
   assert.deepEqual(
     columns.slice(tokenThreePosition, tokenThreePosition + 3).map((column) => column.kind),
-    ["token", "prolongation", "pause"],
+    ["token", "prolongation", "token"],
+    "a source comma must replace the pause mark after 大海",
   );
 
-  const endingTokenPosition = columns.findLastIndex((column) => column.kind === "token");
-  assert.deepEqual(
-    columns.slice(endingTokenPosition, endingTokenPosition + 3).map((column) => column.kind),
-    ["token", "ending", "pause"],
-    "the ending arrow must immediately follow the final punctuation",
+  const extraPausePosition = columns.findIndex(
+    (column) => column.kind === "token" && column.token.index === 6,
   );
+  assert.deepEqual(
+    columns.slice(extraPausePosition, extraPausePosition + 3).map((column) => column.kind),
+    ["token", "pause", "token"],
+    "a pause without source punctuation remains visible",
+  );
+
+  const lastSpokenTokenPosition = columns.findIndex(
+    (column) => column.kind === "token" && column.token.index === 8,
+  );
+  assert.deepEqual(
+    columns.slice(lastSpokenTokenPosition, lastSpokenTokenPosition + 4).map((column) => column.kind),
+    ["token", "prolongation", "ending", "token"],
+    "the ending arrow belongs before the original sentence punctuation",
+  );
+  assert.equal(columns.filter((column) => column.kind === "pause").length, 1);
+  assert.equal(renderedTrackText(columns), "面朝大海——，春暖///花开——↗。");
   assert.ok(graphTrackTemplate(columns).split(" ").length >= columns.length);
   assert.ok(graphTrackMinimumWidth(columns) > sentenceFixture().tokens.length * 20);
+});
+
+test("comma enumeration comma and period each fully replace adjacent pause marks", () => {
+  const text = "甲、乙，丙。";
+  const tokens = Array.from(text).map((char, index) => ({
+    id: `punctuation-token-${index}`,
+    index,
+    char,
+    startMs: index * 100,
+    endMs: (index + 1) * 100,
+    confidence: 1,
+  }));
+  const sentence = {
+    id: "punctuation-sentence",
+    tokens,
+    prolongations: [],
+    pauses: tokens.map((token) => ({
+      id: `pause-${token.index}`,
+      afterTokenIndex: token.index,
+      type: "short",
+    })),
+    endingIntonation: { type: "level" },
+  };
+  const columns = buildGraphTrackColumns(sentence);
+  assert.equal(columns.filter((column) => column.kind === "pause").length, 0);
+  assert.equal(renderedTrackText(columns), "甲、乙，丙→。");
 });
 
 test("sentence playback adds pre-roll and tail padding without changing timestamps", () => {
