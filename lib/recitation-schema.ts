@@ -6,6 +6,8 @@ export type WorkStatus =
   | "audio_ready"
   | "published";
 
+export type AudioSyncStatus = "pending" | "synced" | "modified";
+
 export type ProsodyType = "peak" | "valley" | "rising" | "falling";
 export type EndingTone = "rising" | "falling" | "level";
 export type Rhythm =
@@ -256,6 +258,9 @@ export interface ControlSpec {
   sentences: RecitationSentence[];
   analysisProvenance: {
     referenceAudioAssetId?: string;
+    referenceAudioOriginalAssetId?: string;
+    standardAiAudioAssetId?: string;
+    analyzedAudioRole?: "reference_audio" | "standard_ai_audio";
     knowledgeAssetIds: string[];
     knowledgeBase?: {
       id: string;
@@ -302,7 +307,7 @@ export interface AudioTimeline {
 
 export interface AudioTrack {
   id: string;
-  kind: "reference" | "ai_demo";
+  kind: "reference" | "reference_original" | "ai_demo" | "standard_ai";
   url: string;
   filename: string;
   mimeType?: string;
@@ -326,10 +331,13 @@ export interface RecitationWork {
   language: "zh-CN";
   sourceText: string;
   status: WorkStatus;
+  audioSyncStatus: AudioSyncStatus;
   currentSpecVersionId?: string;
   publishedRevisionId?: string;
   referenceAudio?: AudioTrack;
+  referenceAudioOriginal?: AudioTrack;
   aiDemoAudio?: AudioTrack;
+  standardAiAudio?: AudioTrack;
   analysisJobId?: string;
   analysisPackage?: RecitationAnalysisPackage;
   controlSpec?: ControlSpec;
@@ -357,6 +365,14 @@ export interface AnalysisToken {
   start_ms: number;
   end_ms: number;
   duration_ms: number;
+  local_duration_ratio?: number | null;
+  f0_hz?: number | null;
+  normalized_pitch?: number | null;
+  intensity_db?: number | null;
+  normalized_energy?: number | null;
+  silence_gap_before_ms?: number;
+  silence_gap_after_ms?: number;
+  voiced_ratio?: number | null;
   confidence?: number;
 }
 
@@ -379,13 +395,21 @@ export interface AnalysisSentenceSummary {
 }
 
 export interface RecitationAnalysisPackage {
-  schema_version: "1.0" | "recitation-analysis-1.0";
+  schema_version: "1.0" | "recitation-analysis-1.0" | "recitation-analysis-2.0-standard-audio";
   generated_at: string;
   work: {
     title: string;
     author?: string;
     full_text: string;
   };
+  reference_audio_asset_id?: string;
+  reference_audio_original_asset_id?: string;
+  standard_ai_audio_asset_id?: string;
+  analyzed_audio_role?: "reference_audio" | "standard_ai_audio";
+  standard_ai_timestamps?: {
+    characters: AnalysisToken[];
+    words: Array<Record<string, unknown>>;
+  } | null;
   alignment_quality: Record<string, unknown>;
   tokens: AnalysisToken[];
   words: Array<Record<string, unknown>>;
@@ -397,6 +421,10 @@ export interface RecitationAnalysisPackage {
   /** Deterministic timing organization derived from this reference performance. */
   timing_profile?: Record<string, unknown>;
   audio: {
+    asset_id?: string;
+    role?: "reference_audio" | "standard_ai_audio";
+    filename?: string;
+    mime_type?: string;
     duration_ms: number;
     sample_rate?: number;
   };

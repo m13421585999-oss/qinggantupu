@@ -655,7 +655,8 @@ export function importControlSpec(
   rawValue: unknown,
   sourceText: string,
   workId: string,
-  referenceAudioAssetId?: string,
+  analysisAudioAssetId?: string,
+  referenceAudioOriginalAssetId?: string,
 ): ControlSpec {
   const envelope = object(rawValue);
   const raw = Object.keys(object(envelope.control_spec)).length
@@ -816,7 +817,10 @@ export function importControlSpec(
     },
     sentences,
     analysisProvenance: {
-      referenceAudioAssetId,
+      referenceAudioAssetId: referenceAudioOriginalAssetId ?? analysisAudioAssetId,
+      referenceAudioOriginalAssetId,
+      standardAiAudioAssetId: referenceAudioOriginalAssetId ? analysisAudioAssetId : undefined,
+      analyzedAudioRole: referenceAudioOriginalAssetId ? "standard_ai_audio" : "reference_audio",
       knowledgeAssetIds: [],
       knowledgeBase: { id: "recitation-expression", version: "1.0", scope: "system" },
       pipelineVersion: "local-analyzer-import-1.0",

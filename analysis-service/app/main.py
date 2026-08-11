@@ -18,7 +18,7 @@ from app.config import (
     ConfigurationError,
     Settings,
 )
-from app.pipeline import analyze_job
+from app.pipeline import PIPELINE_VERSION, analyze_job
 from app.schemas.control_spec import JobRequest
 
 
@@ -120,9 +120,13 @@ async def _run_job(job: JobRequest, settings: Settings) -> str:
                 "analysis_package": analysis_package,
                 "control_spec": control_spec,
                 "pipeline": {
-                    "version": "recitation-analysis-1.0",
+                    "version": PIPELINE_VERSION,
                     "alignment": "elevenlabs-forced-alignment",
                     "acoustics": "parselmouth",
+                    "analyzed_audio_role": analysis_package.get("analyzed_audio_role"),
+                    "standard_ai_audio_asset_id": analysis_package.get(
+                        "standard_ai_audio_asset_id"
+                    ),
                     "language_model": settings.llm_model,
                     "thinking": settings.llm_thinking,
                     "reasoning_effort": settings.llm_reasoning_effort,

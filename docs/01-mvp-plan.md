@@ -4,7 +4,7 @@
 
 当前服务单一创作者，完成：
 
-> 真实正文与参考朗诵 → 云端声音分析与 LLM 解释 → 图谱编辑 → AI 示范 → 发布与同步播放。
+> 真实正文与真人参考朗诵 → Voice Changer 标准 AI 声音 → 同一声音的对齐、声学分析与 LLM 解释 → 图谱编辑 → 发布与同步播放。
 
 第一版不做用户录音、评分、陪练、多用户协作、复杂消息队列、多家声音供应商或声学实验室级参数。
 
@@ -19,9 +19,10 @@
 
 - [x] D1/R2 逻辑绑定和核心作品、素材、任务、控制谱、音频版本、发布数据结构。
 - [x] 现有单句图谱编辑器、动态语势对齐和拼音显示。
-- [x] Eleven v3 TTS with timestamps、R2 保存和播放时间轴骨架。
+- [x] Eleven Voice Changer、原始/标准双音频 R2 保存和标准音频播放时间轴。
 - [x] Python Eleven Forced Alignment 与 Parselmouth 声学分析模块。
 - [x] 内置《朗诵表达分析规则 v1.0》与严格结构化 LLM 解释模块。
 - [x] Python 服务 Docker 运行定义和认证任务/回调协议。
-- [ ] 配置正式 Python 服务 URL、LLM Secret 与网站端 Secrets。
+- [x] `standard_ai_audio` 作为 Forced Alignment、Parselmouth、control_spec 和观看端播放的共同来源。
+- [ ] 部署本次网站与 Python 服务版本并核对正式 Secrets。
 - [ ] 使用黄金样本完成一次线上全链路验收。

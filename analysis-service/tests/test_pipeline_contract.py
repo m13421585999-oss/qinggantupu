@@ -3,9 +3,46 @@ from __future__ import annotations
 from app.acoustics.contour import continuous_macro_prosody_path, macro_contour
 from app.acoustics.parselmouth_analyzer import _ending_intonation
 from app.acoustics.timing_profile import derive_timing_profile
-from app.interpretation.llm_interpreter import assemble_control_spec
+from app.interpretation.llm_interpreter import _compact_evidence, assemble_control_spec
+from app.pipeline import PIPELINE_VERSION, _analysis_audio
 from app.providers.eleven_alignment import map_to_source, normalize_payload
 from app.schemas.control_spec import LlmInterpretation
+
+
+def test_standard_ai_audio_is_the_primary_pipeline_input() -> None:
+    payload = {
+        "standard_ai_audio": {"asset_id": "standard", "filename": "standard.mp3"},
+        "analysis_audio": {"asset_id": "generic"},
+        "reference_audio": {"asset_id": "original"},
+    }
+
+    assert _analysis_audio(payload)["asset_id"] == "standard"
+    assert PIPELINE_VERSION == "recitation-analysis-2.0-standard-audio"
+
+
+def test_llm_evidence_keeps_standard_audio_provenance() -> None:
+    package = {
+        "work": {"title": "test", "author": "", "full_text": "测"},
+        "analyzed_audio_role": "standard_ai_audio",
+        "standard_ai_audio_asset_id": "standard",
+        "reference_audio_original_asset_id": "original",
+        "alignment_quality": {},
+        "tokens": [{"index": 0, "char": "测", "start_ms": 0, "end_ms": 100}],
+        "segments": [],
+        "acoustic_evidence": {
+            "tokens": [{"token_index": 0}],
+            "pauses": [],
+            "duration_outliers": [],
+            "energy_changes": [],
+        },
+    }
+
+    evidence = _compact_evidence(package)
+    assert evidence["audio_provenance"] == {
+        "analyzed_audio_role": "standard_ai_audio",
+        "standard_ai_audio_asset_id": "standard",
+        "reference_audio_original_asset_id": "original",
+    }
 
 
 def test_macro_contour_preserves_the_named_acoustic_metric() -> None:

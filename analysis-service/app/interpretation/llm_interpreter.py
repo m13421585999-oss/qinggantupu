@@ -39,6 +39,15 @@ def _compact_evidence(analysis_package: dict[str, Any]) -> dict[str, Any]:
         )
     return {
         "work": analysis_package["work"],
+        "audio_provenance": {
+            "analyzed_audio_role": analysis_package.get("analyzed_audio_role"),
+            "standard_ai_audio_asset_id": analysis_package.get(
+                "standard_ai_audio_asset_id"
+            ),
+            "reference_audio_original_asset_id": analysis_package.get(
+                "reference_audio_original_asset_id"
+            ),
+        },
         "alignment_quality": analysis_package["alignment_quality"],
         "tokens": tokens,
         "observed_pauses": analysis_package["acoustic_evidence"]["pauses"],

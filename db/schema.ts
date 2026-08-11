@@ -17,6 +17,7 @@ export const works = sqliteTable(
     language: text("language").notNull().default("zh-CN"),
     sourceText: text("source_text").notNull(),
     status: text("status").notNull().default("draft"),
+    audioSyncStatus: text("audio_sync_status").notNull().default("pending"),
     currentSpecVersionId: text("current_spec_version_id"),
     publishedRevisionId: text("published_revision_id"),
     createdAt: text("created_at").notNull(),
@@ -43,11 +44,14 @@ export const assets = sqliteTable(
     durationMs: integer("duration_ms"),
     checksum: text("checksum").notNull(),
     provider: text("provider").notNull().default("upload"),
+    sourceAssetId: text("source_asset_id"),
+    metadataJson: text("metadata_json"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
     uniqueIndex("idx_assets_storage_key").on(table.storageKey),
     index("idx_assets_work_id_kind").on(table.workId, table.kind),
+    index("idx_assets_work_kind_source").on(table.workId, table.kind, table.sourceAssetId),
   ],
 );
 

@@ -35,7 +35,11 @@ interface ExecutionContext {
 type Row = Record<string, string | number | null>;
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
-const ANALYSIS_JOB_TIMEOUT_MS = 7 * 60 * 1000;
+const ANALYSIS_JOB_TIMEOUT_MS = 12 * 60 * 1000;
+const STANDARD_ANALYSIS_JOB_TYPE = "standard_audio_analysis";
+const LEGACY_ANALYSIS_JOB_TYPE = "reference_analysis";
+const VOICE_CHANGER_MODEL_ID = "eleven_multilingual_sts_v2";
+const VOICE_CHANGER_OUTPUT_FORMAT = "mp3_44100_128";
 
 function json(data: unknown, status = 200, headers?: HeadersInit) {
   return new Response(JSON.stringify(data), {
@@ -82,6 +86,10 @@ function parseJson<T>(value: string | null | undefined): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function isAnalysisJobType(value: unknown) {
+  return value === STANDARD_ANALYSIS_JOB_TYPE || value === LEGACY_ANALYSIS_JOB_TYPE;
 }
 
 async function first<T extends Row>(statement: D1PreparedStatement): Promise<T | null> {
@@ -158,8 +166,10 @@ async function latestAnalysisPackage(
   const row = await first<Row>(env.DB.prepare(
     `SELECT output_json
        FROM processing_jobs
-      WHERE work_id = ? AND type = 'reference_analysis' AND status = 'succeeded'
-      ORDER BY created_at DESC LIMIT 1`,
+      WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
+        AND status = 'succeeded'
+      ORDER BY CASE WHEN type = 'standard_audio_analysis' THEN 0 ELSE 1 END,
+               created_at DESC LIMIT 1`,
   ).bind(workId));
   const output = parseJson<Record<string, unknown>>(row?.output_json as string | null);
   const analysisPackage = output?.analysis_package;
@@ -193,13 +203,29 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
       "SELECT * FROM assets WHERE work_id = ? AND kind = 'reference_audio' ORDER BY created_at DESC LIMIT 1",
     ).bind(workId))
     : null;
-  const latestAnalysisJob = !published
+  const standardAsset = !published
     ? await first<Row>(env.DB.prepare(
-      "SELECT id, status, progress, input_json, output_json, error_code, error_message FROM processing_jobs WHERE work_id = ? AND type = 'reference_analysis' ORDER BY created_at DESC LIMIT 1",
+      "SELECT * FROM assets WHERE work_id = ? AND kind = 'standard_ai_audio' ORDER BY created_at DESC LIMIT 1",
     ).bind(workId))
     : null;
-  const latestAnalysisInput = parseJson<{ assetId?: string }>(latestAnalysisJob?.input_json as string | null);
-  const analysisJob = reference && latestAnalysisInput?.assetId === reference.id ? latestAnalysisJob : null;
+  const latestAnalysisJob = !published
+    ? await first<Row>(env.DB.prepare(
+      `SELECT id, type, status, progress, input_json, output_json, error_code, error_message
+         FROM processing_jobs
+        WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
+        ORDER BY CASE WHEN type = 'standard_audio_analysis' THEN 0 ELSE 1 END,
+                 created_at DESC LIMIT 1`,
+    ).bind(workId))
+    : null;
+  const latestAnalysisInput = parseJson<{
+    assetId?: string;
+    standardAudioAssetId?: string;
+  }>(latestAnalysisJob?.input_json as string | null);
+  const expectedAnalysisAsset = standardAsset ?? reference;
+  const analysisJob = expectedAnalysisAsset
+    && latestAnalysisInput?.assetId === expectedAnalysisAsset.id
+    ? latestAnalysisJob
+    : null;
   const analysisOutput = parseJson<Record<string, unknown>>(analysisJob?.output_json as string | null);
   const analysisPackage = analysisOutput?.analysis_package as Record<string, unknown> | undefined;
   const selectedSpecVersionId = publication?.control_spec_version_id ?? work.current_spec_version_id;
@@ -212,22 +238,74 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
     controlSpec = parseJson<Record<string, unknown>>(spec?.spec_json as string | null);
   }
 
-  const ai = publication?.audio_version_id
+  const audioVersion = publication?.audio_version_id
     ? await first<Row>(env.DB.prepare(
-      `SELECT av.*, a.filename, a.mime_type, a.duration_ms AS asset_duration_ms
+      `SELECT av.*, a.kind AS asset_kind, a.filename, a.mime_type,
+              a.duration_ms AS asset_duration_ms, a.source_asset_id, a.metadata_json
          FROM audio_versions av
          JOIN assets a ON a.id = av.audio_asset_id
         WHERE av.id = ? LIMIT 1`,
     ).bind(publication.audio_version_id))
     : selectedSpecVersionId
     ? await first<Row>(env.DB.prepare(
-      `SELECT av.*, a.filename, a.mime_type, a.duration_ms AS asset_duration_ms
+      `SELECT av.*, a.kind AS asset_kind, a.filename, a.mime_type,
+              a.duration_ms AS asset_duration_ms, a.source_asset_id, a.metadata_json
          FROM audio_versions av
          JOIN assets a ON a.id = av.audio_asset_id
         WHERE av.work_id = ? AND av.control_spec_version_id = ?
-        ORDER BY av.created_at DESC LIMIT 1`,
+        ORDER BY CASE WHEN a.kind = 'standard_ai_audio' THEN 0 ELSE 1 END,
+                 av.created_at DESC LIMIT 1`,
     ).bind(workId, selectedSpecVersionId))
     : null;
+
+  const referenceTrack = reference ? {
+    id: String(reference.id),
+    kind: "reference_original" as const,
+    url: `/api/assets/${reference.id}`,
+    filename: String(reference.filename),
+    mimeType: String(reference.mime_type),
+    durationMs: Number(reference.duration_ms ?? 0),
+    provider: "upload" as const,
+    label: "原始优秀真人朗诵",
+  } : undefined;
+  const publishedStandard = String(audioVersion?.asset_kind ?? "").startsWith("standard_ai_audio")
+    ? audioVersion
+    : null;
+  const currentStandard = publishedStandard ?? standardAsset;
+  const standardTimeline = published
+    ? parseJson(audioVersion?.timeline_json as string | null)
+    : analysisPackage
+      ? analysisTimeline(analysisPackage)
+      : parseJson(audioVersion?.timeline_json as string | null);
+  const standardTrack = currentStandard ? {
+    id: String(currentStandard.audio_asset_id ?? currentStandard.id),
+    kind: "standard_ai" as const,
+    url: `/api/assets/${currentStandard.audio_asset_id ?? currentStandard.id}`,
+    filename: String(currentStandard.filename),
+    mimeType: String(currentStandard.mime_type),
+    durationMs: Number(
+      currentStandard.duration_ms
+      ?? currentStandard.asset_duration_ms
+      ?? (analysisPackage?.audio as Record<string, unknown> | undefined)?.duration_ms
+      ?? 0,
+    ),
+    provider: "eleven" as const,
+    label: "Eleven Voice Changer 标准 AI 朗诵",
+    timeline: standardTimeline,
+  } : undefined;
+  const legacyDemoTrack = audioVersion
+    && !String(audioVersion.asset_kind ?? "").startsWith("standard_ai_audio") ? {
+    id: String(audioVersion.audio_asset_id),
+    kind: "ai_demo" as const,
+    url: `/api/assets/${audioVersion.audio_asset_id}`,
+    filename: String(audioVersion.filename),
+    mimeType: String(audioVersion.mime_type),
+    durationMs: Number(audioVersion.duration_ms ?? audioVersion.asset_duration_ms ?? 0),
+    provider: "eleven" as const,
+    label: "旧版 Eleven v3 AI 示范",
+    timeline: parseJson(audioVersion.timeline_json as string),
+  } : undefined;
+  const playbackTrack = standardTrack ?? legacyDemoTrack;
 
   return {
     id: work.id,
@@ -238,32 +316,15 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
     language: work.language,
     sourceText: work.source_text,
     status: published ? "published" : work.status,
+    audioSyncStatus: work.audio_sync_status ?? (standardTrack ? "synced" : "pending"),
     currentSpecVersionId: selectedSpecVersionId ?? undefined,
     publishedRevisionId: publication?.id ?? work.published_revision_id ?? undefined,
     analysisJobId: analysisJob?.id ?? undefined,
     analysisPackage,
-    referenceAudio: reference ? {
-      id: reference.id,
-      kind: "reference",
-      url: `/api/assets/${reference.id}`,
-      filename: reference.filename,
-      mimeType: reference.mime_type,
-      durationMs: Number(reference.duration_ms ?? (analysisPackage?.audio as Record<string, unknown> | undefined)?.duration_ms ?? 0),
-      provider: "upload",
-      label: "上传的优质参考朗诵",
-      timeline: analysisPackage ? analysisTimeline(analysisPackage) : undefined,
-    } : undefined,
-    aiDemoAudio: ai ? {
-      id: ai.audio_asset_id,
-      kind: "ai_demo",
-      url: `/api/assets/${ai.audio_asset_id}`,
-      filename: ai.filename,
-      mimeType: ai.mime_type,
-      durationMs: Number(ai.duration_ms ?? ai.asset_duration_ms ?? 0),
-      provider: "eleven",
-      label: "Eleven v3 AI 示范",
-      timeline: parseJson(ai.timeline_json as string),
-    } : undefined,
+    referenceAudio: referenceTrack,
+    referenceAudioOriginal: referenceTrack,
+    aiDemoAudio: playbackTrack,
+    standardAiAudio: standardTrack,
     controlSpec,
     createdAt: work.created_at,
     updatedAt: work.updated_at,
@@ -305,7 +366,7 @@ async function createWork(request: Request, env: Env) {
       await env.DB.batch([
         env.DB.prepare(
           `UPDATE works
-              SET title = ?, author = ?, source_text = ?, status = 'draft',
+              SET title = ?, author = ?, source_text = ?, status = 'draft', audio_sync_status = 'pending',
                   current_spec_version_id = NULL, published_revision_id = NULL, updated_at = ?
             WHERE id = ?`,
         ).bind(title, author || null, fullText, savedAt, requestedWorkId),
@@ -316,10 +377,14 @@ async function createWork(request: Request, env: Env) {
           "UPDATE assets SET kind = 'reference_audio_archived' WHERE work_id = ? AND kind = 'reference_audio'",
         ).bind(requestedWorkId),
         env.DB.prepare(
+          "UPDATE assets SET kind = 'standard_ai_audio_archived' WHERE work_id = ? AND kind = 'standard_ai_audio'",
+        ).bind(requestedWorkId),
+        env.DB.prepare(
           `UPDATE processing_jobs
               SET status = 'failed', progress = 0, error_code = 'WORK_SOURCE_CHANGED',
                   error_message = '作品正文已更新，请重新上传匹配的参考朗诵并发起分析。', updated_at = ?
-            WHERE work_id = ? AND type = 'reference_analysis' AND status IN ('queued', 'processing')`,
+            WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
+              AND status IN ('queued', 'processing')`,
         ).bind(savedAt, requestedWorkId),
       ]);
     } else {
@@ -396,6 +461,9 @@ async function uploadReferenceAudio(request: Request, env: Env, workId: string) 
         "UPDATE assets SET kind = 'reference_audio_archived' WHERE work_id = ? AND kind = 'reference_audio'",
       ).bind(workId),
       env.DB.prepare(
+        "UPDATE assets SET kind = 'standard_ai_audio_archived' WHERE work_id = ? AND kind = 'standard_ai_audio'",
+      ).bind(workId),
+      env.DB.prepare(
         `INSERT INTO assets
            (id, work_id, kind, storage_key, filename, mime_type, byte_size, duration_ms, checksum, provider, created_at)
          VALUES (?, ?, 'reference_audio', ?, ?, ?, ?, ?, ?, 'upload', ?)`,
@@ -404,12 +472,17 @@ async function uploadReferenceAudio(request: Request, env: Env, workId: string) 
         `UPDATE processing_jobs
             SET status = 'failed', progress = 0, error_code = 'REFERENCE_AUDIO_REPLACED',
                 error_message = '参考朗诵已被替换，请重新发起分析。', updated_at = ?
-          WHERE work_id = ? AND type = 'reference_analysis' AND status IN ('queued', 'processing')`,
+          WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
+            AND status IN ('queued', 'processing')`,
       ).bind(uploadedAt, workId),
       env.DB.prepare(
         `UPDATE works
-            SET status = 'draft', current_spec_version_id = NULL, updated_at = ?
+            SET status = 'draft', audio_sync_status = 'pending',
+                current_spec_version_id = NULL, published_revision_id = NULL, updated_at = ?
           WHERE id = ?`,
+      ).bind(uploadedAt, workId),
+      env.DB.prepare(
+        "UPDATE publications SET state = 'withdrawn', withdrawn_at = ? WHERE work_id = ? AND state = 'published'",
       ).bind(uploadedAt, workId),
     ]);
   } catch (error) {
@@ -422,23 +495,149 @@ async function uploadReferenceAudio(request: Request, env: Env, workId: string) 
   return json({ reference_audio: referenceAssetPayload(asset), work: await getWorkPayload(env, workId) }, 201);
 }
 
+async function ensureStandardAiAudio(env: Env, work: Row, reference: Row) {
+  const existing = await first<Row>(env.DB.prepare(
+    `SELECT * FROM assets
+      WHERE work_id = ? AND kind = 'standard_ai_audio' AND source_asset_id = ?
+      ORDER BY created_at DESC LIMIT 1`,
+  ).bind(work.id, reference.id));
+  if (existing) {
+    const metadata = parseJson<Record<string, unknown>>(existing.metadata_json as string | null);
+    if (
+      !env.ELEVENLABS_VOICE_ID?.trim()
+      || (
+        metadata?.voice_id === env.ELEVENLABS_VOICE_ID
+        && metadata?.model_id === VOICE_CHANGER_MODEL_ID
+      )
+    ) return existing;
+  }
+  if (!env.ELEVENLABS_API_KEY?.trim() || !env.ELEVENLABS_VOICE_ID?.trim()) {
+    throw new Error("请先在网站服务端配置 ELEVENLABS_API_KEY 和 ELEVENLABS_VOICE_ID。");
+  }
+
+  const source = await env.AUDIO_BUCKET.get(String(reference.storage_key));
+  if (!source) throw new Error("原始参考音频记录存在，但 R2 文件缺失。");
+  const sourceBytes = await source.arrayBuffer();
+  if (!sourceBytes.byteLength) throw new Error("原始参考音频为空，不能生成标准 AI 声音。");
+
+  const form = new FormData();
+  form.set(
+    "audio",
+    new Blob([sourceBytes], { type: String(reference.mime_type || "application/octet-stream") }),
+    String(reference.filename || "reference-audio"),
+  );
+  form.set("model_id", VOICE_CHANGER_MODEL_ID);
+  form.set("file_format", "other");
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.elevenlabs.io/v1/speech-to-speech/${encodeURIComponent(env.ELEVENLABS_VOICE_ID)}?output_format=${VOICE_CHANGER_OUTPUT_FORMAT}`,
+      {
+        method: "POST",
+        headers: { "xi-api-key": env.ELEVENLABS_API_KEY },
+        body: form,
+        signal: AbortSignal.timeout(210_000),
+      },
+    );
+  } catch (error) {
+    throw new Error(`无法连接 Eleven Voice Changer：${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 700);
+    throw new Error(`Eleven Voice Changer 生成失败（HTTP ${response.status}）：${detail}`);
+  }
+  const standardBytes = new Uint8Array(await response.arrayBuffer());
+  if (!standardBytes.byteLength) throw new Error("Eleven Voice Changer 返回了空音频。");
+  if (standardBytes.byteLength > 150 * 1024 * 1024) {
+    throw new Error("标准 AI 音频超过 150 MB，不能保存。");
+  }
+
+  const assetId = id("asset");
+  const createdAt = now();
+  const checksum = await sha256Hex(standardBytes.slice().buffer);
+  const storageKey = `works/${work.id}/standard-ai/${assetId}.mp3`;
+  const metadata = {
+    source_asset_id: reference.id,
+    voice_id: env.ELEVENLABS_VOICE_ID,
+    model_id: VOICE_CHANGER_MODEL_ID,
+    output_format: VOICE_CHANGER_OUTPUT_FORMAT,
+    generated_at: createdAt,
+  };
+  await env.AUDIO_BUCKET.put(storageKey, standardBytes, {
+    httpMetadata: { contentType: "audio/mpeg" },
+    customMetadata: {
+      workId: String(work.id),
+      assetId,
+      checksum,
+      kind: "standard_ai_audio",
+      sourceAssetId: String(reference.id),
+      voiceId: env.ELEVENLABS_VOICE_ID,
+      model: VOICE_CHANGER_MODEL_ID,
+    },
+  });
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE assets SET kind = 'standard_ai_audio_archived' WHERE work_id = ? AND kind = 'standard_ai_audio'",
+      ).bind(work.id),
+      env.DB.prepare(
+        `INSERT INTO assets
+          (id, work_id, kind, storage_key, filename, mime_type, byte_size, duration_ms,
+           checksum, provider, source_asset_id, metadata_json, created_at)
+         VALUES (?, ?, 'standard_ai_audio', ?, ?, 'audio/mpeg', ?, NULL, ?, 'eleven', ?, ?, ?)`,
+      ).bind(
+        assetId,
+        work.id,
+        storageKey,
+        `${String(work.slug)}-standard-ai.mp3`,
+        standardBytes.byteLength,
+        checksum,
+        reference.id,
+        JSON.stringify(metadata),
+        createdAt,
+      ),
+      env.DB.prepare(
+        "UPDATE works SET audio_sync_status = 'pending', status = 'analyzing', updated_at = ? WHERE id = ?",
+      ).bind(createdAt, work.id),
+    ]);
+  } catch (error) {
+    await env.AUDIO_BUCKET.delete(storageKey).catch(() => undefined);
+    throw error;
+  }
+  const saved = await first<Row>(env.DB.prepare("SELECT * FROM assets WHERE id = ?").bind(assetId));
+  if (!saved) throw new Error("标准 AI 音频已经生成，但素材记录保存失败。");
+  return saved;
+}
+
 function handoffSecret(env: Env) {
   return env.ANALYSIS_CALLBACK_TOKEN;
 }
 
 async function jobContext(env: Env, jobId: string) {
   const job = await first<Row>(env.DB.prepare(
-    `SELECT j.*, w.title, w.author, w.source_text
+      `SELECT j.*, w.title, w.author, w.source_text
        FROM processing_jobs j
        JOIN works w ON w.id = j.work_id
-      WHERE j.id = ? AND j.type = 'reference_analysis'`,
+      WHERE j.id = ? AND j.type IN ('standard_audio_analysis', 'reference_analysis')`,
   ).bind(jobId));
   if (!job) return null;
-  const input = parseJson<{ assetId?: string; handoffExpiresAt?: number }>(job.input_json as string | null);
+  const input = parseJson<{
+    assetId?: string;
+    standardAudioAssetId?: string;
+    referenceAudioAssetId?: string;
+    handoffExpiresAt?: number;
+  }>(job.input_json as string | null);
   if (!input?.assetId) return null;
   const asset = await first<Row>(env.DB.prepare("SELECT * FROM assets WHERE id = ?").bind(input.assetId));
   if (!asset || asset.work_id !== job.work_id) return null;
-  return { job, asset, input };
+  const reference = input.referenceAudioAssetId
+    ? await first<Row>(env.DB.prepare("SELECT * FROM assets WHERE id = ? AND work_id = ?").bind(
+      input.referenceAudioAssetId,
+      job.work_id,
+    ))
+    : asset.kind === "reference_audio" ? asset : null;
+  return { job, asset, reference, input };
 }
 
 async function signedHandoffUrl(
@@ -473,7 +672,7 @@ async function failActiveAnalysisJob(
   message: string,
 ) {
   const job = await first<Row>(env.DB.prepare(
-    "SELECT id, work_id FROM processing_jobs WHERE id = ? AND type = 'reference_analysis'",
+    "SELECT id, work_id FROM processing_jobs WHERE id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')",
   ).bind(jobId));
   if (!job) return;
   const failedAt = now();
@@ -507,7 +706,7 @@ async function expireStaleAnalysisJob(env: Env, job: Row) {
     env,
     String(job.id),
     "ANALYSIS_TIMED_OUT",
-    "声音分析超过 7 分钟仍未返回终态，请重新发起分析。",
+    "声音分析超过 12 分钟仍未返回终态，请重新发起分析。",
   );
   return true;
 }
@@ -542,7 +741,7 @@ async function dispatchAnalysisJob(env: Env, origin: string, jobId: string) {
     // The analysis function can legitimately outlive the proxy's synchronous
     // waiting window. Vercel keeps the in-flight function running and the
     // authenticated callback remains the sole owner of the terminal state.
-    // Leave the job processing here; the existing 7-minute stale-job guard
+    // Leave the job processing here; the existing 12-minute stale-job guard
     // still turns a genuinely lost callback into an explicit failure.
     return;
   }
@@ -563,7 +762,7 @@ async function dispatchAnalysisJob(env: Env, origin: string, jobId: string) {
     throw new Error("分析服务没有返回与当前任务匹配的终态。");
   }
   const stored = await first<Row>(env.DB.prepare(
-    "SELECT status FROM processing_jobs WHERE id = ? AND type = 'reference_analysis'",
+    "SELECT status FROM processing_jobs WHERE id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')",
   ).bind(jobId));
   if (!stored || ["queued", "processing"].includes(String(stored.status))) {
     throw new Error("分析服务已结束，但终态回调没有写入网站。");
@@ -583,9 +782,19 @@ async function createAnalysisJob(env: Env, origin: string, workId: string) {
     "SELECT * FROM assets WHERE work_id = ? AND kind = 'reference_audio' ORDER BY created_at DESC LIMIT 1",
   ).bind(workId));
   if (!reference) return apiError(409, "REFERENCE_AUDIO_REQUIRED", "请先上传真实参考朗诵音频。");
+  let standardAudio: Row;
+  try {
+    standardAudio = await ensureStandardAiAudio(env, work, reference);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await env.DB.prepare(
+      "UPDATE works SET status = 'draft', audio_sync_status = 'pending', updated_at = ? WHERE id = ?",
+    ).bind(now(), workId).run();
+    return apiError(502, "VOICE_CHANGER_FAILED", message);
+  }
   let active = await first<Row>(env.DB.prepare(
     `SELECT * FROM processing_jobs
-      WHERE work_id = ? AND type = 'reference_analysis' AND status IN ('queued', 'processing')
+      WHERE work_id = ? AND type = 'standard_audio_analysis' AND status IN ('queued', 'processing')
       ORDER BY created_at DESC LIMIT 1`,
   ).bind(workId));
   if (active) {
@@ -606,12 +815,18 @@ async function createAnalysisJob(env: Env, origin: string, workId: string) {
     env.DB.prepare(
       `INSERT INTO processing_jobs
          (id, work_id, type, status, progress, idempotency_key, input_json, created_at, updated_at)
-       VALUES (?, ?, 'reference_analysis', 'queued', 0, ?, ?, ?, ?)`,
+       VALUES (?, ?, 'standard_audio_analysis', 'queued', 0, ?, ?, ?, ?)`,
     ).bind(
       jobId,
       workId,
-      `reference-analysis:${workId}:${String(reference.checksum)}:${jobId}`,
-      JSON.stringify({ assetId: reference.id, audioSha256: reference.checksum, handoffExpiresAt }),
+      `standard-audio-analysis:${workId}:${String(standardAudio.checksum)}:${jobId}`,
+      JSON.stringify({
+        assetId: standardAudio.id,
+        standardAudioAssetId: standardAudio.id,
+        referenceAudioAssetId: reference.id,
+        audioSha256: standardAudio.checksum,
+        handoffExpiresAt,
+      }),
       createdAt,
       createdAt,
     ),
@@ -656,7 +871,7 @@ async function createAnalysisJobFromRequest(request: Request, env: Env, origin: 
 
 async function getAnalysisJob(env: Env, jobId: string) {
   let job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
-  if (!job || job.type !== "reference_analysis") {
+  if (!job || !isAnalysisJobType(job.type)) {
     return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务。");
   }
   if (await expireStaleAnalysisJob(env, job)) {
@@ -682,7 +897,10 @@ async function getAnalysisJob(env: Env, jobId: string) {
 async function getAnalysisInput(request: Request, env: Env, jobId: string) {
   const context = await jobContext(env, jobId);
   if (!context) return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务或参考素材。");
-  if (!["queued", "processing"].includes(String(context.job.status)) || context.asset.kind !== "reference_audio") {
+  if (
+    !["queued", "processing"].includes(String(context.job.status))
+    || !["standard_ai_audio", "reference_audio"].includes(String(context.asset.kind))
+  ) {
     return apiError(409, "JOB_NOT_ACTIVE", "声音分析任务已失效，请重新发起分析。");
   }
   if (!await verifyHandoff(request, env, "input", jobId, String(context.asset.id))) {
@@ -695,6 +913,23 @@ async function getAnalysisInput(request: Request, env: Env, jobId: string) {
       author: context.job.author ?? "",
       full_text: context.job.source_text,
     },
+    analysis_audio: {
+      asset_id: context.asset.id,
+      filename: context.asset.filename,
+      mime_type: context.asset.mime_type,
+      duration_ms: context.asset.duration_ms == null ? undefined : Number(context.asset.duration_ms),
+      role: context.asset.kind,
+    },
+    standard_ai_audio: context.asset.kind === "standard_ai_audio" ? {
+      asset_id: context.asset.id,
+      filename: context.asset.filename,
+      mime_type: context.asset.mime_type,
+      duration_ms: context.asset.duration_ms == null ? undefined : Number(context.asset.duration_ms),
+      source_asset_id: context.asset.source_asset_id,
+    } : undefined,
+    reference_audio_original: context.reference ? referenceAssetPayload(context.reference) : undefined,
+    // Legacy analysis-service versions read this field. For new jobs it still
+    // points to the standard AI audio, never the original human recording.
     reference_audio: {
       asset_id: context.asset.id,
       filename: context.asset.filename,
@@ -707,14 +942,17 @@ async function getAnalysisInput(request: Request, env: Env, jobId: string) {
 async function getAnalysisAudio(request: Request, env: Env, jobId: string) {
   const context = await jobContext(env, jobId);
   if (!context) return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务或参考素材。");
-  if (!["queued", "processing"].includes(String(context.job.status)) || context.asset.kind !== "reference_audio") {
+  if (
+    !["queued", "processing"].includes(String(context.job.status))
+    || !["standard_ai_audio", "reference_audio"].includes(String(context.asset.kind))
+  ) {
     return apiError(409, "JOB_NOT_ACTIVE", "声音分析任务已失效，请重新发起分析。");
   }
   if (!await verifyHandoff(request, env, "audio", jobId, String(context.asset.id))) {
     return apiError(401, "INVALID_HANDOFF_TOKEN", "分析音频链接无效或已过期。");
   }
   const object = await env.AUDIO_BUCKET.get(String(context.asset.storage_key));
-  if (!object) return apiError(404, "ASSET_OBJECT_NOT_FOUND", "参考音频记录存在，但 R2 文件缺失。");
+  if (!object) return apiError(404, "ASSET_OBJECT_NOT_FOUND", "分析音频记录存在，但 R2 文件缺失。");
   return new Response(object.body, {
     headers: {
       "content-type": String(context.asset.mime_type),
@@ -743,7 +981,7 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
     return apiError(401, "INVALID_CALLBACK_TOKEN", "分析回调身份校验失败。");
   }
   const job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
-  if (!job || job.type !== "reference_analysis") return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务。");
+  if (!job || !isAnalysisJobType(job.type)) return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务。");
   let body: Record<string, unknown>;
   try {
     const parsed = await request.json();
@@ -788,15 +1026,51 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
     ? analysisPackage.tokens as Array<Record<string, unknown>>
     : [];
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(job.work_id));
-  const input = parseJson<{ assetId?: string }>(job.input_json as string | null);
+  const input = parseJson<{
+    assetId?: string;
+    standardAudioAssetId?: string;
+    referenceAudioAssetId?: string;
+  }>(job.input_json as string | null);
   if (!work || !input?.assetId) return apiError(409, "JOB_CONTEXT_MISSING", "分析任务关联的作品或参考音频不存在。");
+  const analysisAsset = await first<Row>(env.DB.prepare(
+    "SELECT * FROM assets WHERE id = ? AND work_id = ?",
+  ).bind(input.assetId, work.id));
   const currentReference = await first<Row>(env.DB.prepare(
     "SELECT id FROM assets WHERE work_id = ? AND kind = 'reference_audio' ORDER BY created_at DESC LIMIT 1",
   ).bind(work.id));
-  if (currentReference?.id !== input.assetId) {
-    const message = "参考朗诵已被替换，旧分析结果不会写入当前作品。";
+  const currentStandard = await first<Row>(env.DB.prepare(
+    "SELECT id, source_asset_id FROM assets WHERE work_id = ? AND kind = 'standard_ai_audio' ORDER BY created_at DESC LIMIT 1",
+  ).bind(work.id));
+  const usesStandardAudio = job.type === STANDARD_ANALYSIS_JOB_TYPE;
+  const staleInput = usesStandardAudio
+    ? !analysisAsset
+      || analysisAsset.kind !== "standard_ai_audio"
+      || currentStandard?.id !== input.assetId
+      || currentReference?.id !== input.referenceAudioAssetId
+      || currentStandard.source_asset_id !== input.referenceAudioAssetId
+    : currentReference?.id !== input.assetId;
+  if (staleInput) {
+    const message = "本次分析使用的声音素材已被替换，旧结果不会写入当前作品。";
     await failAnalysisCallback(env, job, "JOB_INPUT_STALE", message, { analysis_package: analysisPackage ?? null });
     return apiError(409, "JOB_INPUT_STALE", message);
+  }
+  if (usesStandardAudio) {
+    const analyzedAudio = analysisPackage?.audio && typeof analysisPackage.audio === "object"
+      ? analysisPackage.audio as Record<string, unknown>
+      : {};
+    const returnedRole = String(
+      analysisPackage?.analyzed_audio_role ?? analyzedAudio.role ?? "",
+    );
+    const returnedAssetId = String(
+      analysisPackage?.standard_ai_audio_asset_id ?? analyzedAudio.asset_id ?? "",
+    );
+    if (returnedRole !== "standard_ai_audio" || returnedAssetId !== String(input.assetId)) {
+      const message = "分析服务返回的声音来源不是当前 standard_ai_audio，结果已拒绝写入。";
+      await failAnalysisCallback(env, job, "ANALYSIS_AUDIO_PROVENANCE_MISMATCH", message, {
+        analysis_package: analysisPackage ?? null,
+      });
+      return apiError(422, "ANALYSIS_AUDIO_PROVENANCE_MISMATCH", message);
+    }
   }
   const alignedText = tokens.map((token) => String(token.char ?? "")).join("");
   if (!analysisPackage || !tokens.length || alignedText !== work.source_text) {
@@ -813,7 +1087,13 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
   let normalizedSpec: Record<string, unknown>;
   try {
     normalizedSpec = withDynamicTimingProfile(
-      importControlSpec(rawControlSpec, String(work.source_text), String(work.id), input.assetId),
+      importControlSpec(
+        rawControlSpec,
+        String(work.source_text),
+        String(work.id),
+        input.assetId,
+        usesStandardAudio ? input.referenceAudioAssetId : undefined,
+      ),
       analysisPackage,
     );
     const provenance = normalizedSpec.analysisProvenance && typeof normalizedSpec.analysisProvenance === "object"
@@ -825,7 +1105,20 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
       source: "ai",
       analysisProvenance: {
         ...provenance,
-        pipelineVersion: String(pipeline.version ?? "recitation-analysis-1.0"),
+        referenceAudioAssetId: usesStandardAudio
+          ? input.referenceAudioAssetId
+          : input.assetId,
+        referenceAudioOriginalAssetId: usesStandardAudio
+          ? input.referenceAudioAssetId
+          : undefined,
+        standardAiAudioAssetId: usesStandardAudio ? input.assetId : undefined,
+        analyzedAudioRole: usesStandardAudio ? "standard_ai_audio" : "reference_audio",
+        pipelineVersion: String(
+          pipeline.version
+          ?? (usesStandardAudio ? "recitation-analysis-2.0-standard-audio" : "recitation-analysis-1.0"),
+        ),
+        alignmentModel: pipeline.alignment ? String(pipeline.alignment) : provenance.alignmentModel,
+        acousticModel: pipeline.acoustics ? String(pipeline.acoustics) : provenance.acousticModel,
         languageModel: pipeline.language_model ? String(pipeline.language_model) : provenance.languageModel,
       },
     };
@@ -843,7 +1136,7 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
   const version = Number(latest?.version ?? 0) + 1;
   const specId = id("spec");
   const savedSpec = { ...normalizedSpec, id: specId, workId: work.id, version };
-  await env.DB.batch([
+  const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       `INSERT INTO control_spec_versions
          (id, work_id, version, schema_version, source, spec_json, validation_state, created_by, created_at)
@@ -857,13 +1150,52 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
     ).bind(JSON.stringify({ analysis_package: analysisPackage, control_spec: savedSpec, pipeline: body.pipeline ?? null }), completedAt, jobId),
     env.DB.prepare(
       `UPDATE works
-          SET current_spec_version_id = ?, status = 'review', published_revision_id = NULL, updated_at = ?
+          SET current_spec_version_id = ?, status = 'review', audio_sync_status = ?,
+              published_revision_id = NULL, updated_at = ?
         WHERE id = ? AND source_text = ?
-          AND EXISTS (SELECT 1 FROM assets WHERE id = ? AND work_id = ? AND kind = 'reference_audio')`,
-    ).bind(specId, completedAt, work.id, work.source_text, input.assetId, work.id),
-    env.DB.prepare("UPDATE assets SET duration_ms = COALESCE(?, duration_ms) WHERE id = ? AND kind = 'reference_audio'")
+          AND EXISTS (SELECT 1 FROM assets WHERE id = ? AND work_id = ? AND kind = ?)`,
+    ).bind(
+      specId,
+      usesStandardAudio ? "synced" : "pending",
+      completedAt,
+      work.id,
+      work.source_text,
+      input.assetId,
+      work.id,
+      usesStandardAudio ? "standard_ai_audio" : "reference_audio",
+    ),
+    env.DB.prepare("UPDATE assets SET duration_ms = COALESCE(?, duration_ms) WHERE id = ?")
       .bind(durationMs > 0 ? Math.round(durationMs) : null, input.assetId),
-  ]);
+  ];
+  if (usesStandardAudio && analysisAsset) {
+    const audioVersionId = id("audio");
+    const voiceMetadata = parseJson<Record<string, unknown>>(analysisAsset.metadata_json as string | null);
+    statements.push(
+      env.DB.prepare(
+        `UPDATE audio_versions SET candidate_state = 'superseded'
+          WHERE work_id = ? AND audio_asset_id IN (
+            SELECT id FROM assets WHERE work_id = ? AND kind LIKE 'standard_ai_audio%'
+          )`,
+      ).bind(work.id, work.id),
+      env.DB.prepare(
+        `INSERT INTO audio_versions
+          (id, work_id, control_spec_version_id, audio_asset_id, provider, model, voice_id,
+           prompt_text, prompt_trace_json, timeline_json, duration_ms, candidate_state, created_at)
+         VALUES (?, ?, ?, ?, 'eleven', ?, ?, '', NULL, ?, ?, 'candidate', ?)`,
+      ).bind(
+        audioVersionId,
+        work.id,
+        specId,
+        input.assetId,
+        String(voiceMetadata?.model_id ?? VOICE_CHANGER_MODEL_ID),
+        String(voiceMetadata?.voice_id ?? env.ELEVENLABS_VOICE_ID ?? ""),
+        JSON.stringify(analysisTimeline(analysisPackage)),
+        Math.max(0, Math.round(durationMs)),
+        completedAt,
+      ),
+    );
+  }
+  await env.DB.batch(statements);
   return json({ ok: true, work: await getWorkPayload(env, String(work.id)) });
 }
 
@@ -901,15 +1233,25 @@ async function saveControlSpec(request: Request, env: Env, workId: string) {
   const specId = id("spec");
   const updated = { ...specWithTiming, id: specId, workId, version };
   const createdAt = now();
+  const source = String(body.source ?? "human");
+  const standardAudio = await first<Row>(env.DB.prepare(
+    "SELECT id FROM assets WHERE work_id = ? AND kind = 'standard_ai_audio' ORDER BY created_at DESC LIMIT 1",
+  ).bind(workId));
+  const audioSyncStatus = source === "analysis"
+    ? "synced"
+    : standardAudio ? "modified" : "pending";
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO control_spec_versions
        (id, work_id, version, schema_version, source, spec_json, validation_state, created_by, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 'valid', 'creator', ?)`,
-    ).bind(specId, workId, version, String(specWithTiming.schemaVersion ?? "2.0"), String(body.source ?? "human"), JSON.stringify(updated), createdAt),
+    ).bind(specId, workId, version, String(specWithTiming.schemaVersion ?? "2.0"), source, JSON.stringify(updated), createdAt),
     env.DB.prepare(
-      "UPDATE works SET current_spec_version_id = ?, status = 'review', published_revision_id = NULL, updated_at = ? WHERE id = ?",
-    ).bind(specId, createdAt, workId),
+      `UPDATE works
+          SET current_spec_version_id = ?, status = 'review', audio_sync_status = ?,
+              published_revision_id = NULL, updated_at = ?
+        WHERE id = ?`,
+    ).bind(specId, audioSyncStatus, createdAt, workId),
   ]);
   return json({ control_spec: updated, work: await getWorkPayload(env, workId) });
 }
@@ -1149,18 +1491,22 @@ async function publishWork(env: Env, workId: string, origin: string) {
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
   if (!work?.current_spec_version_id) return apiError(409, "CONTROL_SPEC_REQUIRED", "作品没有已确认控制谱。");
   const audio = await first<Row>(env.DB.prepare(
-    `SELECT av.id, av.audio_asset_id, av.timeline_json
+    `SELECT av.id, av.audio_asset_id, av.timeline_json, a.kind AS asset_kind
        FROM audio_versions av
        JOIN assets a ON a.id = av.audio_asset_id
-      WHERE av.work_id = ? AND av.control_spec_version_id = ?
+      WHERE av.work_id = ?
         AND av.candidate_state IN ('candidate', 'approved')
-        AND a.kind = 'ai_demo_audio'
-      ORDER BY av.created_at DESC LIMIT 1`,
+        AND (
+          a.kind = 'standard_ai_audio'
+          OR (a.kind = 'ai_demo_audio' AND av.control_spec_version_id = ?)
+        )
+      ORDER BY CASE WHEN a.kind = 'standard_ai_audio' THEN 0 ELSE 1 END,
+               av.created_at DESC LIMIT 1`,
   ).bind(workId, work.current_spec_version_id));
-  if (!audio) return apiError(409, "AI_DEMO_REQUIRED", "请先为当前控制谱生成 AI 示范。");
+  if (!audio) return apiError(409, "STANDARD_AUDIO_REQUIRED", "请先生成并解析标准 AI 朗诵。");
   const timeline = parseJson<Record<string, unknown>>(audio.timeline_json as string | null);
   if (!timeline || !Array.isArray(timeline.tokens) || !timeline.tokens.length) {
-    return apiError(409, "AI_DEMO_TIMELINE_REQUIRED", "当前 AI 示范缺少字符时间戳，不能发布。");
+    return apiError(409, "STANDARD_AUDIO_TIMELINE_REQUIRED", "当前标准 AI 朗诵缺少字符时间戳，不能发布。");
   }
   const existing = await first<Row>(env.DB.prepare("SELECT id FROM publications WHERE slug = ?").bind(work.slug));
   const publicationId = String(existing?.id ?? id("publication"));
@@ -1182,8 +1528,8 @@ async function publishWork(env: Env, workId: string, origin: string) {
             WHEN candidate_state = 'candidate' THEN 'superseded'
             ELSE candidate_state
           END
-        WHERE work_id = ? AND control_spec_version_id = ?`,
-    ).bind(audio.id, workId, work.current_spec_version_id),
+        WHERE work_id = ?`,
+    ).bind(audio.id, workId),
     env.DB.prepare(
       "UPDATE works SET status = 'published', published_revision_id = ?, updated_at = ? WHERE id = ? AND current_spec_version_id = ?",
     ).bind(publicationId, publishedAt, workId, work.current_spec_version_id),
@@ -1238,6 +1584,11 @@ async function api(request: Request, env: Env): Promise<Response | null> {
         && env.ANALYSIS_CALLBACK_TOKEN
         && handoffSecret(env),
       ),
+      voice_changer: {
+        configured: Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID),
+        model_id: VOICE_CHANGER_MODEL_ID,
+        voice_id_configured: Boolean(env.ELEVENLABS_VOICE_ID),
+      },
       eleven_tts_configured: Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID),
     });
   }

@@ -10,6 +10,7 @@
 type WorkStatus =
   | "draft"
   | "analyzing"
+  | "analysis_ready"
   | "review"
   | "audio_ready"
   | "published";
@@ -23,9 +24,13 @@ interface Work {
   language: "zh-CN";
   sourceText: string;
   status: WorkStatus;
+  audioSyncStatus: "pending" | "synced" | "modified";
   currentSpecVersionId?: string;
   publishedRevisionId?: string;
   referenceAudio?: AudioTrack;
+  referenceAudioOriginal?: AudioTrack;
+  standardAiAudio?: AudioTrack;
+  // 旧作品兼容字段；新作品指向 standardAiAudio。
   aiDemoAudio?: AudioTrack;
   controlSpec?: ControlSpec;
   createdAt: string;
@@ -35,11 +40,15 @@ interface Work {
 
 ### Asset（素材）
 
-当前单人版只把 AI 示范音频作为在线资产；参考朗诵保留在本地分析工具中，不上传网站。在线音频字节存 R2，元数据存 D1。正文以 `Work.sourceText` 为唯一作品输入，不在当前创建流程重复上传文稿文件。
+真人原始参考朗诵和 Voice Changer 生成的标准 AI 音频都保存到 R2；D1 保存素材元数据与来源关系。正文以 `Work.sourceText` 为唯一作品输入。
 
 ```ts
 type AssetKind =
-  | "ai_demo_audio";
+  | "reference_audio"
+  | "standard_ai_audio"
+  | "reference_audio_archived"
+  | "standard_ai_audio_archived"
+  | "ai_demo_audio"; // 旧作品兼容
 
 interface Asset {
   id: string;
@@ -51,6 +60,8 @@ interface Asset {
   byteSize: number;
   durationMs?: number;
   checksum: string;
+  sourceAssetId?: string;
+  metadataJson?: string;
   provider?: "upload" | "eleven" | "fish" | "qwen" | "demo";
   createdAt: string;
 }
@@ -200,6 +211,9 @@ interface FocusTarget {
 ```ts
 interface AnalysisProvenance {
   referenceAudioAssetId?: string;
+  referenceAudioOriginalAssetId?: string;
+  standardAiAudioAssetId?: string;
+  analyzedAudioRole?: "reference_audio" | "standard_ai_audio";
   knowledgeAssetIds: string[];
   knowledgeBase?: {
     id: string;
@@ -224,14 +238,14 @@ interface ValidationResult {
 }
 ```
 
-所有 AI 结果必须能追溯到参考音频、系统知识库、模型和流水线版本；当前默认知识库为 `system-recitation-kb` v1.0。人工修改生成新控制谱版本，不覆盖历史版本。
+所有 AI 结果必须能追溯到原始参考音频、真正被分析的标准 AI 音频、系统知识库、模型和流水线版本。人工修改生成新控制谱版本，不覆盖历史版本，并把 `audioSyncStatus` 从 `synced` 改为 `modified`。
 
-## 6. 两条音轨与独立时间轴
+## 6. 两条音轨与同源标准时间轴
 
 ```ts
 interface AudioTrack {
   id: string;
-  kind: "reference" | "ai_demo";
+  kind: "reference" | "reference_original" | "standard_ai" | "ai_demo";
   url: string;
   filename: string;
   durationMs: number;
@@ -257,7 +271,7 @@ interface AudioTimeline {
 }
 ```
 
-参考朗诵的字符时间轴由本地分析工具保存进分析包，用于解释声音事实；AI 示范时间轴来自最终 TTS 结果，负责观看端跳转和高亮。两者始终是不同来源，网站不会把本地参考音频伪装成 AI 示范。
+`reference_audio_original` 只保留真人来源证据。`standard_ai_audio` 经 Forced Alignment 生成字符/词时间戳，Parselmouth、DeepSeek、图谱播放器和观看端全部使用这条音频及同一时间轴。旧 `ai_demo_audio` 只为已存在的作品兼容保留，不参与新作品主链。
 
 ## 7. 渲染对齐约束
 

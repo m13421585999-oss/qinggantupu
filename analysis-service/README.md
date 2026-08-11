@@ -1,6 +1,6 @@
 # 声图云端朗诵分析服务
 
-这个 FastAPI 服务只处理一条真实链路：当前作品正文和 R2 参考音频 → ElevenLabs Forced Alignment → FFmpeg/Praat-Parselmouth 声学证据 → 内置《朗诵表达分析规则 v1.0》+ LLM → 当前作品 `control_spec`。
+这个 FastAPI 服务只处理一条正式链路：当前作品正文和 R2 `standard_ai_audio` → ElevenLabs Forced Alignment → FFmpeg/Praat-Parselmouth 声学证据 → 内置《朗诵表达分析规则 v1.0》+ DeepSeek → 当前作品 `control_spec`。真人原始参考音频只作为来源证据保留，不进入新任务的对齐或声学分析。
 
 任何步骤失败都会通过回调把任务标为 `failed`，绝不返回 Demo 控制谱。
 
@@ -11,7 +11,7 @@
 
 Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `BackgroundTasks`。因此 `/v1/jobs` 会保持请求，直到分析完成并把 `succeeded` 或 `failed` 终态回调给网站；网站 Worker 也会在同一次创建任务请求中等待这一终态，不再依赖只有短暂续命窗口的 `waitUntil`。`vercel.json` 把函数最长执行时间设为 300 秒。
 
-如果分析服务返回时网站仍未收到终态回调，任务会明确标为 `failed`；超过 7 分钟仍停留在 `queued` / `processing` 的中断任务，也会在下一次读取或重试时自动收敛为失败，避免永久卡住。
+如果分析服务返回时网站仍未收到终态回调，任务会明确标为 `failed`；超过 12 分钟仍停留在 `queued` / `processing` 的中断任务，也会在下一次读取或重试时自动收敛为失败，避免永久卡住。
 
 所有中间音频只写入系统临时目录，函数结束后自动删除。运行时优先使用系统 `ffmpeg`，找不到时自动使用 `imageio-ffmpeg` 随包二进制。
 

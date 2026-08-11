@@ -36,10 +36,10 @@ const workflowSteps: Array<{
   title: string;
   subtitle: string;
 }> = [
-  { id: 1, title: "准备作品", subtitle: "正文 · 参考朗诵" },
+  { id: 1, title: "准备作品", subtitle: "正文 · 真人参考朗诵" },
   { id: 2, title: "导入控制谱", subtitle: "失败时的 JSON 兜底" },
   { id: 3, title: "编辑图谱", subtitle: "人工复核 · 单句修正" },
-  { id: 4, title: "生成示范", subtitle: "Eleven v3 · 时间戳" },
+  { id: 4, title: "核对示范", subtitle: "同源标准声音 · 时间戳" },
   { id: 5, title: "预览发布", subtitle: "观看端 · 同步高亮" },
 ];
 
@@ -115,7 +115,7 @@ function activeTokenAt(timeline: AudioTimeline | undefined, currentMs: number) {
 }
 
 function highestAvailableStep(work: RecitationWork): WorkflowStep {
-  if (work.aiDemoAudio?.timeline && work.controlSpec) return 5;
+  if ((work.standardAiAudio ?? work.aiDemoAudio)?.timeline && work.controlSpec) return 5;
   if (work.controlSpec) return 4;
   if (!work.id.startsWith("draft-")) return 2;
   return 1;
@@ -148,6 +148,7 @@ function createEmptyWork(): RecitationWork {
     language: "zh-CN",
     sourceText: "",
     status: "draft",
+    audioSyncStatus: "pending",
     createdAt,
     updatedAt: createdAt,
   };
@@ -196,7 +197,7 @@ function analysisErrorMessage(error: AnalysisJobPayload["error"]) {
   if (error && typeof error === "object" && typeof error.message === "string") {
     return error.message;
   }
-  return "参考朗诵分析失败。";
+  return "标准 AI 朗诵分析失败。";
 }
 
 interface CurveMetrics {
@@ -660,13 +661,13 @@ function ReferenceAudioPanel({
     <div className="paper-card reference-audio-card">
       <div className="card-title-row compact-title-row">
         <div>
-          <p className="eyebrow">参考朗诵</p>
-          <h2>真实声音依据</h2>
+          <p className="eyebrow">真人参考朗诵</p>
+          <h2>保留原始来源证据</h2>
         </div>
         <span className="secure-note">仅创作端可见</span>
       </div>
       <p className="reference-explainer">
-        上传与正文逐字对应的优质朗诵。点击解析后，音频会真实保存并进入声音分析任务。
+        上传与正文逐字对应的优质朗诵。系统先用 Voice Changer 统一音色，再分析并播放同一条标准 AI 声音。
       </p>
       {audio ? (
         <div className="reference-audio-ready">
@@ -777,8 +778,8 @@ function Player({
         <div className="player-now">
           <span>
             {compact
-              ? `AI 示范 · ${title}`
-              : `${source === "reference" ? "参考朗诵" : "AI 示范"}${activeSentence ? ` · 第 ${activeSentence.order} 句` : ""}`}
+              ? `标准 AI 朗诵 · ${title}`
+              : `${source === "reference" ? "真人原始朗诵" : "标准 AI 朗诵"}${activeSentence ? ` · 第 ${activeSentence.order} 句` : ""}`}
           </span>
           <strong>{activeSentence?.text ?? track.filename}</strong>
         </div>
@@ -806,14 +807,14 @@ function Player({
               className={source === "reference" ? "active" : ""}
               onClick={() => onSourceChange("reference")}
             >
-              参考
+              真人原声
             </button>
             <button
               type="button"
               className={source === "ai_demo" ? "active" : ""}
               onClick={() => onSourceChange("ai_demo")}
             >
-              AI 示范
+              标准 AI
             </button>
           </div>
         ) : null}
@@ -867,8 +868,8 @@ function WorkflowRail({
       <div className="rail-note">
         <span aria-hidden="true">◎</span>
         <p>
-          <strong>真实声音分析</strong>
-          新正文只会使用本次上传的参考朗诵生成控制谱；失败时不会回退固定示例。
+          <strong>声音与图谱同源</strong>
+          新作品先转换为标准 AI 声音；时间戳、声学事实、控制谱和最终播放都使用这同一条音频。
         </p>
       </div>
     </nav>
@@ -905,7 +906,7 @@ function MaterialStage({
           <p className="eyebrow">01 · 准备作品</p>
           <h1>把一段好朗诵，变成一张能听的声音地图</h1>
           <p className="stage-lead">
-            填写准确正文并上传对应参考朗诵。点击解析后，系统会保存素材并执行真实文字对齐、声学分析和控制谱生成。
+            填写准确正文并上传对应真人朗诵。系统会先生成统一音色的标准 AI 朗诵，再对它执行文字对齐、声学分析和控制谱生成。
           </p>
         </div>
         <span className="version-chip">控制谱 v2.0</span>
@@ -967,16 +968,16 @@ function MaterialStage({
               <span>声</span>
             </div>
             <div className="analysis-copy">
-              <p className="eyebrow">参考朗诵解析</p>
+              <p className="eyebrow">标准声音生成与解析</p>
               <h3>{analysisStatus}</h3>
               <p>
                 {jobStatus === "queued"
-                  ? "音频和正文已经保存，等待分析服务接单。"
+                  ? "真人原声和正文已经保存，正在生成标准 AI 声音并等待分析服务。"
                   : jobStatus === "processing"
-                    ? "正在提取字符时间戳、停顿、时值、音高和能量，并生成当前正文的控制谱。"
+                    ? "正在分析标准 AI 声音的字符时间戳、停顿、时值、音高和能量，并生成控制谱。"
                     : jobStatus === "failed"
                       ? "本次没有生成控制谱。你可以重新解析，或使用下方的手动 JSON 导入兜底。"
-                      : "参考朗诵是控制谱的真实声音依据，不会仅根据正文伪造标准图谱。"}
+                      : "标准 AI 声音既是控制谱的分析对象，也是最终播放给用户的示范声音。"}
               </p>
             </div>
             <button
@@ -987,15 +988,15 @@ function MaterialStage({
             >
               {isAnalyzing ? <span className="button-spinner" /> : <span aria-hidden="true">✦</span>}
               {isAnalyzing
-                ? "解析中"
+                ? "正在生成并解析"
                 : jobStatus === "failed" || jobStatus === "succeeded"
-                  ? "重新解析参考朗诵"
-                  : "解析参考朗诵"}
+                  ? "重新生成标准声音并解析"
+                  : "生成标准 AI 声音并解析"}
             </button>
           </div>
           {!work.referenceAudio ? (
             <p className="analysis-requirement" role="status">
-              请先上传参考朗诵，系统将根据实际声音表现生成情感图谱。
+              请先上传真人参考朗诵，系统将先统一音色，再根据标准 AI 声音生成情感图谱。
             </p>
           ) : !hasWorkInfo ? (
             <p className="analysis-requirement" role="status">
@@ -1733,34 +1734,43 @@ function AudioStage({
 }) {
   const spec = work.controlSpec;
   if (!spec) return null;
-  const reference = work.referenceAudio;
-  const aiDemo = work.aiDemoAudio;
+  const reference = work.referenceAudioOriginal ?? work.referenceAudio;
+  const standardAudio = work.standardAiAudio;
+  const legacyDemo = !standardAudio && work.aiDemoAudio?.kind === "ai_demo"
+    ? work.aiDemoAudio
+    : undefined;
+  const playback = standardAudio ?? legacyDemo;
+  const isSynced = work.audioSyncStatus === "synced";
   return (
     <section className="stage audio-stage">
       <div className="stage-heading">
         <div>
           <p className="eyebrow">04 · 示范声音</p>
-          <h1>根据确认后的图谱，生成 AI 标准朗诵</h1>
+          <h1>{standardAudio ? "核对与图谱同源的标准 AI 朗诵" : "旧作品示范声音兼容入口"}</h1>
           <p className="stage-lead">
-            这一步读取已经确认的控制谱，单独生成 AI 示范音频及其字符时间轴。参考朗诵仍作为原始分析依据保留。
+            {standardAudio
+              ? "这条声音由真人参考朗诵经 Voice Changer 生成；Forced Alignment、Parselmouth、控制谱和播放器都使用它。"
+              : "这篇旧作品还没有同源标准声音，可暂时使用原有 Eleven v3 示范流程；新作品不会走这条旧链路。"}
           </p>
         </div>
-        <span className="provider-chip">图谱版本 v{spec.version}</span>
+        <span className={`provider-chip ${isSynced ? "ready" : ""}`}>
+          {isSynced ? "声音与图谱同步" : work.audioSyncStatus === "modified" ? "图谱已人工修改" : `图谱版本 v${spec.version}`}
+        </span>
       </div>
 
-      <div className="audio-source-compare" aria-label="参考朗诵和 AI 示范">
+      <div className="audio-source-compare" aria-label="真人参考朗诵和标准 AI 朗诵">
         <div className="paper-card audio-source-card source-reference">
-          <span className="source-kicker">分析依据</span>
-          <strong>参考朗诵</strong>
+          <span className="source-kicker">原始来源证据</span>
+          <strong>真人参考朗诵</strong>
           <p>{reference?.filename ?? "未提供"}</p>
-          <small>{reference ? `${formatTime(reference.durationMs)} · 真人原始声音` : "控制谱来自手动导入"}</small>
+          <small>{reference ? `${formatTime(reference.durationMs)} · 原始声音已保留` : "控制谱来自手动导入"}</small>
         </div>
         <span className="source-arrow" aria-hidden="true">→</span>
-        <div className={`paper-card audio-source-card source-ai ${aiDemo ? "ready" : ""}`}>
-          <span className="source-kicker">最终成品</span>
-          <strong>AI 示范</strong>
-          <p>{aiDemo?.filename ?? "等待生成"}</p>
-          <small>{aiDemo ? `${formatTime(aiDemo.durationMs)} · 字符时间轴已就绪` : "由当前图谱生成"}</small>
+        <div className={`paper-card audio-source-card source-ai ${playback ? "ready" : ""}`}>
+          <span className="source-kicker">分析与播放对象</span>
+          <strong>{standardAudio ? "标准 AI 朗诵" : "旧版 AI 示范"}</strong>
+          <p>{playback?.filename ?? "等待生成"}</p>
+          <small>{playback ? `${formatTime(playback.durationMs)} · 字符时间轴已就绪` : "旧作品可生成兼容示范"}</small>
         </div>
       </div>
 
@@ -1768,11 +1778,11 @@ function AudioStage({
         <div className="paper-card generation-card">
           <div className="card-title-row">
             <div>
-              <p className="eyebrow">当前生成版本</p>
-              <h2>AI 标准朗诵</h2>
+              <p className="eyebrow">当前标准声音</p>
+              <h2>{standardAudio ? "同源标准 AI 朗诵" : "旧版 AI 示范"}</h2>
             </div>
-            <span className={`status-pill ${aiDemo ? "ready" : ""}`}>
-              {aiDemo ? "已生成" : "待生成"}
+            <span className={`status-pill ${playback ? "ready" : ""}`}>
+              {playback ? "已就绪" : "待生成"}
             </span>
           </div>
 
@@ -1782,7 +1792,7 @@ function AudioStage({
             ))}
           </div>
           <div className="audio-metadata">
-            <span>{aiDemo ? formatTime(aiDemo.durationMs) : "时长生成后确定"}</span>
+            <span>{playback ? formatTime(playback.durationMs) : "时长生成后确定"}</span>
             <span>中文普通话</span>
             <span>{spec.sentences.length} 个图谱句</span>
             <span>字符级时间轴</span>
@@ -1796,19 +1806,27 @@ function AudioStage({
               disabled={isGenerating}
             >
               {isGenerating ? <span className="button-spinner" /> : <span aria-hidden="true">✦</span>}
-              {isGenerating ? "正在生成声音与时间轴" : aiDemo ? "重新生成 AI 示范" : "生成 AI 示范"}
+              {standardAudio
+                ? "试听标准 AI 朗诵"
+                : isGenerating ? "正在生成旧版示范" : legacyDemo ? "重新生成旧版示范" : "生成旧版兼容示范"}
             </button>
-            <button
-              type="button"
-              className="secondary-button prompt-debug-button"
-              onClick={onViewPrompt}
-              disabled={isPromptDebugLoading}
-            >
-              {isPromptDebugLoading ? "正在读取" : "查看 Eleven 最终提示词"}
-            </button>
+            {!standardAudio ? (
+              <button
+                type="button"
+                className="secondary-button prompt-debug-button"
+                onClick={onViewPrompt}
+                disabled={isPromptDebugLoading}
+              >
+                {isPromptDebugLoading ? "正在读取" : "查看旧版 Eleven 提示词"}
+              </button>
+            ) : null}
           </div>
           <p className="demo-disclaimer">
-            正式调用 Eleven v3 TTS with timestamps；生成失败会显示错误，不会使用占位音频。
+            {standardAudio
+              ? isSynced
+                ? "当前图谱由这条声音分析得到，播放与逐字高亮使用同一时间轴。"
+                : "你已经人工修改图谱，标准声音仍可播放，但可能不再完全对应最新图谱。"
+              : "仅用于旧作品兼容；新作品统一使用 Voice Changer 生成的同源标准声音。"}
           </p>
         </div>
       </div>
@@ -1818,18 +1836,20 @@ function AudioStage({
         <button
           type="button"
           className="primary-button"
-          disabled={!aiDemo?.timeline}
+          disabled={!playback?.timeline}
           onClick={onContinue}
         >
           进入发布预览 <span aria-hidden="true">→</span>
         </button>
       </div>
 
-      <ElevenPromptDebugDrawer
-        debug={promptDebug}
-        onClose={onClosePrompt}
-        onCopy={onCopyPrompt}
-      />
+      {!standardAudio ? (
+        <ElevenPromptDebugDrawer
+          debug={promptDebug}
+          onClose={onClosePrompt}
+          onCopy={onCopyPrompt}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1846,8 +1866,8 @@ function PublishStage({
   onPublish: () => void;
 }) {
   const spec = work.controlSpec;
-  const aiDemo = work.aiDemoAudio;
-  if (!spec || !aiDemo) return null;
+  const standardAudio = work.standardAiAudio ?? work.aiDemoAudio;
+  if (!spec || !standardAudio) return null;
   return (
     <section className="stage publish-stage">
       <div className="stage-heading">
@@ -1855,7 +1875,7 @@ function PublishStage({
           <p className="eyebrow">05 · 发布作品</p>
           <h1>把创作参数收起来，只把“看得懂、听得到”交给用户</h1>
           <p className="stage-lead">
-            发布会冻结当前控制谱、示范音频和时间轴。后续修改草稿，不会改变已经分享的版本。
+            发布会冻结当前控制谱、标准 AI 音频和时间轴。后续修改草稿，不会改变已经分享的版本。
           </p>
         </div>
         <span className="ready-badge"><i /> 准备发布</span>
@@ -1889,8 +1909,12 @@ function PublishStage({
           {[
             ["正文与控制谱一致", "导入时已逐字校验"],
             ["控制谱无阻塞错误", `${spec.sentences.length} 个图谱句`],
-            ["AI 示范可播放", aiDemo.label],
+            ["标准 AI 朗诵可播放", standardAudio.label],
             ["字符时间轴完整", "逐字高亮已就绪"],
+            [
+              "声音与图谱关系已标明",
+              work.audioSyncStatus === "synced" ? "当前完全同源" : "图谱已修改，声音可能存在差异",
+            ],
           ].map(([title, detail]) => (
             <div className="check-row" key={title}>
               <span>✓</span>
@@ -2077,20 +2101,20 @@ function ViewerView({
   onSeekSentence: (sentence: RecitationSentence) => void;
 }) {
   const spec = work.controlSpec;
-  const aiDemo = work.aiDemoAudio;
-  if (!spec || !aiDemo?.timeline) {
+  const standardAudio = work.standardAiAudio ?? work.aiDemoAudio;
+  if (!spec || !standardAudio?.timeline) {
     return (
       <div className="viewer-shell viewer-empty-shell">
         <section className="viewer-empty">
           <span aria-hidden="true">声</span>
           <p className="eyebrow">用户观看端</p>
-          <h1>作品还没有可播放的 AI 示范</h1>
-          <p>请先在创作端解析参考朗诵、确认情感图谱并生成 AI 示范。</p>
+          <h1>作品还没有可播放的标准 AI 朗诵</h1>
+          <p>请先在创作端生成标准 AI 声音、完成解析并确认情感图谱。</p>
         </section>
       </div>
     );
   }
-  const active = activeSentenceAt(spec.sentences, aiDemo.timeline, currentMs);
+  const active = activeSentenceAt(spec.sentences, standardAudio.timeline, currentMs);
 
   return (
     <div className="viewer-shell">
@@ -2111,7 +2135,7 @@ function ViewerView({
               <span>{isPlaying ? "Ⅱ" : "▶"}</span>
               <div>
                 <strong>{isPlaying ? "暂停示范" : "播放整篇"}</strong>
-                <small>{formatTime(aiDemo.durationMs)} · AI 示范 · 逐字跟随</small>
+                <small>{formatTime(standardAudio.durationMs)} · 标准 AI 朗诵 · 逐字跟随</small>
               </div>
             </button>
           </div>
@@ -2173,7 +2197,8 @@ export function RecitationStudio() {
   const [segmentEndMs, setSegmentEndMs] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const activeTrack = audioSource === "reference" ? work.referenceAudio : work.aiDemoAudio;
+  const standardPlayback = work.standardAiAudio ?? work.aiDemoAudio;
+  const activeTrack = audioSource === "reference" ? work.referenceAudio : standardPlayback;
   const analysisInFlight = analysisJobStatus === "queued" || analysisJobStatus === "processing";
   const highestStep = isWorkDirty || analysisInFlight ? 1 : highestAvailableStep(work);
 
@@ -2198,12 +2223,16 @@ export function RecitationStudio() {
           setMode("viewer");
           setAudioSource("ai_demo");
         } else if (stored.controlSpec) {
-          setStep(stored.aiDemoAudio ? 5 : 3);
-          setAudioSource(stored.aiDemoAudio ? "ai_demo" : "reference");
+          setStep(3);
+          setAudioSource((stored.standardAiAudio ?? stored.aiDemoAudio)?.timeline ? "ai_demo" : "reference");
         } else {
           setStep(1);
           setAudioSource("reference");
-          setAnalysisStatus(stored.referenceAudio ? "参考朗诵已保存，可以开始解析" : "等待参考朗诵");
+          setAnalysisStatus(
+            stored.standardAiAudio
+              ? "标准 AI 声音已生成，等待完成分析"
+              : stored.referenceAudio ? "真人参考朗诵已保存，可以开始生成与解析" : "等待参考朗诵",
+          );
         }
       })
       .catch((error) => !cancelled && showToast(error instanceof Error ? error.message : String(error)));
@@ -2286,9 +2315,9 @@ export function RecitationStudio() {
     setStep(next);
     setEditingSentenceId(null);
     if (next <= 3) {
-      setAudioSource(work.referenceAudio ? "reference" : work.aiDemoAudio ? "ai_demo" : "reference");
+      setAudioSource(work.controlSpec && standardPlayback?.timeline ? "ai_demo" : "reference");
     }
-    if (next >= 4 && work.aiDemoAudio) setAudioSource("ai_demo");
+    if (next >= 4 && standardPlayback) setAudioSource("ai_demo");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -2307,12 +2336,18 @@ export function RecitationStudio() {
       [field]: value,
       ...(sourceChanged ? {
         status: "draft" as const,
+        audioSyncStatus: "pending" as const,
         referenceAudio: current.referenceAudio?.url.startsWith("blob:")
           ? { ...current.referenceAudio, timeline: undefined }
+          : undefined,
+        referenceAudioOriginal: current.referenceAudio?.url.startsWith("blob:")
+          ? current.referenceAudioOriginal
           : undefined,
         controlSpec: undefined,
         currentSpecVersionId: undefined,
         aiDemoAudio: undefined,
+        standardAiAudio: undefined,
+        analysisPackage: undefined,
       } : {}),
       updatedAt: new Date().toISOString(),
     }));
@@ -2335,6 +2370,7 @@ export function RecitationStudio() {
       setWork((current) => ({
         ...current,
         status: "draft",
+        audioSyncStatus: "pending",
         referenceAudio: {
           id: `local-${crypto.randomUUID()}`,
           kind: "reference",
@@ -2345,14 +2381,17 @@ export function RecitationStudio() {
           provider: "upload",
           label: "待上传的优质参考朗诵",
         },
+        referenceAudioOriginal: undefined,
         controlSpec: undefined,
         currentSpecVersionId: undefined,
         aiDemoAudio: undefined,
+        standardAiAudio: undefined,
+        analysisPackage: undefined,
         updatedAt: new Date().toISOString(),
       }));
       setStep(1);
       setAudioSource("reference");
-      showToast(`${file.name} 已就绪；点击“解析参考朗诵”后会真实上传`);
+      showToast(`${file.name} 已就绪；点击“生成标准 AI 声音并解析”后会真实上传`);
     } catch {
       URL.revokeObjectURL(url);
       showToast("无法读取这段音频，请换用 WAV、M4A 或 MP3 文件");
@@ -2369,10 +2408,14 @@ export function RecitationStudio() {
     setWork((current) => ({
       ...current,
       status: "draft",
+      audioSyncStatus: "pending",
       referenceAudio: undefined,
+      referenceAudioOriginal: undefined,
       controlSpec: undefined,
       currentSpecVersionId: undefined,
       aiDemoAudio: undefined,
+      standardAiAudio: undefined,
+      analysisPackage: undefined,
       updatedAt: new Date().toISOString(),
     }));
     setStep(1);
@@ -2396,10 +2439,14 @@ export function RecitationStudio() {
     );
     setWork((current) => ({
       ...result.work,
-      referenceAudio: current.referenceAudio ?? result.work.referenceAudio,
-      controlSpec: current.controlSpec,
-      currentSpecVersionId: current.currentSpecVersionId,
-      aiDemoAudio: current.aiDemoAudio,
+      referenceAudio: current.referenceAudio?.url.startsWith("blob:")
+        ? current.referenceAudio
+        : result.work.referenceAudio,
+      referenceAudioOriginal: result.work.referenceAudioOriginal,
+      controlSpec: result.work.controlSpec ?? current.controlSpec,
+      currentSpecVersionId: result.work.currentSpecVersionId ?? current.currentSpecVersionId,
+      aiDemoAudio: result.work.aiDemoAudio,
+      standardAiAudio: result.work.standardAiAudio,
     }));
     setIsWorkDirty(false);
     const url = new URL(window.location.href);
@@ -2426,7 +2473,7 @@ export function RecitationStudio() {
     if (!work.title.trim() || !work.sourceText.trim()) { showToast("请先填写作品名称和完整正文"); return; }
     if (!work.referenceAudio) { showToast("请先上传参考朗诵"); return; }
     setAnalysisJobStatus("queued");
-    setAnalysisStatus("正在保存作品与参考音频");
+    setAnalysisStatus("正在保存作品与真人参考音频");
     try {
       let saved = await persistWorkRecord();
       if (!saved) throw new Error("作品正文保存失败。");
@@ -2469,7 +2516,7 @@ export function RecitationStudio() {
       );
       if (!created.analysis_job_id) throw new Error("分析任务创建失败：服务端没有返回任务编号。");
       setWork((current) => ({ ...current, analysisJobId: created.analysis_job_id, status: "analyzing" }));
-      setAnalysisStatus("已进入分析队列");
+      setAnalysisStatus("标准 AI 声音已生成，已进入分析队列");
 
       const deadline = Date.now() + 20 * 60 * 1000;
       while (Date.now() < deadline) {
@@ -2484,7 +2531,7 @@ export function RecitationStudio() {
         if (job.status === "queued") {
           setAnalysisStatus(`等待分析服务${progress}`);
         } else if (job.status === "processing") {
-          setAnalysisStatus(`正在分析参考朗诵${progress}`);
+          setAnalysisStatus(`正在分析标准 AI 朗诵${progress}`);
         } else if (job.status === "failed") {
           throw new Error(analysisErrorMessage(job.error));
         } else if (job.status === "succeeded") {
@@ -2495,7 +2542,13 @@ export function RecitationStudio() {
             )).work;
           }
           if (!completedWork.controlSpec && job.control_spec) {
-            const controlSpec = importControlSpec(job.control_spec, work.sourceText, saved.id, completedWork.referenceAudio?.id);
+            const controlSpec = importControlSpec(
+              job.control_spec,
+              work.sourceText,
+              saved.id,
+              completedWork.standardAiAudio?.id ?? completedWork.referenceAudio?.id,
+              completedWork.referenceAudioOriginal?.id,
+            );
             completedWork = (await apiJson<{ work: RecitationWork }>(
               await fetch(`/api/works/${encodeURIComponent(saved.id)}/control-spec`, {
                 method: "PATCH",
@@ -2510,11 +2563,11 @@ export function RecitationStudio() {
           setWork(completedWork);
           setIsWorkDirty(false);
           setAnalysisJobStatus("succeeded");
-          setAnalysisStatus("参考朗诵解析完成");
-          setAudioSource("reference");
+          setAnalysisStatus("标准 AI 朗诵解析完成，声音与图谱同源");
+          setAudioSource("ai_demo");
           setStep(3);
           window.scrollTo({ top: 0, behavior: "smooth" });
-          showToast(`真实控制谱已生成：${completedWork.controlSpec.sentences.length} 句`);
+          showToast(`同源控制谱已生成：${completedWork.controlSpec.sentences.length} 句`);
           return;
         }
         await new Promise((resolve) => window.setTimeout(resolve, 1600));
@@ -2531,7 +2584,13 @@ export function RecitationStudio() {
 
   const handleImportControlSpec = async (jsonText: string) => {
     const parsed = parseControlSpecText(jsonText);
-    const controlSpec = importControlSpec(parsed, work.sourceText, work.id, work.referenceAudio?.id);
+    const controlSpec = importControlSpec(
+      parsed,
+      work.sourceText,
+      work.id,
+      work.standardAiAudio?.id ?? work.referenceAudio?.id,
+      work.referenceAudioOriginal?.id,
+    );
     const result = await apiJson<{ work: RecitationWork; control_spec: ControlSpec }>(
       await fetch(`/api/works/${encodeURIComponent(work.id)}/control-spec`, {
         method: "PATCH",
@@ -2540,7 +2599,7 @@ export function RecitationStudio() {
       }),
     );
     setWork(result.work);
-    setAudioSource("reference");
+    setAudioSource(result.work.standardAiAudio?.timeline ? "ai_demo" : "reference");
     setStep(3);
     window.scrollTo({ top: 0, behavior: "smooth" });
     showToast(`控制谱已校验并保存：${result.control_spec.sentences.length} 句`);
@@ -2565,9 +2624,14 @@ export function RecitationStudio() {
       source: "hybrid",
       sentences: work.controlSpec.sentences.map((sentence) => sentence.id === nextSentence.id ? nextSentence : sentence),
     };
-    setWork((current) => ({ ...current, status: "review", controlSpec: nextSpec, aiDemoAudio: undefined }));
+    setWork((current) => ({
+      ...current,
+      status: "review",
+      audioSyncStatus: current.standardAiAudio ? "modified" : "pending",
+      controlSpec: nextSpec,
+    }));
     setEditingSentenceId(null);
-    setAudioSource("reference");
+    setAudioSource(work.standardAiAudio?.timeline ? "ai_demo" : "reference");
     try {
       await persistControlSpec(nextSpec, `第 ${nextSentence.order} 句图谱已保存`);
     } catch (error) {
@@ -2618,7 +2682,7 @@ export function RecitationStudio() {
   };
 
   const changeAudioSource = (source: AudioSource) => {
-    const nextTrack = source === "reference" ? work.referenceAudio : work.aiDemoAudio;
+    const nextTrack = source === "reference" ? work.referenceAudio : standardPlayback;
     if (nextTrack) setAudioSource(source);
   };
 
@@ -2653,6 +2717,20 @@ export function RecitationStudio() {
   const handleGenerate = async () => {
     if (isGenerating) return;
     if (!work.controlSpec) { showToast("请先导入并确认情感图谱"); return; }
+    if (work.standardAiAudio?.timeline) {
+      setAudioSource("ai_demo");
+      setSegmentEndMs(null);
+      window.setTimeout(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        if (audio.currentTime * 1000 >= work.standardAiAudio!.durationMs - 100) {
+          audio.currentTime = 0;
+          setCurrentMs(0);
+        }
+        void audio.play().catch(() => showToast("浏览器暂时无法播放，请再点一次试听"));
+      }, 0);
+      return;
+    }
     setIsGenerating(true);
     try {
       const result = await apiJson<{ work: RecitationWork }>(
@@ -2661,7 +2739,7 @@ export function RecitationStudio() {
       setWork(result.work);
       setPromptDebug(null);
       setAudioSource("ai_demo");
-      showToast("Eleven v3 AI 示范与真实字符时间戳已保存");
+      showToast("旧版 Eleven v3 示范与字符时间戳已保存");
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -2686,7 +2764,7 @@ export function RecitationStudio() {
 
   const sentences = work.controlSpec?.sentences ?? [];
   const showPlayer = Boolean(
-    activeTrack?.timeline && work.controlSpec && (mode === "viewer" || step >= 3),
+    standardPlayback?.timeline && work.controlSpec && (mode === "viewer" || step >= 3),
   );
 
   return (
@@ -2709,12 +2787,15 @@ export function RecitationStudio() {
           <button
             type="button"
             className={mode === "studio" ? "active" : ""}
-            onClick={() => { setMode("studio"); if (step <= 3 || !work.aiDemoAudio) setAudioSource("reference"); }}
+            onClick={() => {
+              setMode("studio");
+              setAudioSource(work.controlSpec && standardPlayback?.timeline ? "ai_demo" : "reference");
+            }}
           ><span aria-hidden="true">✦</span> 创作端</button>
           <button
             type="button"
             className={mode === "viewer" ? "active" : ""}
-            disabled={!work.aiDemoAudio?.timeline}
+            disabled={!standardPlayback?.timeline}
             onClick={() => { setAudioSource("ai_demo"); setMode("viewer"); }}
           ><span aria-hidden="true">◉</span> 用户观看端</button>
         </nav>
@@ -2786,8 +2867,8 @@ export function RecitationStudio() {
           onSeek={seek}
           onRateChange={changeRate}
           onSourceChange={mode === "studio" ? changeAudioSource : undefined}
-          hasReference={Boolean(work.referenceAudio?.timeline)}
-          hasAiDemo={Boolean(work.aiDemoAudio?.timeline)}
+          hasReference={Boolean(work.referenceAudio)}
+          hasAiDemo={Boolean(standardPlayback?.timeline)}
           compact={mode === "viewer"}
         />
       ) : null}
