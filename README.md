@@ -20,21 +20,81 @@
 - `analysis-service/`：云端 FastAPI 分析服务。
 - `db/`、`drizzle/`：D1 结构与迁移。
 
-## 本地验证
+## 本地启动
 
-需要 Node.js 22.13+ 与 Python 3.12：
+### 环境要求
+
+- Node.js 22.13 或更高版本；
+- Python 3.12；
+- FFmpeg（建议安装；服务找不到系统 FFmpeg 时会使用随包版本）。
+
+### 1. 启动网站
+
+在项目根目录安装依赖并创建本地环境文件：
 
 ```text
-npm install
+npm ci
+cp .dev.vars.example .dev.vars
+```
+
+编辑 `.dev.vars`，填写本机使用的服务端配置。其中：
+
+- `ANALYSIS_SERVICE_URL` 本地默认可设为 `http://127.0.0.1:8000`；
+- `ANALYSIS_SERVICE_TOKEN` 和 `ANALYSIS_CALLBACK_TOKEN` 必须与分析服务中的值完全一致；
+- `ELEVENLABS_API_KEY` 和 `ELEVENLABS_VOICE_ID` 只用于服务端。
+
+然后启动网站：
+
+```text
+npm run dev
+```
+
+终端会显示本地访问地址。
+
+### 2. 启动分析服务
+
+另开一个终端：
+
+```text
+cd analysis-service
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+cp .env.example .env
+```
+
+编辑 `analysis-service/.env`，至少配置 ElevenLabs、DeepSeek 以及两项服务通信 token。加载环境变量并启动 FastAPI：
+
+```text
+set -a
+source .env
+set +a
+PYTHONPATH=. .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+可访问 `http://127.0.0.1:8000/health` 检查服务配置是否齐全；该接口不会返回 Secret 内容。
+
+## 验证
+
+在项目根目录运行网站检查：
+
+```text
 npm run build
 npm run lint
 npx tsc --noEmit
 npm test
+```
 
+运行分析服务测试：
+
+```text
 PYTHONPATH=analysis-service analysis-service/.venv/bin/python -m pytest analysis-service/tests
 ```
 
 数据结构变更后运行 `npm run db:generate` 并提交生成的迁移。
+
+## 密钥安全
+
+`.dev.vars`、`analysis-service/.env`、API Key、访问令牌和其他 Secret 不得提交到 Git。仓库只保留 `.dev.vars.example` 与 `analysis-service/.env.example` 占位模板；真实值应保存在本地环境或部署平台的 Secret 配置中。
 
 ## 产品文档
 
