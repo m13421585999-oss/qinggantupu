@@ -43,6 +43,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local Sites deployment binding (contains project/resource identifiers)
+.openai/hosting.json
+
 /dist/
 /.wrangler/
 /outputs/
