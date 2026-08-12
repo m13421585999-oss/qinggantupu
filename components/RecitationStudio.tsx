@@ -594,9 +594,9 @@ function IndexedGraphTrack({
   return (
     <div className="graph-track-layout">
       <div className="track-labels" aria-hidden="true">
-        <span>拼音</span>
-        <span className="strong">文稿</span>
-        <span>语势</span>
+        <span><i />拼音</span>
+        <span className="strong"><i />文稿</span>
+        <span><i />语势</span>
       </div>
       <div className="graph-track-viewport">
         <div className="attached-token-track">
@@ -760,6 +760,10 @@ function GraphSentence({
       tabIndex={onSelect ? 0 : undefined}
       aria-label={onSelect ? `选择第 ${sentence.order} 句：${sentence.text}` : undefined}
     >
+      <span className="sentence-card-corner corner-top-left" aria-hidden="true" />
+      <span className="sentence-card-corner corner-top-right" aria-hidden="true" />
+      <span className="sentence-card-corner corner-bottom-left" aria-hidden="true" />
+      <span className="sentence-card-corner corner-bottom-right" aria-hidden="true" />
       <div className="sentence-card-topline">
         <div className="sentence-badges">
           <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
