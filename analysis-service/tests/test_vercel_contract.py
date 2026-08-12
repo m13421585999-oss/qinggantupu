@@ -52,20 +52,29 @@ def test_vercel_configuration_targets_entrypoint_and_portable_duration() -> None
     assert "rewrites" not in configuration
 
 
-def test_settings_fix_deepseek_runtime_and_default_to_high(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settings_fix_deepseek_provider_and_read_configured_model(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
     monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
     monkeypatch.setenv("LLM_BASE_URL", "https://wrong.example/v1")
-    monkeypatch.setenv("LLM_MODEL", "deepseek-chat")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")
 
     settings = Settings.from_environment()
 
     assert settings.llm_api_key == "deepseek-test"
     assert settings.llm_auth_source == "llm_api_key"
     assert settings.llm_base_url == "https://api.deepseek.com"
-    assert settings.llm_model == "deepseek-v4-flash"
+    assert settings.llm_model == "deepseek-v4-pro"
     assert settings.llm_thinking == "enabled"
     assert settings.llm_reasoning_effort == "high"
+
+
+def test_settings_default_to_v4_pro_when_model_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_model == "deepseek-v4-pro"
 
 
 def test_reasoning_effort_can_be_raised_to_max(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,7 +98,7 @@ def test_invalid_reasoning_effort_is_rejected(monkeypatch: pytest.MonkeyPatch) -
 def test_deepseek_uses_json_object_mode() -> None:
     assert _response_format_for_provider(
         base_url="https://api.deepseek.com",
-        model="deepseek-v4-flash",
+        model="deepseek-v4-pro",
         schema={"type": "object"},
     ) == {"type": "json_object"}
 
@@ -117,6 +126,7 @@ def test_health_reports_the_effective_deepseek_configuration(
 ) -> None:
     _base_environment(monkeypatch)
     monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")
 
     result = asyncio.run(health())
 
@@ -124,7 +134,7 @@ def test_health_reports_the_effective_deepseek_configuration(
     assert result["llm"] == {
         "provider": "deepseek",
         "base_url": "https://api.deepseek.com",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-v4-pro",
         "thinking": "enabled",
         "reasoning_effort": "high",
     }
@@ -164,14 +174,14 @@ def test_deepseek_request_enables_thinking_with_configured_effort() -> None:
                 analysis_package=analysis_package,
                 api_key="deepseek-test",
                 base_url="https://api.deepseek.com",
-                model="deepseek-v4-flash",
+                model="deepseek-v4-pro",
                 thinking="enabled",
                 reasoning_effort="high",
                 timeout_seconds=30,
             )
         )
 
-    assert captured["model"] == "deepseek-v4-flash"
+    assert captured["model"] == "deepseek-v4-pro"
     assert captured["thinking"] == {"type": "enabled"}
     assert captured["reasoning_effort"] == "high"
 
@@ -200,7 +210,7 @@ def test_job_request_waits_for_pipeline_instead_of_background_task() -> None:
         analysis_callback_token="callback",
         sites_bypass_token="sites",
         llm_base_url="https://api.deepseek.com",
-        llm_model="deepseek-v4-flash",
+        llm_model="deepseek-v4-pro",
         llm_thinking="enabled",
         llm_reasoning_effort="high",
         request_timeout_seconds=180,

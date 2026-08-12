@@ -26,14 +26,15 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 - `ANALYSIS_CALLBACK_TOKEN`：本服务回调网站的 Bearer token，必须与网站端一致；
 - `SITES_BYPASS_TOKEN`：仅所有者可见的 Sites 跨服务访问 token；
 - `LLM_API_KEY`：DeepSeek 服务端 API Key；
+- `LLM_MODEL`：DeepSeek 模型名，正式环境使用 `deepseek-v4-pro`；
 - `LLM_REASONING_EFFORT`：可选，默认 `high`，复杂作品可临时改为 `max` 后重新分析。
 
-正式版固定使用 DeepSeek 官方 OpenAI 兼容接口，不读取环境变量自动切换 Provider 或模型：
+正式版固定使用 DeepSeek 官方 OpenAI 兼容接口，Provider 与 Base URL 固定，模型从服务端 `LLM_MODEL` 读取：
 
 ```text
 provider=deepseek
 base_url=https://api.deepseek.com
-model=deepseek-v4-flash
+model=deepseek-v4-pro
 thinking=enabled
 reasoning_effort=high
 ```

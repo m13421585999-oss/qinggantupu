@@ -10,9 +10,13 @@ class ConfigurationError(RuntimeError):
 
 DEEPSEEK_PROVIDER = "deepseek"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-pro"
 DEEPSEEK_THINKING = "enabled"
 DEEPSEEK_REASONING_EFFORTS = frozenset({"low", "high", "max"})
+
+
+def configured_model() -> str:
+    return os.getenv("LLM_MODEL", DEEPSEEK_DEFAULT_MODEL).strip() or DEEPSEEK_DEFAULT_MODEL
 
 
 def configured_reasoning_effort() -> str:
@@ -59,7 +63,7 @@ class Settings:
             analysis_callback_token=required["ANALYSIS_CALLBACK_TOKEN"],
             sites_bypass_token=required["SITES_BYPASS_TOKEN"],
             llm_base_url=DEEPSEEK_BASE_URL,
-            llm_model=DEEPSEEK_MODEL,
+            llm_model=configured_model(),
             llm_thinking=DEEPSEEK_THINKING,
             llm_reasoning_effort=configured_reasoning_effort(),
             request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "180")),

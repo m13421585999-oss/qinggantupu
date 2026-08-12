@@ -11,12 +11,12 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.config import (
     DEEPSEEK_BASE_URL,
-    DEEPSEEK_MODEL,
     DEEPSEEK_PROVIDER,
     DEEPSEEK_REASONING_EFFORTS,
     DEEPSEEK_THINKING,
     ConfigurationError,
     Settings,
+    configured_model,
 )
 from app.pipeline import PIPELINE_VERSION, analyze_job
 from app.schemas.control_spec import JobRequest
@@ -176,7 +176,7 @@ async def health() -> dict[str, Any]:
     llm = {
         "provider": DEEPSEEK_PROVIDER,
         "base_url": DEEPSEEK_BASE_URL,
-        "model": DEEPSEEK_MODEL,
+        "model": configured_model(),
         "thinking": DEEPSEEK_THINKING,
         "reasoning_effort": reasoning_effort,
     }
