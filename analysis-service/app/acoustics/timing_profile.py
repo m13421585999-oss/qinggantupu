@@ -291,12 +291,16 @@ def derive_timing_profile(analysis_package: dict[str, Any]) -> dict[str, Any] | 
         )
 
     prolongation_strength = []
-    for entry in acoustic.get("duration_outliers", []):
+    for entry in acoustic.get("prolongations", []):
         if not isinstance(entry, dict) or not isinstance(entry.get("token_index"), int):
             continue
         token_index = int(entry["token_index"])
         try:
-            ratio = float(entry.get("local_duration_ratio") or 0)
+            ratio = float(
+                entry.get("effective_voiced_duration_ratio")
+                or entry.get("local_duration_ratio")
+                or 0
+            )
         except (TypeError, ValueError):
             continue
         if ratio <= 1:
@@ -310,14 +314,10 @@ def derive_timing_profile(analysis_package: dict[str, Any]) -> dict[str, Any] | 
         except (TypeError, ValueError):
             item_confidence = _clamp(0.58 + max(0.0, ratio - 1.45) / 1.5, 0.45, 0.98)
 
-        clear_threshold = 1.75
-        strong_threshold = 2.25
-        if global_pace == "brisk":
-            clear_threshold += 0.2
-            strong_threshold += 0.35
-        if expansion == "compressed":
-            clear_threshold += 0.15
-            strong_threshold += 0.25
+        # This layer only grades already-confirmed teaching marks. It must not
+        # promote a broad duration_outlier by itself.
+        clear_threshold = 2.2
+        strong_threshold = 2.8
         strength = (
             "strong"
             if ratio >= strong_threshold and item_confidence >= 0.8
@@ -333,7 +333,7 @@ def derive_timing_profile(analysis_package: dict[str, Any]) -> dict[str, Any] | 
             "confidence": round(item_confidence, 3),
             "source_control_ref": str(
                 entry.get("source_control_ref")
-                or f"analysis.acoustic_evidence.duration_outliers.token-{token_index}"
+                or f"analysis.acoustic_evidence.prolongations.token-{token_index}"
             ),
         })
 

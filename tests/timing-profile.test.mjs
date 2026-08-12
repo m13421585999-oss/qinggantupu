@@ -33,6 +33,13 @@ function analysisPackage() {
         local_duration_ratio: 2.5,
         confidence: 0.95,
       }],
+      prolongations: [{
+        token_index: 4,
+        effective_voiced_duration_ratio: 2.9,
+        local_duration_ratio: 2.9,
+        confidence: 0.95,
+        source_control_ref: "analysis.acoustic_evidence.prolongations.token-4",
+      }],
     },
   };
 }
@@ -52,6 +59,16 @@ test("timing profile is derived only from the current acoustic timeline", () => 
   assert.equal(timing?.prolongationStrength[0].strength, "strong");
   assert.ok(timing?.phraseDurationProfile.every((phrase) =>
     phrase.sourceControlRef.startsWith("analysis.timing_profile.")));
+});
+
+test("timing prolongation strength ignores broad duration outliers", () => {
+  const analysis = analysisPackage();
+  analysis.acoustic_evidence.prolongations = [];
+
+  const timing = deriveTimingProfile(analysis);
+
+  assert.equal(analysis.acoustic_evidence.duration_outliers.length, 1);
+  assert.deepEqual(timing?.prolongationStrength, []);
 });
 
 test("stored snake-case timing profiles normalize without touching control tokens", () => {

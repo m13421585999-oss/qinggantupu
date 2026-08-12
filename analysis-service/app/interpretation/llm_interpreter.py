@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
+from app.acoustics.prolongation import classify_prolongation_candidates
 from app.schemas.control_spec import LlmInterpretation
 
 
@@ -30,6 +31,16 @@ def _compact_evidence(analysis_package: dict[str, Any]) -> dict[str, Any]:
                 "end_ms": token["end_ms"],
                 "duration_ms": evidence.get("duration_ms"),
                 "local_duration_ratio": evidence.get("local_duration_ratio"),
+                "alignment_duration_ms": evidence.get("alignment_duration_ms"),
+                "effective_voiced_duration_ms": evidence.get(
+                    "effective_voiced_duration_ms"
+                ),
+                "effective_voiced_duration_ratio": evidence.get(
+                    "effective_voiced_duration_ratio"
+                ),
+                "voiced_continuity_ratio": evidence.get("voiced_continuity_ratio"),
+                "low_energy_tail_ms": evidence.get("low_energy_tail_ms"),
+                "pause_after_ms": evidence.get("pause_after_ms"),
                 "normalized_pitch": evidence.get("normalized_pitch"),
                 "normalized_energy": evidence.get("normalized_energy"),
                 "voiced_ratio": evidence.get("voiced_ratio"),
@@ -134,32 +145,6 @@ def _acoustic_pauses(
     ]
 
 
-def _acoustic_prolongations(
-    analysis_package: dict[str, Any], start: int, end: int
-) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    for item in analysis_package["acoustic_evidence"].get("duration_outliers", []):
-        index = int(item["token_index"])
-        if index < start or index > end:
-            continue
-        ratio = float(item.get("local_duration_ratio") or 1)
-        degree = 1 if ratio < 1.7 else 2 if ratio < 2.1 else 3
-        result.append(
-            {
-                "token_index": index,
-                "source_control_ref": (
-                    f"analysis.acoustic_evidence.duration_outliers.token-{index}"
-                ),
-                "degree": degree,
-                "duration_ms": int(item.get("duration_ms") or 0),
-                "local_duration_ratio": round(ratio, 3),
-                "source": "acoustic",
-                "confidence": round(min(0.98, 0.58 + max(0, ratio - 1.45) / 1.5), 3),
-            }
-        )
-    return result
-
-
 def assemble_control_spec(
     interpretation: LlmInterpretation,
     analysis_package: dict[str, Any],
@@ -170,6 +155,17 @@ def assemble_control_spec(
         for item in analysis_package.get("acoustic_evidence", {}).get("tokens", [])
     }
     sentences = []
+    confirmed_prolongations: list[dict[str, Any]] = []
+    audited_candidates: list[dict[str, Any]] = []
+    internal_analysis = analysis_package.get("internal_analysis")
+    internal_analysis = internal_analysis if isinstance(internal_analysis, dict) else {}
+    raw_candidates = internal_analysis.get(
+        "prolongation_candidates",
+        analysis_package.get("acoustic_evidence", {}).get(
+            "prolongation_candidates", []
+        ),
+    )
+    raw_candidates = raw_candidates if isinstance(raw_candidates, list) else []
     for sentence, segment in zip(
         interpretation.sentences,
         analysis_package["segments"],
@@ -197,6 +193,14 @@ def assemble_control_spec(
                 }
             )
         rhythm = sentence.rhythm.model_dump(mode="json") if sentence.rhythm else {"type": "relaxed"}
+        sentence_prolongations, sentence_audit = classify_prolongation_candidates(
+            raw_candidates,
+            focus=focus,
+            start=sentence.start_index,
+            end=sentence.end_index,
+        )
+        confirmed_prolongations.extend(sentence_prolongations)
+        audited_candidates.extend(sentence_audit)
         sentences.append(
             {
                 "text": sentence.text,
@@ -206,9 +210,7 @@ def assemble_control_spec(
                 "pauses": _acoustic_pauses(
                     analysis_package, sentence.start_index, sentence.end_index
                 ),
-                "prolongations": _acoustic_prolongations(
-                    analysis_package, sentence.start_index, sentence.end_index
-                ),
+                "prolongations": sentence_prolongations,
                 "macro_prosody_path": segment.get(
                     "macro_prosody_path", {"points": [], "segments": []}
                 ),
@@ -237,6 +239,16 @@ def assemble_control_spec(
                 "confidence": sentence.confidence,
             }
         )
+    analysis_package.setdefault("acoustic_evidence", {})[
+        "prolongations"
+    ] = confirmed_prolongations
+    analysis_package["acoustic_evidence"][
+        "prolongation_candidates"
+    ] = audited_candidates
+    analysis_package["internal_analysis"] = {
+        **internal_analysis,
+        "prolongation_candidates": audited_candidates,
+    }
     tokens = [
         {
             "index": token["index"],

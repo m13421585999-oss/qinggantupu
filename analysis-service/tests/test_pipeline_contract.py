@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import numpy as np
+
 from app.acoustics.contour import continuous_macro_prosody_path, macro_contour
-from app.acoustics.parselmouth_analyzer import _ending_intonation
+from app.acoustics.parselmouth_analyzer import (
+    _effective_voice_measurement,
+    _ending_intonation,
+)
+from app.acoustics.prolongation import assess_prolongation_candidate
 from app.acoustics.timing_profile import derive_timing_profile
 from app.interpretation.llm_interpreter import _compact_evidence, assemble_control_spec
 from app.pipeline import PIPELINE_VERSION, _analysis_audio
@@ -118,6 +124,25 @@ def test_alignment_preserves_exact_source_indexes() -> None:
     assert quality["character_coverage"] == 1
 
 
+def test_token_window_separates_sounding_duration_from_low_energy_tail() -> None:
+    frame_times = np.arange(0.005, 1.0, 0.01)
+    sounding = frame_times < 0.305
+    measurement = _effective_voice_measurement(
+        pitch_times=frame_times,
+        pitch_values=np.where(sounding, 180.0, 0.0),
+        intensity_times=frame_times,
+        intensity_values=np.where(sounding, 68.0, 28.0),
+        start_s=0.0,
+        end_s=1.0,
+        noise_floor_db=28.0,
+        speech_reference_db=68.0,
+    )
+
+    assert 290 <= measurement["effective_voiced_duration_ms"] <= 320
+    assert 680 <= measurement["low_energy_tail_ms"] <= 710
+    assert measurement["voiced_continuity_ratio"] == 1.0
+
+
 def test_dynamic_timing_profile_uses_current_acoustic_evidence() -> None:
     package = {
         "alignment_quality": {"character_coverage": 0.98},
@@ -142,6 +167,13 @@ def test_dynamic_timing_profile_uses_current_acoustic_evidence() -> None:
                 "token_index": 4,
                 "local_duration_ratio": 2.5,
                 "confidence": 0.95,
+            }],
+            "prolongations": [{
+                "token_index": 4,
+                "effective_voiced_duration_ratio": 2.9,
+                "local_duration_ratio": 2.9,
+                "confidence": 0.95,
+                "source_control_ref": "analysis.acoustic_evidence.prolongations.token-4",
             }],
         },
     }
@@ -192,13 +224,26 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
                 }
             ],
             "pauses": [{"after_index": 0, "gap_ms": 320, "relative_level": "short"}],
-            "duration_outliers": [
+            "duration_outliers": [],
+            "prolongations": [],
+        },
+        "internal_analysis": {
+            "prolongation_candidates": [
                 {
                     "token_index": 0,
-                    "duration_ms": 180,
-                    "local_duration_ratio": 1.8,
+                    "char": "我",
+                    "duration_ms": 420,
+                    "alignment_duration_ms": 420,
+                    "local_duration_ratio": 2.4,
+                    "effective_voiced_duration_ms": 390,
+                    "effective_voiced_duration_ratio": 2.5,
+                    "voiced_continuity_ratio": 0.95,
+                    "low_energy_tail_ms": 30,
+                    "low_energy_tail_ratio": 0.071,
+                    "pause_after_ms": 30,
+                    "boundary_type": "none",
                 }
-            ],
+            ]
         },
     }
     package["segments"][0]["macro_prosody_path"] = {
@@ -220,7 +265,6 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
         "confidence": 0.8,
         "source": "acoustic",
     }
-    package["timing_profile"] = derive_timing_profile(package)
     interpretation = LlmInterpretation.model_validate(
         {
             "performance_profile": {
@@ -270,6 +314,8 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
         }
     )
     spec = assemble_control_spec(interpretation, package)
+    package["timing_profile"] = derive_timing_profile(package)
+    spec["timing_profile"] = package["timing_profile"]
     assert spec["tokens"][0]["char"] == "我"
     assert spec["tokens"][0]["display_pinyin"] == "wǒ"
     assert spec["sentences"][0]["pauses"][0]["observed_gap_ms"] == 320
@@ -282,6 +328,96 @@ def test_control_spec_uses_analysis_tokens_without_rewriting() -> None:
     assert spec["performance_profile"]["voice_quality"] == "slightly_breathy"
     assert spec["sentences"][0]["performance_profile"]["focus_style"] == "breathy_to_supported"
     assert spec["timing_profile"] == package["timing_profile"]
+
+
+def test_alignment_outlier_with_low_energy_tail_becomes_pause_not_prolongation() -> None:
+    mark, audit = assess_prolongation_candidate({
+        "token_index": 2,
+        "char": "海",
+        "alignment_duration_ms": 720,
+        "local_duration_ratio": 2.7,
+        "effective_voiced_duration_ms": 230,
+        "effective_voiced_duration_ratio": 1.05,
+        "voiced_continuity_ratio": 0.91,
+        "low_energy_tail_ms": 490,
+        "low_energy_tail_ratio": 0.681,
+        "pause_after_ms": 640,
+        "boundary_type": "phrase_end",
+    })
+    assert mark is None
+    assert "alignment_window_is_mostly_low_energy_tail" in audit["decision_reasons"]
+    assert audit["pause_after_ms"] == 640
+
+
+def test_sustained_voiced_extension_is_a_teaching_prolongation() -> None:
+    mark, audit = assess_prolongation_candidate({
+        "token_index": 3,
+        "char": "暖",
+        "alignment_duration_ms": 610,
+        "local_duration_ratio": 2.45,
+        "effective_voiced_duration_ms": 560,
+        "effective_voiced_duration_ratio": 2.55,
+        "voiced_continuity_ratio": 0.96,
+        "low_energy_tail_ms": 50,
+        "low_energy_tail_ratio": 0.082,
+        "pause_after_ms": 50,
+        "boundary_type": "none",
+    })
+    assert mark is not None
+    assert mark["degree"] == 2
+    assert mark["local_duration_ratio"] == 2.55
+    assert audit["decision"] == "confirmed"
+
+
+def test_natural_sentence_final_lengthening_is_not_automatically_prolonged() -> None:
+    mark, audit = assess_prolongation_candidate({
+        "token_index": 4,
+        "char": "开",
+        "alignment_duration_ms": 500,
+        "local_duration_ratio": 2.0,
+        "effective_voiced_duration_ms": 440,
+        "effective_voiced_duration_ratio": 2.05,
+        "voiced_continuity_ratio": 0.94,
+        "low_energy_tail_ms": 60,
+        "pause_after_ms": 60,
+        "boundary_type": "sentence_end",
+    })
+    assert mark is None
+    assert "normal_boundary_lengthening" in audit["decision_reasons"]
+
+
+def test_extreme_sustained_sentence_final_prolongation_is_still_allowed() -> None:
+    mark, _ = assess_prolongation_candidate({
+        "token_index": 4,
+        "char": "开",
+        "alignment_duration_ms": 760,
+        "local_duration_ratio": 3.0,
+        "effective_voiced_duration_ms": 700,
+        "effective_voiced_duration_ratio": 3.05,
+        "voiced_continuity_ratio": 0.97,
+        "low_energy_tail_ms": 60,
+        "pause_after_ms": 60,
+        "boundary_type": "sentence_end",
+    })
+    assert mark is not None
+    assert mark["degree"] == 3
+
+
+def test_focus_slightly_slowed_does_not_create_prolongation() -> None:
+    mark, audit = assess_prolongation_candidate({
+        "token_index": 1,
+        "char": "幸",
+        "alignment_duration_ms": 390,
+        "local_duration_ratio": 1.65,
+        "effective_voiced_duration_ms": 350,
+        "effective_voiced_duration_ratio": 1.62,
+        "voiced_continuity_ratio": 0.95,
+        "low_energy_tail_ms": 40,
+        "pause_after_ms": 40,
+        "boundary_type": "none",
+    }, focus_indexes={1})
+    assert mark is None
+    assert audit["focus_context"] is True
 
 
 def test_control_spec_allows_no_focus_or_teaching_prosody_when_evidence_is_weak() -> None:

@@ -25,6 +25,8 @@ from app.providers.eleven_alignment import PUNCTUATION
 
 
 SENTENCE_ENDINGS = set("。！？!?；;\n")
+PHRASE_BOUNDARIES = set("，、：,.!?！？。；;:\n\r")
+ACOUSTIC_FRAME_SECONDS = 0.01
 
 
 class AcousticAnalysisError(RuntimeError):
@@ -114,12 +116,147 @@ def _interval(
     return result
 
 
+def _sample_nearest(
+    source_times: np.ndarray,
+    source_values: np.ndarray,
+    target_times: np.ndarray,
+) -> np.ndarray:
+    if not len(source_times) or not len(source_values) or not len(target_times):
+        return np.zeros(len(target_times), dtype=float)
+    right = np.searchsorted(source_times, target_times, side="left")
+    right = np.clip(right, 0, len(source_times) - 1)
+    left = np.clip(right - 1, 0, len(source_times) - 1)
+    choose_left = np.abs(target_times - source_times[left]) <= np.abs(
+        source_times[right] - target_times
+    )
+    return np.asarray(source_values[np.where(choose_left, left, right)], dtype=float)
+
+
+def _bridge_short_activity_gaps(
+    active: np.ndarray,
+    energy_support: np.ndarray,
+    *,
+    maximum_gap_frames: int = 3,
+) -> np.ndarray:
+    bridged = np.asarray(active, dtype=bool).copy()
+    cursor = 0
+    while cursor < len(bridged):
+        if bridged[cursor]:
+            cursor += 1
+            continue
+        start = cursor
+        while cursor < len(bridged) and not bridged[cursor]:
+            cursor += 1
+        end = cursor
+        if (
+            start > 0
+            and end < len(bridged)
+            and end - start <= maximum_gap_frames
+            and bool(np.all(energy_support[start:end]))
+        ):
+            bridged[start:end] = True
+    return bridged
+
+
+def _effective_voice_measurement(
+    *,
+    pitch_times: np.ndarray,
+    pitch_values: np.ndarray,
+    intensity_times: np.ndarray,
+    intensity_values: np.ndarray,
+    start_s: float,
+    end_s: float,
+    noise_floor_db: float,
+    speech_reference_db: float,
+) -> dict[str, float]:
+    """Measure sustained sound inside an alignment token window."""
+    alignment_duration_ms = max(0.0, (end_s - start_s) * 1000)
+    if alignment_duration_ms <= 0:
+        return {
+            "effective_voiced_duration_ms": 0.0,
+            "low_energy_tail_ms": 0.0,
+            "voiced_continuity_ratio": 0.0,
+        }
+    frame_times = np.arange(
+        start_s + ACOUSTIC_FRAME_SECONDS / 2,
+        end_s,
+        ACOUSTIC_FRAME_SECONDS,
+        dtype=float,
+    )
+    if not len(frame_times):
+        frame_times = np.asarray([(start_s + end_s) / 2], dtype=float)
+    sampled_pitch = _sample_nearest(pitch_times, pitch_values, frame_times)
+    finite_intensity_mask = np.isfinite(intensity_values)
+    if np.any(finite_intensity_mask):
+        sampled_intensity = np.interp(
+            frame_times,
+            intensity_times[finite_intensity_mask],
+            intensity_values[finite_intensity_mask],
+        )
+    else:
+        sampled_intensity = np.full(len(frame_times), noise_floor_db, dtype=float)
+    local_peak = float(np.quantile(sampled_intensity, 0.9))
+    activity_floor = max(
+        noise_floor_db + 6.0,
+        min(local_peak - 14.0, speech_reference_db - 16.0),
+    )
+    energy_support = sampled_intensity >= activity_floor - 3.0
+    pitch_active = np.isfinite(sampled_pitch) & (sampled_pitch > 0) & energy_support
+    active = (
+        pitch_active | (sampled_intensity >= activity_floor + 3.0)
+        if bool(np.any(pitch_active))
+        else sampled_intensity >= activity_floor + 3.0
+    )
+    active = _bridge_short_activity_gaps(active, energy_support)
+    active_indexes = np.flatnonzero(active)
+    if not len(active_indexes):
+        return {
+            "effective_voiced_duration_ms": 0.0,
+            "low_energy_tail_ms": alignment_duration_ms,
+            "voiced_continuity_ratio": 0.0,
+        }
+    frame_ms = ACOUSTIC_FRAME_SECONDS * 1000
+    effective_ms = min(alignment_duration_ms, len(active_indexes) * frame_ms)
+    last_active_end_s = min(
+        end_s,
+        float(frame_times[int(active_indexes[-1])]) + ACOUSTIC_FRAME_SECONDS / 2,
+    )
+    low_energy_tail_ms = max(0.0, (end_s - last_active_end_s) * 1000)
+    active_span_frames = int(active_indexes[-1] - active_indexes[0] + 1)
+    return {
+        "effective_voiced_duration_ms": round(effective_ms),
+        "low_energy_tail_ms": round(low_energy_tail_ms),
+        "voiced_continuity_ratio": round(
+            len(active_indexes) / max(active_span_frames, 1), 3
+        ),
+    }
+
+
+def _boundary_type(tokens: list[dict[str, Any]], position: int) -> str:
+    between: list[str] = []
+    for token in tokens[position + 1 :]:
+        char = str(token.get("char") or "")
+        if char not in PUNCTUATION:
+            break
+        between.append(char)
+    if any(char in SENTENCE_ENDINGS for char in between):
+        return "sentence_end"
+    if any(char in PHRASE_BOUNDARIES for char in between):
+        return "phrase_end"
+    if not any(token.get("char") not in PUNCTUATION for token in tokens[position + 1 :]):
+        return "sentence_end"
+    return "none"
+
+
 def _pause_evidence(
     tokens: list[dict[str, Any]],
     evidence: list[dict[str, Any]],
     spoken_positions: list[int],
 ) -> list[dict[str, Any]]:
-    gaps = [float(evidence[position]["silence_gap_after_ms"]) for position in spoken_positions[:-1]]
+    gaps = [
+        float(evidence[position].get("pause_after_ms", 0))
+        for position in spoken_positions[:-1]
+    ]
     positive = sorted(gap for gap in gaps if gap >= 40)
     if not positive:
         return []
@@ -129,7 +266,7 @@ def _pause_evidence(
     long_floor = max(short_floor * 2.1, upper_quartile * 1.35)
     result: list[dict[str, Any]] = []
     for position in spoken_positions[:-1]:
-        gap = float(evidence[position]["silence_gap_after_ms"])
+        gap = float(evidence[position].get("pause_after_ms", 0))
         if gap < short_floor:
             continue
         result.append(
@@ -263,8 +400,19 @@ def _sentence_summary(
     pitch = [evidence[position]["normalized_pitch"] for position in positions]
     smooth_pitch = rolling_median(pitch, radius=2)
     energy = [evidence[position]["normalized_energy"] for position in positions]
-    duration_ratios = [evidence[position]["local_duration_ratio"] for position in positions]
-    durations = [evidence[position]["duration_ms"] for position in positions]
+    duration_ratios = [
+        evidence[position].get("effective_voiced_duration_ratio")
+        for position in positions
+    ]
+    durations = [
+        float(
+            evidence[position].get(
+                "effective_voiced_duration_ms", evidence[position]["duration_ms"]
+            )
+            or 0
+        )
+        for position in positions
+    ]
     start_ms = min((tokens[position]["start_ms"] for position in positions), default=tokens[start]["start_ms"])
     end_ms = max((tokens[position]["end_ms"] for position in positions), default=tokens[end]["end_ms"])
     duration_seconds = max((end_ms - start_ms) / 1000, 0.001)
@@ -299,7 +447,7 @@ def _sentence_summary(
             "items": sentence_pauses,
         },
         "duration_summary": {
-            "local_median_ms": round(float(median(durations))) if durations else 0,
+            "local_median_effective_voiced_ms": round(float(median(durations))) if durations else 0,
             "outlier_tokens": sentence_durations,
         },
         "pitch_summary": {
@@ -336,7 +484,7 @@ def _sentence_summary(
         "macro_duration_contour": macro_contour(
             indexes,
             duration_ratios,
-            value_key="local_duration_ratio",
+            value_key="effective_voiced_duration_ratio",
         ),
     }
 
@@ -367,6 +515,26 @@ def analyze_wav(
     intensity_times = np.asarray(intensity.xs(), dtype=float)
     intensity_values = np.asarray(intensity.values[0], dtype=float)
 
+    finite_intensity_mask = np.isfinite(intensity_values)
+    finite_intensity = intensity_values[finite_intensity_mask]
+    finite_intensity_times = intensity_times[finite_intensity_mask]
+    noise_floor_db = (
+        float(np.quantile(finite_intensity, 0.1)) if len(finite_intensity) else 0.0
+    )
+    voiced_pitch_mask = np.isfinite(pitch_values) & (pitch_values > 0)
+    voiced_times = pitch_times[voiced_pitch_mask]
+    if len(voiced_times) and len(finite_intensity_times):
+        voiced_intensity = np.interp(
+            voiced_times,
+            finite_intensity_times,
+            finite_intensity,
+        )
+        speech_reference_db = float(median(voiced_intensity.tolist()))
+    elif len(finite_intensity):
+        speech_reference_db = float(np.quantile(finite_intensity, 0.75))
+    else:
+        speech_reference_db = noise_floor_db
+
     token_acoustics: list[dict[str, Any]] = []
     for token in tokens:
         start_s = token["start_ms"] / 1000
@@ -377,12 +545,32 @@ def analyze_wav(
         f0_start = float(median(f0_samples[:edge_size])) if f0_samples else None
         f0_end = float(median(f0_samples[-edge_size:])) if f0_samples else None
         intensity_samples = _interval(intensity_times, intensity_values, start_s, end_s)
+        voice_measurement = _effective_voice_measurement(
+            pitch_times=pitch_times,
+            pitch_values=pitch_values,
+            intensity_times=intensity_times,
+            intensity_values=intensity_values,
+            start_s=start_s,
+            end_s=end_s,
+            noise_floor_db=noise_floor_db,
+            speech_reference_db=speech_reference_db,
+        )
+        alignment_duration_ms = max(0, token["end_ms"] - token["start_ms"])
         token_acoustics.append(
             {
                 "token_index": token["index"],
                 "char": token["char"],
-                "duration_ms": max(0, token["end_ms"] - token["start_ms"]),
+                "alignment_duration_ms": alignment_duration_ms,
+                "duration_ms": alignment_duration_ms,
                 "local_duration_ratio": None,
+                "effective_voiced_duration_ms": voice_measurement[
+                    "effective_voiced_duration_ms"
+                ],
+                "effective_voiced_duration_ratio": None,
+                "low_energy_tail_ms": voice_measurement["low_energy_tail_ms"],
+                "voiced_continuity_ratio": voice_measurement[
+                    "voiced_continuity_ratio"
+                ],
                 "f0_hz": round(float(median(f0_samples)), 2) if f0_samples else None,
                 "_pitch_start_hz": f0_start,
                 "_pitch_end_hz": f0_end,
@@ -396,6 +584,8 @@ def analyze_wav(
                 "voiced_ratio": round(len(f0_samples) / max(len(raw_pitch), 1), 3),
                 "silence_gap_before_ms": 0,
                 "silence_gap_after_ms": 0,
+                "alignment_gap_after_ms": 0,
+                "pause_after_ms": voice_measurement["low_energy_tail_ms"],
             }
         )
 
@@ -403,13 +593,23 @@ def analyze_wav(
         position for position, token in enumerate(tokens) if token["char"] not in PUNCTUATION
     ]
     durations = [float(token_acoustics[position]["duration_ms"]) for position in spoken_positions]
+    effective_durations = [
+        float(token_acoustics[position]["effective_voiced_duration_ms"])
+        for position in spoken_positions
+    ]
     f0_pool = [token_acoustics[position]["f0_hz"] for position in spoken_positions]
     energy_pool = [token_acoustics[position]["intensity_db"] for position in spoken_positions]
     for order, position in enumerate(spoken_positions):
         local_window = durations[max(0, order - 3) : order + 4]
         baseline = median(local_window) if local_window else 1
+        effective_window = effective_durations[max(0, order - 3) : order + 4]
+        positive_effective = [value for value in effective_window if value > 0]
+        effective_baseline = median(positive_effective) if positive_effective else 1
         item = token_acoustics[position]
         item["local_duration_ratio"] = round(item["duration_ms"] / max(baseline, 1), 3)
+        item["effective_voiced_duration_ratio"] = round(
+            item["effective_voiced_duration_ms"] / max(effective_baseline, 1), 3
+        )
         item["normalized_pitch"] = rounded(semitone_normalize(item["f0_hz"], f0_pool))
         item["pitch_start"] = rounded(semitone_normalize(item["_pitch_start_hz"], f0_pool))
         item["pitch_end"] = rounded(semitone_normalize(item["_pitch_end_hz"], f0_pool))
@@ -426,22 +626,73 @@ def analyze_wav(
         left = spoken_positions[order]
         right = spoken_positions[order + 1]
         gap = max(0, tokens[right]["start_ms"] - tokens[left]["end_ms"])
-        token_acoustics[left]["silence_gap_after_ms"] = gap
+        token_acoustics[left]["alignment_gap_after_ms"] = gap
+        token_acoustics[left]["pause_after_ms"] = round(
+            float(token_acoustics[left].get("low_energy_tail_ms") or 0) + gap
+        )
+        # Compatibility alias: unlike the historical value, this now also
+        # recovers silence absorbed into the preceding alignment window.
+        token_acoustics[left]["silence_gap_after_ms"] = token_acoustics[left][
+            "pause_after_ms"
+        ]
         token_acoustics[right]["silence_gap_before_ms"] = gap
 
+    if spoken_positions:
+        final_spoken = spoken_positions[-1]
+        token_acoustics[final_spoken]["pause_after_ms"] = round(
+            float(token_acoustics[final_spoken].get("low_energy_tail_ms") or 0)
+        )
+        token_acoustics[final_spoken]["silence_gap_after_ms"] = token_acoustics[
+            final_spoken
+        ]["pause_after_ms"]
+
     pauses = _pause_evidence(tokens, token_acoustics, spoken_positions)
-    duration_outliers = [
-        {
+    duration_outliers = []
+    prolongation_candidates = []
+    token_position_by_index = {
+        int(token["index"]): position for position, token in enumerate(tokens)
+    }
+    for item in token_acoustics:
+        if item["char"] in PUNCTUATION:
+            continue
+        alignment_ratio = float(item.get("local_duration_ratio") or 0)
+        effective_ratio = float(item.get("effective_voiced_duration_ratio") or 0)
+        if alignment_ratio < 1.45 and effective_ratio < 1.45:
+            continue
+        alignment_duration = max(float(item.get("alignment_duration_ms") or 0), 1)
+        candidate = {
             "token_index": item["token_index"],
             "char": item["char"],
             "duration_ms": item["duration_ms"],
+            "alignment_duration_ms": item["alignment_duration_ms"],
             "local_duration_ratio": item["local_duration_ratio"],
+            "effective_voiced_duration_ms": item["effective_voiced_duration_ms"],
+            "effective_voiced_duration_ratio": item[
+                "effective_voiced_duration_ratio"
+            ],
+            "voiced_continuity_ratio": item["voiced_continuity_ratio"],
+            "low_energy_tail_ms": item["low_energy_tail_ms"],
+            "low_energy_tail_ratio": round(
+                float(item.get("low_energy_tail_ms") or 0) / alignment_duration, 3
+            ),
+            "alignment_gap_after_ms": item["alignment_gap_after_ms"],
+            "pause_after_ms": item["pause_after_ms"],
+            "boundary_type": _boundary_type(
+                tokens, token_position_by_index[int(item["token_index"])]
+            ),
+            "candidate_basis": (
+                "alignment_and_effective"
+                if alignment_ratio >= 1.45 and effective_ratio >= 1.45
+                else "effective_voicing"
+                if effective_ratio >= 1.45
+                else "alignment_duration"
+            ),
+            "source_control_ref": (
+                f"analysis.internal_analysis.prolongation_candidates.token-{item['token_index']}"
+            ),
         }
-        for item in token_acoustics
-        if item["char"] not in PUNCTUATION
-        and item.get("local_duration_ratio") is not None
-        and item["local_duration_ratio"] >= 1.45
-    ]
+        duration_outliers.append(candidate.copy())
+        prolongation_candidates.append(candidate)
     sentences = [
         _sentence_summary(
             tokens,
@@ -476,6 +727,7 @@ def analyze_wav(
         "token_acoustics": token_acoustics,
         "pauses": pauses,
         "duration_outliers": duration_outliers,
+        "prolongation_candidates": prolongation_candidates,
         "energy_changes": energy_changes,
         "sentences": sentences,
     }

@@ -399,7 +399,7 @@ function parseProlongations(
       id: `${sentenceId}-prolong-${position + 1}`,
       sourceControlRef: explicitSourceRef
         ?? (source === "acoustic"
-          ? `analysis.acoustic_evidence.duration_outliers.token-${index}`
+          ? `analysis.acoustic_evidence.prolongations.token-${index}`
           : undefined),
       tokenId: token.id,
       tokenIndex: index,

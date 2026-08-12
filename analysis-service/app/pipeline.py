@@ -186,8 +186,20 @@ async def analyze_job(
                 "display_pinyin": display_pinyin,
                 "start_ms": token["start_ms"],
                 "end_ms": token["end_ms"],
+                "alignment_duration_ms": evidence.get(
+                    "alignment_duration_ms", evidence["duration_ms"]
+                ),
                 "duration_ms": evidence["duration_ms"],
                 "local_duration_ratio": evidence.get("local_duration_ratio"),
+                "effective_voiced_duration_ms": evidence.get(
+                    "effective_voiced_duration_ms"
+                ),
+                "effective_voiced_duration_ratio": evidence.get(
+                    "effective_voiced_duration_ratio"
+                ),
+                "voiced_continuity_ratio": evidence.get("voiced_continuity_ratio"),
+                "low_energy_tail_ms": evidence.get("low_energy_tail_ms"),
+                "pause_after_ms": evidence.get("pause_after_ms"),
                 "f0_hz": evidence.get("f0_hz"),
                 "normalized_pitch": evidence.get("normalized_pitch"),
                 "intensity_db": evidence.get("intensity_db"),
@@ -236,12 +248,14 @@ async def analyze_job(
             "tokens": acoustics["token_acoustics"],
             "pauses": acoustics["pauses"],
             "duration_outliers": acoustics["duration_outliers"],
+            "prolongation_candidates": acoustics["prolongation_candidates"],
+            "prolongations": [],
             "energy_changes": acoustics["energy_changes"],
         },
+        "internal_analysis": {
+            "prolongation_candidates": acoustics["prolongation_candidates"],
+        },
     }
-    timing_profile = derive_timing_profile(analysis_package)
-    if timing_profile is not None:
-        analysis_package["timing_profile"] = timing_profile
     control_spec = await interpret_control_spec(
         analysis_package=analysis_package,
         api_key=settings.llm_api_key,
@@ -251,4 +265,10 @@ async def analyze_job(
         reasoning_effort=settings.llm_reasoning_effort,
         timeout_seconds=settings.request_timeout_seconds,
     )
+    # Focus can contextualize, but never create, a prolongation. Build timing
+    # only after the conservative acoustic classifier has produced final marks.
+    timing_profile = derive_timing_profile(analysis_package)
+    if timing_profile is not None:
+        analysis_package["timing_profile"] = timing_profile
+        control_spec["timing_profile"] = timing_profile
     return analysis_package, control_spec

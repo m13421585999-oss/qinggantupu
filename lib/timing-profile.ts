@@ -136,12 +136,10 @@ function acousticEvidence(analysis: JsonObject) {
   const pauses = Array.isArray(acoustic.pauses)
     ? acoustic.pauses
     : Array.isArray(analysis.pauses) ? analysis.pauses : [];
-  const durationOutliers = Array.isArray(acoustic.duration_outliers)
-    ? acoustic.duration_outliers
-    : Array.isArray(analysis.duration_outliers)
-      ? analysis.duration_outliers
-      : Array.isArray(analysis.elongations) ? analysis.elongations : [];
-  return { tokenEvidence, pauses, durationOutliers };
+  const prolongations = Array.isArray(acoustic.prolongations)
+    ? acoustic.prolongations
+    : [];
+  return { tokenEvidence, pauses, prolongations };
 }
 
 function analysisConfidence(analysis: JsonObject) {
@@ -331,9 +329,14 @@ export function deriveTimingProfile(analysisValue: unknown): TimingProfile | und
 
   const phraseForToken = (tokenIndex: number) => phraseDurationProfile.find((phrase) =>
     tokenIndex >= phrase.startIndex && tokenIndex <= phrase.endIndex);
-  const prolongationStrength = evidence.durationOutliers.map(object).flatMap((entry) => {
+  const prolongationStrength = evidence.prolongations.map(object).flatMap((entry) => {
     const tokenIndex = integer(entry.token_index ?? entry.tokenIndex);
-    const localDurationRatio = finiteNumber(entry.local_duration_ratio ?? entry.localDurationRatio);
+    const localDurationRatio = finiteNumber(
+      entry.effective_voiced_duration_ratio
+      ?? entry.effectiveVoicedDurationRatio
+      ?? entry.local_duration_ratio
+      ?? entry.localDurationRatio,
+    );
     if (tokenIndex === undefined || localDurationRatio === undefined || localDurationRatio <= 1) return [];
     const phrase = phraseForToken(tokenIndex);
     const phraseExpansion = phrase?.expansion ?? "baseline";
@@ -343,16 +346,8 @@ export function deriveTimingProfile(analysisValue: unknown): TimingProfile | und
       0.45,
       0.98,
     );
-    let clearThreshold = 1.75;
-    let strongThreshold = 2.25;
-    if (globalPace === "brisk") {
-      clearThreshold += 0.2;
-      strongThreshold += 0.35;
-    }
-    if (phraseExpansion === "compressed") {
-      clearThreshold += 0.15;
-      strongThreshold += 0.25;
-    }
+    const clearThreshold = 2.2;
+    const strongThreshold = 2.8;
     const strength: ProlongationTimingStrength =
       localDurationRatio >= strongThreshold && entryConfidence >= 0.8
         ? "strong"
@@ -366,7 +361,7 @@ export function deriveTimingProfile(analysisValue: unknown): TimingProfile | und
       phraseExpansion,
       confidence: Number(entryConfidence.toFixed(3)),
       sourceControlRef: nonEmptyString(entry.source_control_ref ?? entry.sourceControlRef)
-        ?? `analysis.acoustic_evidence.duration_outliers.token-${tokenIndex}`,
+        ?? `analysis.acoustic_evidence.prolongations.token-${tokenIndex}`,
     }];
   });
 
@@ -476,7 +471,7 @@ export function normalizeTimingProfile(value: unknown): TimingProfile | undefine
         phraseExpansion: phraseExpansion as PhraseExpansion,
         confidence: clamp(finiteNumber(entry.confidence) ?? confidence, 0, 1),
         sourceControlRef: nonEmptyString(entry.sourceControlRef ?? entry.source_control_ref)
-          ?? `analysis.acoustic_evidence.duration_outliers.token-${tokenIndex}`,
+          ?? `analysis.acoustic_evidence.prolongations.token-${tokenIndex}`,
       }];
     });
 
