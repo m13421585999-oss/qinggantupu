@@ -9,7 +9,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { importControlSpec, parseControlSpecText } from "@/lib/control-spec-import";
+import { importControlSpec } from "@/lib/control-spec-import";
 import {
   buildGraphTokenUnits,
   isGraphPunctuation,
@@ -32,7 +32,7 @@ import {
 } from "@/lib/recitation-schema";
 
 type ProductMode = "studio" | "viewer";
-type WorkflowStep = 1 | 2 | 3 | 4 | 5;
+type WorkflowStep = 1 | 2 | 3;
 type AudioSource = "reference" | "standard";
 type AnalysisJobStatus = "idle" | "queued" | "processing" | "succeeded" | "failed";
 
@@ -42,10 +42,8 @@ const workflowSteps: Array<{
   subtitle: string;
 }> = [
   { id: 1, title: "准备作品", subtitle: "正文 · 真人参考朗诵" },
-  { id: 2, title: "导入控制谱", subtitle: "失败时的 JSON 兜底" },
-  { id: 3, title: "编辑图谱", subtitle: "人工复核 · 单句修正" },
-  { id: 4, title: "核对示范", subtitle: "同源标准声音 · 时间戳" },
-  { id: 5, title: "预览发布", subtitle: "观看端 · 同步高亮" },
+  { id: 2, title: "编辑图谱", subtitle: "人工复核 · 单句修正" },
+  { id: 3, title: "预览发布", subtitle: "观看端 · 同步高亮" },
 ];
 
 const prosodyOptions = Object.keys(PROSODY_LABELS) as ProsodyType[];
@@ -155,9 +153,8 @@ function activeTokenAt(timeline: AudioTimeline | undefined, currentMs: number) {
 }
 
 function highestAvailableStep(work: RecitationWork): WorkflowStep {
-  if ((work.standardAiAudio ?? work.aiDemoAudio)?.timeline && work.controlSpec) return 5;
-  if (work.controlSpec) return 4;
-  if (!work.id.startsWith("draft-")) return 2;
+  if ((work.standardAiAudio ?? work.aiDemoAudio)?.timeline && work.controlSpec) return 3;
+  if (work.controlSpec) return 2;
   return 1;
 }
 
@@ -1031,7 +1028,6 @@ function MaterialStage({
   onReferenceFile,
   onDeleteReference,
   onAnalyze,
-  onManualImport,
 }: {
   work: RecitationWork;
   jobStatus: AnalysisJobStatus;
@@ -1040,7 +1036,6 @@ function MaterialStage({
   onReferenceFile: (file: File) => void;
   onDeleteReference: () => void;
   onAnalyze: () => void;
-  onManualImport: () => void;
 }) {
   const hasWorkInfo = Boolean(work.title.trim() && work.sourceText.trim());
   const isAnalyzing = jobStatus === "queued" || jobStatus === "processing";
@@ -1123,7 +1118,7 @@ function MaterialStage({
                   : jobStatus === "processing"
                     ? "正在分析标准 AI 声音的字符时间戳、停顿、时值、音高和能量，并生成控制谱。"
                     : jobStatus === "failed"
-                      ? "本次没有生成控制谱。你可以重新解析，或使用下方的手动 JSON 导入兜底。"
+                      ? "本次没有生成控制谱。请根据错误提示检查正文、音频或服务配置后重新解析。"
                       : "标准 AI 声音既是控制谱的分析对象，也是最终播放给用户的示范声音。"}
               </p>
             </div>
@@ -1150,94 +1145,8 @@ function MaterialStage({
               请先填写作品名称和完整正文。
             </p>
           ) : null}
-          {hasWorkInfo && !isAnalyzing ? (
-            <button type="button" className="text-button" onClick={onManualImport}>
-              {jobStatus === "failed" ? "改为手动导入控制谱 JSON" : "已有控制谱 JSON，直接导入"} →
-            </button>
-          ) : null}
         </div>
       </div>
-    </section>
-  );
-}
-
-function ControlImportStage({
-  work,
-  onImport,
-  onBack,
-}: {
-  work: RecitationWork;
-  onImport: (jsonText: string) => Promise<void>;
-  onBack: () => void;
-}) {
-  const [importText, setImportText] = useState("");
-  const [importError, setImportError] = useState<string | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
-
-  const submitImport = async () => {
-    setImportError(null);
-    setIsImporting(true);
-    try {
-      await onImport(importText);
-    } catch (error) {
-      setImportError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
-  return (
-    <section className="stage analysis-result-stage">
-      <div className="stage-heading">
-        <div>
-          <p className="eyebrow">02 · 导入控制谱</p>
-          <h1>自动分析失败时，手动导入 control_spec</h1>
-          <p className="stage-lead">
-            网站会逐字校验 token、时间戳、拼音和句子范围。只要与已保存正文有一处不一致，导入就会停止，正文绝不会被改写。
-          </p>
-        </div>
-        <span className="ready-badge"><i /> 正文已保存</span>
-      </div>
-
-      <div className="analysis-result-grid">
-        <div className="paper-card analysis-package-card">
-          <div className="card-title-row">
-            <div><p className="eyebrow">备用通道</p><h2>{work.title}</h2></div>
-            <span className="json-chip">JSON 兜底</span>
-          </div>
-          <div className="analysis-facts">
-            <span><strong>1</strong><small>保留完整 tokens</small></span>
-            <span><strong>2</strong><small>核对正文与时间戳</small></span>
-            <span><strong>3</strong><small>导入后人工编辑</small></span>
-          </div>
-          <p className="analysis-package-note">
-            这是自动分析失败时的备用入口。JSON 必须对应当前正文，并保留 tokens 中的 index、char、start_ms、end_ms 和拼音字段。
-          </p>
-        </div>
-
-        <div className="paper-card control-import-card">
-          <div className="card-title-row compact-title-row">
-            <div><p className="eyebrow">导入控制谱</p><h2>粘贴 ChatGPT 返回的 JSON</h2></div>
-          </div>
-          <textarea
-            aria-label="control spec JSON"
-            value={importText}
-            onChange={(event) => setImportText(event.target.value)}
-            placeholder={'可粘贴纯 JSON、```json 代码块，或 { "control_spec": { ... } }'}
-            rows={12}
-          />
-          {importError ? <p className="import-error" role="alert">{importError}</p> : null}
-          <button
-            type="button"
-            className="primary-button import-button"
-            disabled={!importText.trim() || isImporting}
-            onClick={submitImport}
-          >
-            {isImporting ? "正在校验并保存" : "导入控制谱"}
-          </button>
-        </div>
-      </div>
-      <button type="button" className="text-button analysis-back" onClick={onBack}>← 返回准备作品</button>
     </section>
   );
 }
@@ -1698,6 +1607,7 @@ function EditorStage({
 }) {
   const spec = work.controlSpec;
   if (!spec) return null;
+  const canPublish = Boolean((work.standardAiAudio ?? work.aiDemoAudio)?.timeline);
   const editingSentence =
     spec.sentences.find((item) => item.id === editingSentenceId) ?? null;
   const active = activeSentenceAt(spec.sentences, timeline, currentMs);
@@ -1706,7 +1616,7 @@ function EditorStage({
     <section className="stage editor-stage">
       <div className="stage-heading editor-heading">
         <div>
-          <p className="eyebrow">03 · 人工复核</p>
+          <p className="eyebrow">02 · 人工复核</p>
           <h1>图谱本身，就是编辑器</h1>
           <p className="stage-lead">
             点击任意一句图谱，在单句面板中修正节奏、语势、重音、停顿、句尾语调和拖音。
@@ -1716,8 +1626,8 @@ function EditorStage({
           <button type="button" className="secondary-button" onClick={onSave}>
             保存草稿
           </button>
-          <button type="button" className="primary-button" onClick={onContinue}>
-            确认图谱，进入生成示范 <span aria-hidden="true">→</span>
+          <button type="button" className="primary-button" onClick={onContinue} disabled={!canPublish}>
+            {canPublish ? "确认图谱，进入发布预览" : "标准声音尚未就绪"} <span aria-hidden="true">→</span>
           </button>
         </div>
       </div>
@@ -1761,121 +1671,6 @@ function EditorStage({
   );
 }
 
-function AudioStage({
-  work,
-  onPlay,
-  onContinue,
-  onBack,
-}: {
-  work: RecitationWork;
-  onPlay: () => void;
-  onContinue: () => void;
-  onBack: () => void;
-}) {
-  const spec = work.controlSpec;
-  if (!spec) return null;
-  const reference = work.referenceAudioOriginal ?? work.referenceAudio;
-  const standardAudio = work.standardAiAudio;
-  const legacyDemo = !standardAudio && work.aiDemoAudio?.kind === "ai_demo"
-    ? work.aiDemoAudio
-    : undefined;
-  const playback = standardAudio ?? legacyDemo;
-  const isSynced = work.audioSyncStatus === "synced";
-  return (
-    <section className="stage audio-stage">
-      <div className="stage-heading">
-        <div>
-          <p className="eyebrow">04 · 示范声音</p>
-          <h1>{standardAudio ? "核对与图谱同源的标准 AI 朗诵" : "核对历史作品的示范声音"}</h1>
-          <p className="stage-lead">
-            {standardAudio
-              ? "这条声音由真人参考朗诵经 Voice Changer 生成；Forced Alignment、Parselmouth、控制谱和播放器都使用它。"
-              : legacyDemo
-                ? "这篇旧作品保留已有示范声音供播放；旧生成链已停用，新作品统一使用同源标准声音。"
-                : "当前作品没有可播放的标准 AI 声音，请返回准备作品并重新运行正式分析。"}
-          </p>
-        </div>
-        <span className={`provider-chip ${isSynced ? "ready" : ""}`}>
-          {isSynced ? "声音与图谱同步" : work.audioSyncStatus === "modified" ? "图谱已人工修改" : `图谱版本 v${spec.version}`}
-        </span>
-      </div>
-
-      <div className="audio-source-compare" aria-label="真人参考朗诵和标准 AI 朗诵">
-        <div className="paper-card audio-source-card source-reference">
-          <span className="source-kicker">原始来源证据</span>
-          <strong>真人参考朗诵</strong>
-          <p>{reference?.filename ?? "未提供"}</p>
-          <small>{reference ? `${formatTime(reference.durationMs)} · 原始声音已保留` : "控制谱来自手动导入"}</small>
-        </div>
-        <span className="source-arrow" aria-hidden="true">→</span>
-        <div className={`paper-card audio-source-card source-ai ${playback ? "ready" : ""}`}>
-          <span className="source-kicker">分析与播放对象</span>
-          <strong>{standardAudio ? "标准 AI 朗诵" : "历史示范声音"}</strong>
-          <p>{playback?.filename ?? "尚无标准声音"}</p>
-          <small>{playback ? `${formatTime(playback.durationMs)} · 字符时间轴已就绪` : "请从第一步重新生成标准 AI 声音"}</small>
-        </div>
-      </div>
-
-      <div className="audio-grid audio-grid-single">
-        <div className="paper-card generation-card">
-          <div className="card-title-row">
-            <div>
-              <p className="eyebrow">当前标准声音</p>
-              <h2>{standardAudio ? "同源标准 AI 朗诵" : "历史示范声音"}</h2>
-            </div>
-            <span className={`status-pill ${playback ? "ready" : ""}`}>
-              {playback ? "已就绪" : "待生成"}
-            </span>
-          </div>
-
-          <div className="waveform" aria-hidden="true">
-            {Array.from({ length: 68 }, (_, index) => (
-              <span key={index} style={{ "--bar": `${20 + ((index * 37) % 70)}%` } as CSSProperties} />
-            ))}
-          </div>
-          <div className="audio-metadata">
-            <span>{playback ? formatTime(playback.durationMs) : "时长生成后确定"}</span>
-            <span>中文普通话</span>
-            <span>{spec.sentences.length} 个图谱句</span>
-            <span>字符级时间轴</span>
-          </div>
-
-          <button
-            type="button"
-            className="primary-button generate-wide"
-            onClick={onPlay}
-            disabled={!playback?.timeline}
-          >
-            <span aria-hidden="true">▶</span>
-            {standardAudio ? "试听标准 AI 朗诵" : legacyDemo ? "试听历史示范声音" : "暂无可播放声音"}
-          </button>
-          <p className="demo-disclaimer">
-            {standardAudio
-              ? isSynced
-                ? "当前图谱由这条声音分析得到，播放与逐字高亮使用同一时间轴。"
-                : "你已经人工修改图谱，标准声音仍可播放，但可能不再完全对应最新图谱。"
-              : legacyDemo
-                ? "历史声音仅保留播放兼容，不再提供重新生成或提示词调试。"
-                : "正式流程必须先生成 standard_ai_audio，再分析并生成图谱。"}
-          </p>
-        </div>
-      </div>
-
-      <div className="stage-footer-actions">
-        <button type="button" className="text-button" onClick={onBack}>← 返回编辑</button>
-        <button
-          type="button"
-          className="primary-button"
-          disabled={!playback?.timeline}
-          onClick={onContinue}
-        >
-          进入发布预览 <span aria-hidden="true">→</span>
-        </button>
-      </div>
-    </section>
-  );
-}
-
 function PublishStage({
   work,
   onBack,
@@ -1894,7 +1689,7 @@ function PublishStage({
     <section className="stage publish-stage">
       <div className="stage-heading">
         <div>
-          <p className="eyebrow">05 · 发布作品</p>
+          <p className="eyebrow">03 · 发布作品</p>
           <h1>把创作参数收起来，只把“看得懂、听得到”交给用户</h1>
           <p className="stage-lead">
             发布会冻结当前控制谱、标准 AI 音频和时间轴。后续修改草稿，不会改变已经分享的版本。
@@ -1929,7 +1724,7 @@ function PublishStage({
           <p className="eyebrow">发布检查</p>
           <h2>作品包完整</h2>
           {[
-            ["正文与控制谱一致", "导入时已逐字校验"],
+            ["正文与控制谱一致", "分析时已逐字校验"],
             ["控制谱无阻塞错误", `${spec.sentences.length} 个图谱句`],
             ["标准 AI 朗诵可播放", standardAudio.label],
             ["字符时间轴完整", "逐字高亮已就绪"],
@@ -1953,7 +1748,7 @@ function PublishStage({
           </div>
         </div>
       </div>
-      <button type="button" className="text-button publish-back" onClick={onBack}>← 返回声音版本</button>
+      <button type="button" className="text-button publish-back" onClick={onBack}>← 返回编辑图谱</button>
     </section>
   );
 }
@@ -1973,15 +1768,11 @@ function StudioView({
   onReferenceFile,
   onDeleteReference,
   onAnalyze,
-  onManualImport,
-  onImportControlSpec,
   onEditSentence,
   onCloseEditor,
   onSaveSentence,
   onPlaySentence,
   onSave,
-  onGenerateStage,
-  onPlayStandard,
   onPublishStage,
   onPreview,
   onPublish,
@@ -2000,15 +1791,11 @@ function StudioView({
   onReferenceFile: (file: File) => void;
   onDeleteReference: () => void;
   onAnalyze: () => void;
-  onManualImport: () => void;
-  onImportControlSpec: (jsonText: string) => Promise<void>;
   onEditSentence: (id: string) => void;
   onCloseEditor: () => void;
   onSaveSentence: (sentence: RecitationSentence) => void;
   onPlaySentence: (sentence: RecitationSentence) => void;
   onSave: () => void;
-  onGenerateStage: () => void;
-  onPlayStandard: () => void;
   onPublishStage: () => void;
   onPreview: () => void;
   onPublish: () => void;
@@ -2041,17 +1828,9 @@ function StudioView({
             onReferenceFile={onReferenceFile}
             onDeleteReference={onDeleteReference}
             onAnalyze={onAnalyze}
-            onManualImport={onManualImport}
           />
         ) : null}
         {step === 2 ? (
-          <ControlImportStage
-            work={work}
-            onImport={onImportControlSpec}
-            onBack={() => onStep(1)}
-          />
-        ) : null}
-        {step === 3 ? (
           <EditorStage
             work={work}
             editingSentenceId={editingSentenceId}
@@ -2063,21 +1842,13 @@ function StudioView({
             onSaveSentence={onSaveSentence}
             onPlaySentence={onPlaySentence}
             onSave={onSave}
-            onContinue={onGenerateStage}
-          />
-        ) : null}
-        {step === 4 ? (
-          <AudioStage
-            work={work}
-            onPlay={onPlayStandard}
             onContinue={onPublishStage}
-            onBack={() => onStep(3)}
           />
         ) : null}
-        {step === 5 ? (
+        {step === 3 ? (
           <PublishStage
             work={work}
-            onBack={() => onStep(4)}
+            onBack={() => onStep(2)}
             onPreview={onPreview}
             onPublish={onPublish}
           />
@@ -2224,7 +1995,7 @@ export function RecitationStudio() {
           setMode("viewer");
           setAudioSource("standard");
         } else if (stored.controlSpec) {
-          setStep(3);
+          setStep(2);
           setAudioSource((stored.standardAiAudio ?? stored.aiDemoAudio)?.timeline ? "standard" : "reference");
         } else {
           setStep(1);
@@ -2315,10 +2086,10 @@ export function RecitationStudio() {
     if (next > highestStep) return;
     setStep(next);
     setEditingSentenceId(null);
-    if (next <= 3) {
+    if (next <= 2) {
       setAudioSource(work.controlSpec && standardPlayback?.timeline ? "standard" : "reference");
     }
-    if (next >= 4 && standardPlayback) setAudioSource("standard");
+    if (next === 3 && standardPlayback) setAudioSource("standard");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -2457,18 +2228,6 @@ export function RecitationStudio() {
     return result.work;
   };
 
-  const handleManualImport = async () => {
-    try {
-      const saved = isWorkDirty || work.id.startsWith("draft-") ? await persistWorkRecord() : work;
-      if (!saved) return;
-      setStep(2);
-      setAudioSource("reference");
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
-    }
-  };
-
   const handleAnalyze = async () => {
     if (analysisJobStatus === "queued" || analysisJobStatus === "processing") return;
     if (!work.title.trim() || !work.sourceText.trim()) { showToast("请先填写作品名称和完整正文"); return; }
@@ -2559,14 +2318,14 @@ export function RecitationStudio() {
             )).work;
           }
           if (!completedWork.controlSpec) {
-            throw new Error("分析任务已结束，但没有返回当前正文的控制谱。请重试或手动导入 JSON。");
+            throw new Error("分析任务已结束，但没有返回当前正文的控制谱。请重新解析。");
           }
           setWork(completedWork);
           setIsWorkDirty(false);
           setAnalysisJobStatus("succeeded");
           setAnalysisStatus("标准 AI 朗诵解析完成，声音与图谱同源");
           setAudioSource("standard");
-          setStep(3);
+          setStep(2);
           window.scrollTo({ top: 0, behavior: "smooth" });
           showToast(`同源控制谱已生成：${completedWork.controlSpec.sentences.length} 句`);
           return;
@@ -2581,29 +2340,6 @@ export function RecitationStudio() {
       setWork((current) => ({ ...current, status: "draft" }));
       showToast(message);
     }
-  };
-
-  const handleImportControlSpec = async (jsonText: string) => {
-    const parsed = parseControlSpecText(jsonText);
-    const controlSpec = importControlSpec(
-      parsed,
-      work.sourceText,
-      work.id,
-      work.standardAiAudio?.id ?? work.referenceAudio?.id,
-      work.referenceAudioOriginal?.id,
-    );
-    const result = await apiJson<{ work: RecitationWork; control_spec: ControlSpec }>(
-      await fetch(`/api/works/${encodeURIComponent(work.id)}/control-spec`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ control_spec: controlSpec, source: "chatgpt_import" }),
-      }),
-    );
-    setWork(result.work);
-    setAudioSource(result.work.standardAiAudio?.timeline ? "standard" : "reference");
-    setStep(3);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    showToast(`控制谱已校验并保存：${result.control_spec.sentences.length} 句`);
   };
 
   const persistControlSpec = async (controlSpec: ControlSpec, message?: string) => {
@@ -2695,25 +2431,6 @@ export function RecitationStudio() {
     if (nextTrack) setAudioSource(source);
   };
 
-  const handlePlayStandard = () => {
-    const track = standardPlayback;
-    if (!track?.timeline) {
-      showToast("当前作品没有可播放的标准 AI 声音");
-      return;
-    }
-    setAudioSource("standard");
-    setSegmentEndMs(null);
-    window.setTimeout(() => {
-      const audio = audioRef.current;
-      if (!audio) return;
-      if (audio.currentTime * 1000 >= track.durationMs - 100) {
-        audio.currentTime = 0;
-        setCurrentMs(0);
-      }
-      void audio.play().catch(() => showToast("浏览器暂时无法播放，请再点一次试听"));
-    }, 0);
-  };
-
   const handlePublish = async () => {
     try {
       const result = await apiJson<{ work: RecitationWork; public_url: string }>(
@@ -2731,7 +2448,7 @@ export function RecitationStudio() {
 
   const sentences = work.controlSpec?.sentences ?? [];
   const showPlayer = Boolean(
-    standardPlayback?.timeline && work.controlSpec && (mode === "viewer" || step >= 3),
+    standardPlayback?.timeline && work.controlSpec && (mode === "viewer" || step >= 2),
   );
 
   return (
@@ -2790,16 +2507,12 @@ export function RecitationStudio() {
           onReferenceFile={handleReferenceFile}
           onDeleteReference={handleDeleteReference}
           onAnalyze={handleAnalyze}
-          onManualImport={handleManualImport}
-          onImportControlSpec={handleImportControlSpec}
           onEditSentence={setEditingSentenceId}
           onCloseEditor={() => setEditingSentenceId(null)}
           onSaveSentence={saveSentence}
           onPlaySentence={playSentence}
           onSave={() => work.controlSpec && void persistControlSpec(work.controlSpec, "控制谱草稿已保存")}
-          onGenerateStage={() => setWorkflowStep(4)}
-          onPlayStandard={handlePlayStandard}
-          onPublishStage={() => setWorkflowStep(5)}
+          onPublishStage={() => setWorkflowStep(3)}
           onPreview={() => { setAudioSource("standard"); setMode("viewer"); }}
           onPublish={handlePublish}
         />

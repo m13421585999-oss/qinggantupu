@@ -8,8 +8,8 @@
 2. 网站把正文和任务保存在 D1，把音频保存在 R2。
 3. 网站先调用 Eleven Voice Changer，把真人参考朗诵转换并保存为 `standard_ai_audio`。
 4. 独立 Python 服务只下载这条 `standard_ai_audio`，执行 ElevenLabs Forced Alignment、FFmpeg/Praat-Parselmouth 声学分析，并使用内置《朗诵表达分析规则 v1.0》和 DeepSeek 生成当前作品控制谱。
-5. 创作者在现有图谱编辑器中修改重音、停顿、拖音、语势、句尾语调和节奏；修改后 `audio_sync_status` 变为 `modified`。
-6. 发布后，观看端播放被分析的同一条 `standard_ai_audio`，提供整篇/单句播放、跳转、倍速与逐字高亮。
+5. 分析完成后直接进入图谱编辑器，创作者可一边播放同源标准声音，一边修改重音、停顿、拖音、语势、句尾语调和节奏；修改后 `audio_sync_status` 变为 `modified`。
+6. 编辑后直接进入发布预览；观看端播放被分析的同一条 `standard_ai_audio`，提供整篇/单句播放、跳转、倍速与逐字高亮。
 
 生产流程没有固定作品、固定控制谱或失败后的 Demo 回退。任一步骤失败都会显示真实错误状态。
 

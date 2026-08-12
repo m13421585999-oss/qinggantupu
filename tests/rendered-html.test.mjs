@@ -69,7 +69,9 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(schema, /audioSyncStatus/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(studio, /cloneDemoWork|createDemoControlSpec|createDemoAiAudio|demo-recitation/);
-  assert.match(studio, /导入控制谱/);
+  assert.match(studio, /title: "编辑图谱"/);
+  assert.match(studio, /title: "预览发布"/);
+  assert.doesNotMatch(studio, /导入控制谱|JSON 兜底|核对示范|ControlImportStage|AudioStage/);
   assert.match(studio, /fetch\("\/api\/works"/);
   assert.match(studio, /reference_audio_file/);
   assert.match(studio, /\/reference-audio/);

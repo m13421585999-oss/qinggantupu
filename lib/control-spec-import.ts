@@ -639,18 +639,6 @@ function validateAnnotationIndexes(
   }
 }
 
-/** Extract JSON from plain text or a single Markdown code fence, with only safe punctuation repair. */
-export function parseControlSpecText(input: string): unknown {
-  let text = input.trim().replace(/^\uFEFF/, "");
-  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  if (fenced) text = fenced[1];
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start >= 0 && end > start) text = text.slice(start, end + 1);
-  text = text.replace(/,\s*([}\]])/g, "$1");
-  return JSON.parse(text);
-}
-
 export function importControlSpec(
   rawValue: unknown,
   sourceText: string,
