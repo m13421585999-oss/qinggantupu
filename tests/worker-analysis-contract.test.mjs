@@ -3,17 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const workerUrl = new URL("../worker/index.ts", import.meta.url);
-const envUrl = new URL("../cloudflare-env.d.ts", import.meta.url);
 const schemaUrl = new URL("../db/schema.ts", import.meta.url);
 const migrationUrl = new URL("../drizzle/0000_unusual_wendell_rand.sql", import.meta.url);
 const promptTraceMigrationUrl = new URL("../drizzle/0001_long_agent_brand.sql", import.meta.url);
 const standardAudioMigrationUrl = new URL("../drizzle/0002_loud_toad.sql", import.meta.url);
 
 test("worker exposes the production standard-audio analysis contract", async () => {
-  const [worker, env] = await Promise.all([
-    readFile(workerUrl, "utf8"),
-    readFile(envUrl, "utf8"),
-  ]);
+  const worker = await readFile(workerUrl, "utf8");
 
   assert.match(worker, /const uploadMatch = .*reference-audio/);
   assert.match(worker, /const createJobMatch = .*analysis-jobs/);
@@ -44,10 +40,11 @@ test("worker exposes the production standard-audio analysis contract", async () 
   assert.doesNotMatch(worker, /\/v1\/text-to-speech\//);
   assert.doesNotMatch(worker, /DEMO_CONTROL_SPEC|createDemoControlSpec|月光下的中国/);
 
-  assert.match(env, /ANALYSIS_SERVICE_URL/);
-  assert.match(env, /ANALYSIS_SERVICE_TOKEN/);
-  assert.match(env, /ANALYSIS_CALLBACK_TOKEN/);
-  assert.doesNotMatch(env, /LLM_API_KEY/);
+  assert.match(worker, /interface Env/);
+  assert.match(worker, /ANALYSIS_SERVICE_URL/);
+  assert.match(worker, /ANALYSIS_SERVICE_TOKEN/);
+  assert.match(worker, /ANALYSIS_CALLBACK_TOKEN/);
+  assert.doesNotMatch(worker, /LLM_API_KEY/);
 });
 
 test("D1 schema and migrations retain analysis data and legacy audio metadata", async () => {
