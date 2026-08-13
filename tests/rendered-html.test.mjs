@@ -87,6 +87,10 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.doesNotMatch(studio, /个图谱句/);
   assert.doesNotMatch(studio, /朗诵作品/);
   assert.doesNotMatch(studio, /抒情朗诵 · 舒缓 · 克制/);
+  assert.match(studio, /导出本页图片/);
+  assert.match(studio, /import\("html-to-image"\)/);
+  assert.match(studio, /朗诵图谱\.png/);
+  assert.match(studio, /data-export-exclude="true"/);
   assert.match(studio, /WORK_VERSION_CONFLICT|expected_updated_at/);
   assert.match(studio, /mode === "studio" \? \(\s*<WorkLibrary/);
   assert.match(studio, /\/reference-audio/);

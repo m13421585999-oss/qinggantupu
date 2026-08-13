@@ -1681,6 +1681,47 @@ p {
   letter-spacing: 0.05em;
 }
 
+.viewer-hero-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+}
+
+.export-image-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  white-space: nowrap;
+  border: 1px solid rgba(172, 67, 48, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.88);
+  color: var(--red-dark);
+  font-size: 12px;
+  font-weight: 750;
+  box-shadow: 0 8px 24px rgba(92, 58, 35, 0.08);
+  transition: 180ms ease;
+}
+
+.export-image-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: rgba(172, 67, 48, 0.5);
+  background: #fffaf3;
+}
+
+.export-image-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.export-image-button > span {
+  font-size: 17px;
+  line-height: 1;
+}
+
 .profile-tags {
   display: flex;
   flex-wrap: wrap;
@@ -3351,6 +3392,10 @@ button.annotation-char:hover {
     gap: 28px;
   }
 
+  .viewer-hero-actions {
+    width: 100%;
+  }
+
   .viewer-legend {
     justify-content: flex-start;
   }
@@ -3462,6 +3507,15 @@ button.annotation-char:hover {
 
   .hero-play {
     width: 100%;
+  }
+
+  .viewer-hero-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .export-image-button {
+    align-self: flex-start;
   }
 
   .viewer-legend {

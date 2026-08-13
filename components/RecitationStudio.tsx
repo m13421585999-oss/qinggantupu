@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type RefObject,
   type CSSProperties,
 } from "react";
 import { importControlSpec } from "@/lib/control-spec-import";
@@ -249,6 +250,11 @@ async function apiJson<T>(response: Response): Promise<T> {
     throw new Error(String(error.message ?? `请求失败（HTTP ${response.status}）`));
   }
   return payload as T;
+}
+
+function exportFilename(title: string) {
+  const base = title.trim().replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").slice(0, 80);
+  return `${base || "朗诵情感图谱"}-朗诵图谱.png`;
 }
 
 interface AnalysisJobPayload {
@@ -644,18 +650,20 @@ function GraphSentence({
         <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
         <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
         {onPlay ? (
-          <button
-            type="button"
-            className="sentence-play"
-            onClick={(event) => {
-              event.stopPropagation();
-              onPlay();
-            }}
-            aria-label={`播放第 ${sentence.order} 句`}
-          >
-            <span aria-hidden="true">▶</span>
-            听本句
-          </button>
+          <span data-export-exclude="true">
+            <button
+              type="button"
+              className="sentence-play"
+              onClick={(event) => {
+                event.stopPropagation();
+                onPlay();
+              }}
+              aria-label={`播放第 ${sentence.order} 句`}
+            >
+              <span aria-hidden="true">▶</span>
+              听本句
+            </button>
+          </span>
         ) : null}
       </div>
 
@@ -2006,6 +2014,9 @@ function ViewerView({
   onPlayAll,
   onPlaySentence,
   onSeekSentence,
+  exportTargetRef,
+  exporting,
+  onExport,
 }: {
   work: RecitationWork;
   currentMs: number;
@@ -2014,6 +2025,9 @@ function ViewerView({
   onPlayAll: () => void;
   onPlaySentence: (sentence: RecitationSentence) => void;
   onSeekSentence: (sentence: RecitationSentence) => void;
+  exportTargetRef: RefObject<HTMLDivElement | null>;
+  exporting: boolean;
+  onExport: () => void;
 }) {
   const spec = work.controlSpec;
   const standardAudio = work.standardAiAudio ?? work.aiDemoAudio;
@@ -2032,7 +2046,7 @@ function ViewerView({
   const active = activeSentenceAt(spec.sentences, standardAudio.timeline, currentMs);
 
   return (
-    <div className="viewer-shell">
+    <div className="viewer-shell" ref={exportTargetRef}>
       <section className="viewer-hero">
         <div className="viewer-hero-art" aria-hidden="true" />
         <div className="viewer-hero-inner">
@@ -2045,13 +2059,19 @@ function ViewerView({
               <h1>{work.title}</h1>
               {work.author ? <p className="viewer-author">{work.author}</p> : null}
             </div>
-            <button type="button" className={`hero-play ${isPlaying ? "playing" : ""}`} onClick={onPlayAll}>
-              <span>{isPlaying ? "Ⅱ" : "▶"}</span>
-              <div>
-                <strong>{isPlaying ? "暂停示范" : "播放整篇"}</strong>
-                <small>{isPlaying ? "正在逐字跟随播放" : `${formatTime(standardAudio.durationMs)} · 逐字跟随`}</small>
-              </div>
-            </button>
+            <div className="viewer-hero-actions" data-export-exclude="true">
+              <button type="button" className="export-image-button" onClick={onExport} disabled={exporting}>
+                <span aria-hidden="true">⇩</span>
+                {exporting ? "正在生成图片" : "导出本页图片"}
+              </button>
+              <button type="button" className={`hero-play ${isPlaying ? "playing" : ""}`} onClick={onPlayAll}>
+                <span>{isPlaying ? "Ⅱ" : "▶"}</span>
+                <div>
+                  <strong>{isPlaying ? "暂停示范" : "播放整篇"}</strong>
+                  <small>{isPlaying ? "正在逐字跟随播放" : `${formatTime(standardAudio.durationMs)} · 逐字跟随`}</small>
+                </div>
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -2130,11 +2150,13 @@ export function RecitationStudio() {
   const [analysisJobStatus, setAnalysisJobStatus] = useState<AnalysisJobStatus>("idle");
   const [analysisStatus, setAnalysisStatus] = useState("等待参考朗诵");
   const [toast, setToast] = useState<string | null>(null);
+  const [exportingImage, setExportingImage] = useState(false);
   const [currentMs, setCurrentMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [segmentEndMs, setSegmentEndMs] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const viewerExportRef = useRef<HTMLDivElement>(null);
   const standardPlayback = work.standardAiAudio ?? work.aiDemoAudio;
   const activeTrack = audioSource === "reference" ? work.referenceAudio : standardPlayback;
   const analysisInFlight = analysisJobStatus === "queued" || analysisJobStatus === "processing";
@@ -2806,6 +2828,58 @@ export function RecitationStudio() {
     if (nextTrack) setAudioSource(source);
   };
 
+  const exportViewerImage = async () => {
+    const target = viewerExportRef.current;
+    if (!target || exportingImage) return;
+    setExportingImage(true);
+    try {
+      await document.fonts?.ready;
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
+      const { toBlob } = await import("html-to-image");
+      const width = Math.ceil(target.scrollWidth);
+      const styles = window.getComputedStyle(target);
+      const currentBottomPadding = Number.parseFloat(styles.paddingBottom) || 0;
+      const exportBottomPadding = 28;
+      const height = Math.max(
+        1,
+        Math.ceil(target.scrollHeight - currentBottomPadding + exportBottomPadding),
+      );
+      const pixelRatio = Math.max(1, Math.min(2, 15000 / Math.max(width, height)));
+      const blob = await toBlob(target, {
+        width,
+        height,
+        canvasWidth: width,
+        canvasHeight: height,
+        pixelRatio,
+        backgroundColor: "#f4efe8",
+        cacheBust: true,
+        filter: (node) => !(node instanceof HTMLElement) || node.dataset.exportExclude !== "true",
+        style: {
+          minHeight: "0",
+          paddingBottom: "28px",
+        },
+      });
+      if (!blob) throw new Error("浏览器未能生成图片文件。");
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.download = exportFilename(work.title);
+      link.href = href;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      window.setTimeout(() => {
+        link.remove();
+        URL.revokeObjectURL(href);
+      }, 60_000);
+      showToast("本页图谱 PNG 已导出");
+    } catch (error) {
+      console.error("viewer image export failed", error);
+      showToast("图片导出失败，请刷新页面后重试");
+    } finally {
+      setExportingImage(false);
+    }
+  };
+
   const createNewWork = () => {
     if (localReferenceUrlRef.current) URL.revokeObjectURL(localReferenceUrlRef.current);
     localReferenceUrlRef.current = undefined;
@@ -3005,6 +3079,9 @@ export function RecitationStudio() {
           onPlayAll={playAll}
           onPlaySentence={playSentence}
           onSeekSentence={seekSentence}
+          exportTargetRef={viewerExportRef}
+          exporting={exportingImage}
+          onExport={() => void exportViewerImage()}
         />
       )}
 
