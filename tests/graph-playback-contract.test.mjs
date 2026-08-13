@@ -112,6 +112,20 @@ test("comma enumeration comma and period each fully replace adjacent pause marks
   assert.equal(renderedTrackText(units), "甲、乙，丙→。");
 });
 
+test("viewer chrome explains every graph symbol and the shared-audio promise", async () => {
+  const studio = await readFile(new URL("../components/RecitationStudio.tsx", import.meta.url), "utf8");
+  assert.match(studio, /红字：表达焦点/);
+  assert.match(studio, /\/<\/b> 短停/);
+  assert.match(studio, /长停/);
+  assert.match(studio, /拖音/);
+  assert.match(studio, /↗ ↘ →<\/b> 句尾语调/);
+  assert.match(studio, /曲线：宏观语势/);
+  assert.match(studio, /声音与图谱同源/);
+  assert.match(studio, /播放整篇/);
+  assert.match(studio, /听本句/);
+  assert.match(studio, /标准 AI 朗诵/);
+});
+
 test("sentence playback adds pre-roll and tail padding without changing timestamps", () => {
   assert.equal(SENTENCE_PRE_ROLL_MS, 180);
   assert.equal(SENTENCE_TAIL_PADDING_MS, 120);

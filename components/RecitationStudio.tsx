@@ -56,6 +56,14 @@ const prosodyOptions = Object.keys(PROSODY_LABELS) as ProsodyType[];
 const rhythmOptions = Object.keys(RHYTHM_LABELS) as Rhythm[];
 const endingOptions = Object.keys(ENDING_LABELS) as EndingTone[];
 
+const GENRE_LABELS: Record<RecitationWork["genre"], string> = {
+  modern_poetry: "现代诗",
+  classical_poetry: "古典诗词",
+  prose: "散文",
+  speech: "演讲",
+  other: "朗诵作品",
+};
+
 function formatTime(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -741,7 +749,7 @@ function Player({
   const activeSentence = activeSentenceAt(sentences, track.timeline, currentMs);
 
   return (
-    <div className={`player ${compact ? "player-compact" : ""}`}>
+    <div className={`player ${compact ? "player-compact" : ""} ${isPlaying ? "playing" : ""}`}>
       <button
         type="button"
         className="play-main"
@@ -754,10 +762,10 @@ function Player({
         <div className="player-now">
           <span>
             {compact
-              ? `标准 AI 朗诵 · ${title}`
+              ? `标准 AI 朗诵${activeSentence ? ` · 第 ${activeSentence.order} 句` : " · 整篇"}`
               : `${source === "reference" ? "真人原始朗诵" : "标准 AI 朗诵"}${activeSentence ? ` · 第 ${activeSentence.order} 句` : ""}`}
           </span>
-          <strong>{activeSentence?.text ?? track.filename}</strong>
+          <strong>{activeSentence?.text ?? title}</strong>
         </div>
         <label className="progress-wrap">
           <span className="visually-hidden">播放进度</span>
@@ -1727,23 +1735,26 @@ function ViewerView({
   return (
     <div className="viewer-shell">
       <section className="viewer-hero">
-        <div className="hero-orb hero-orb-one" />
-        <div className="hero-orb hero-orb-two" />
         <div className="viewer-hero-inner">
           <div className="viewer-breadcrumb">
             <span>作品库</span><b>›</b><strong>{work.title}</strong>
           </div>
           <div className="viewer-title-row">
-            <div>
+            <div className="viewer-title-block">
               <p className="eyebrow">朗诵情感图谱</p>
               <h1>{work.title}</h1>
-              <p className="viewer-author">{work.author}</p>
+              {work.author ? <p className="viewer-author">{work.author}</p> : null}
+              <div className="viewer-meta">
+                <span>{GENRE_LABELS[work.genre] ?? "朗诵作品"}</span>
+                <span>{spec.sentences.length} 个图谱句</span>
+                <span>{formatTime(standardAudio.durationMs)} · 标准 AI 朗诵</span>
+              </div>
             </div>
-            <button type="button" className="hero-play" onClick={onPlayAll}>
+            <button type="button" className={`hero-play ${isPlaying ? "playing" : ""}`} onClick={onPlayAll}>
               <span>{isPlaying ? "Ⅱ" : "▶"}</span>
               <div>
                 <strong>{isPlaying ? "暂停示范" : "播放整篇"}</strong>
-                <small>{formatTime(standardAudio.durationMs)} · 标准 AI 朗诵 · 逐字跟随</small>
+                <small>{isPlaying ? "正在逐字跟随播放" : `${formatTime(standardAudio.durationMs)} · 逐字跟随`}</small>
               </div>
             </button>
           </div>
@@ -1756,13 +1767,20 @@ function ViewerView({
             <p className="eyebrow">三层情感图谱</p>
             <h2>跟着红字、停顿和声音曲线来听</h2>
           </div>
-          <div className="legend viewer-legend">
-            <span><i className="legend-focus" />表达焦点</span>
-            <span><b>/</b> 短停</span>
-            <span><b>{"///"}</b> 长停</span>
-            <span><b>——</b> 拖音</span>
-            <span><b>↗ ↘ →</b> 句尾语调</span>
-          </div>
+        </div>
+
+        <div className="legend viewer-legend" aria-label="图谱符号说明">
+          <span><i className="legend-focus" />红字：表达焦点</span>
+          <span><b>/</b> 短停</span>
+          <span><b>{"///"}</b> 长停</span>
+          <span><b className="legend-prolong">——</b> 拖音</span>
+          <span><b>↗ ↘ →</b> 句尾语调</span>
+          <span>
+            <svg className="legend-curve" viewBox="0 0 34 12" aria-hidden="true">
+              <path d="M2 9 C 8 9 9 3 15 3 S 24 8 32 5" />
+            </svg>
+            曲线：宏观语势
+          </span>
         </div>
 
         <div className="viewer-graph-list">
@@ -1780,6 +1798,14 @@ function ViewerView({
               </div>
             );
           })}
+        </div>
+
+        <div className="viewer-footnote">
+          <span aria-hidden="true">同</span>
+          <p>
+            <strong>声音与图谱同源。</strong>
+            你听到的每一个字都来自同一条标准 AI 朗诵；逐字高亮与语势曲线以字符级时间戳同步。
+          </p>
         </div>
       </section>
     </div>
