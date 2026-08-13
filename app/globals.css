@@ -958,18 +958,6 @@ p {
   background: rgba(255, 253, 248, 0.9);
 }
 
-.toolbar-title {
-  font-family: "Songti SC", STSong, serif;
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.toolbar-subtitle {
-  margin-left: 9px;
-  color: var(--ink-faint);
-  font-size: 9px;
-}
-
 .legend {
   display: flex;
   flex-wrap: wrap;
@@ -1525,14 +1513,6 @@ p {
 .cover-arc i:nth-child(2) { left: 51%; top: -12px; }
 .cover-arc i:nth-child(3) { right: 14%; top: 3px; }
 
-.cover-meta {
-  position: absolute;
-  bottom: 28px;
-  color: rgba(255, 248, 237, 0.56);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-}
-
 .release-details {
   display: flex;
   flex-direction: column;
@@ -1701,33 +1681,6 @@ p {
   letter-spacing: 0.05em;
 }
 
-.viewer-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 20px;
-  color: var(--ink-soft);
-  font-size: 12px;
-}
-
-.viewer-meta span {
-  display: inline-flex;
-  min-height: 30px;
-  align-items: center;
-  padding: 0 12px;
-  border: 1px solid rgba(206, 185, 158, 0.65);
-  border-radius: 999px;
-  background: rgba(255, 253, 248, 0.72);
-}
-
-.viewer-meta span:first-child {
-  border-color: rgba(185, 64, 46, 0.3);
-  background: var(--red-soft);
-  color: var(--red-dark);
-  font-weight: 700;
-}
-
 .profile-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1845,21 +1798,6 @@ p {
   width: min(1180px, calc(100% - 48px));
   margin: 0 auto;
   padding: 46px 0 24px;
-}
-
-.viewer-section-heading {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 18px;
-}
-
-.viewer-section-heading h2 {
-  margin-top: 8px;
-  font-family: "Songti SC", STSong, serif;
-  font-size: 25px;
-  letter-spacing: 0.02em;
 }
 
 .viewer-legend {
@@ -3413,11 +3351,6 @@ button.annotation-char:hover {
     gap: 28px;
   }
 
-  .viewer-section-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
   .viewer-legend {
     justify-content: flex-start;
   }
@@ -3527,16 +3460,6 @@ button.annotation-char:hover {
     font-size: clamp(32px, 10vw, 42px);
   }
 
-  .viewer-meta {
-    gap: 6px;
-    font-size: 11px;
-  }
-
-  .viewer-meta span {
-    min-height: 28px;
-    padding: 0 10px;
-  }
-
   .hero-play {
     width: 100%;
   }
@@ -3629,10 +3552,6 @@ button.annotation-char:hover {
     min-height: 36px;
     padding: 0 13px;
     font-size: 11px;
-  }
-
-  .viewer-section-heading h2 {
-    font-size: 23px;
   }
 
   .player {
