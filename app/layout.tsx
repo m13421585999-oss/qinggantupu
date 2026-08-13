@@ -54,7 +54,20 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body>
+        <div className="mobile-portrait-gate" role="status" aria-live="polite">
+          <div className="mobile-portrait-gate-card">
+            <span className="mobile-portrait-brand" aria-hidden="true">声</span>
+            <span className="mobile-rotate-device" aria-hidden="true">
+              <span />
+            </span>
+            <p className="eyebrow">横屏观看</p>
+            <strong>请将手机旋转至横屏</strong>
+            <p>横屏后将使用与电脑端一致的完整朗诵图谱。</p>
+          </div>
+        </div>
+        <div className="app-orientation-shell">{children}</div>
+      </body>
     </html>
   );
 }

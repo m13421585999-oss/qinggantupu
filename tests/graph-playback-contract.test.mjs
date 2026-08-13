@@ -126,6 +126,28 @@ test("viewer chrome explains every graph symbol and the shared-audio promise", a
   assert.match(studio, /标准 AI 朗诵/);
 });
 
+test("mobile uses a portrait rotation gate and preserves the desktop structure in landscape", async () => {
+  const [layout, css] = await Promise.all([
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(layout, /className="mobile-portrait-gate"/);
+  assert.match(layout, /请将手机旋转至横屏/);
+  assert.match(layout, /与电脑端一致的完整朗诵图谱/);
+  assert.match(css, /\.mobile-portrait-gate\s*\{\s*display:\s*none;/s);
+  assert.match(
+    css,
+    /@media \(max-width:\s*900px\) and \(orientation:\s*portrait\)[\s\S]*?\.app-orientation-shell\s*\{\s*display:\s*none;/,
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*900px\) and \(orientation:\s*portrait\)[\s\S]*?\.mobile-portrait-gate\s*\{[\s\S]*?display:\s*grid;/,
+  );
+  assert.match(css, /@media \(max-width:\s*900px\) and \(orientation:\s*landscape\)/);
+  assert.match(css, /@media \(max-width:\s*620px\) and \(orientation:\s*portrait\)/);
+  assert.doesNotMatch(css, /@media \(max-width:\s*620px\)\s*\{/);
+});
+
 test("sentence playback adds pre-roll and tail padding without changing timestamps", () => {
   assert.equal(SENTENCE_PRE_ROLL_MS, 180);
   assert.equal(SENTENCE_TAIL_PADDING_MS, 120);
