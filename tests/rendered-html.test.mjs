@@ -91,6 +91,7 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(studio, /import\("html-to-image"\)/);
   assert.match(studio, /朗诵图谱\.png/);
   assert.match(studio, /data-export-exclude="true"/);
+  assert.match(studio, /stroke="#a93627"/);
   assert.match(studio, /WORK_VERSION_CONFLICT|expected_updated_at/);
   assert.match(studio, /mode === "studio" \? \(\s*<WorkLibrary/);
   assert.match(studio, /\/reference-audio/);
