@@ -50,6 +50,11 @@ function now() {
   return new Date().toISOString();
 }
 
+function nextUpdatedAt(previous?: string | null) {
+  const previousMs = previous ? Date.parse(previous) : Number.NaN;
+  return new Date(Math.max(Date.now(), Number.isFinite(previousMs) ? previousMs + 1 : 0)).toISOString();
+}
+
 function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
@@ -312,6 +317,7 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
     currentSpecVersionId: selectedSpecVersionId ?? undefined,
     publishedRevisionId: publication?.id ?? work.published_revision_id ?? undefined,
     analysisJobId: analysisJob?.id ?? undefined,
+    analysisJobStatus: analysisJob?.status ?? undefined,
     analysisPackage,
     referenceAudio: referenceTrack,
     referenceAudioOriginal: referenceTrack,
@@ -325,6 +331,63 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
       message: analysisJob.error_message,
     } : undefined,
   };
+}
+
+async function listWorks(request: Request, env: Env) {
+  if (!env.DB) {
+    return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 尚未绑定，无法读取作品库。");
+  }
+  const url = new URL(request.url);
+  const query = String(url.searchParams.get("q") ?? "").trim().slice(0, 80);
+  const requestedLimit = Number(url.searchParams.get("limit") ?? 30);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
+    : 30;
+  const select = `SELECT
+      w.id, w.slug, w.title, w.author, w.status, w.audio_sync_status,
+      w.current_spec_version_id, w.created_at, w.updated_at,
+      EXISTS (
+        SELECT 1 FROM assets a
+         WHERE a.work_id = w.id AND a.kind = 'reference_audio'
+      ) AS has_reference_audio,
+      EXISTS (
+        SELECT 1 FROM assets a
+         WHERE a.work_id = w.id AND a.kind = 'standard_ai_audio'
+      ) AS has_standard_audio,
+      EXISTS (
+        SELECT 1 FROM publications p
+         WHERE p.work_id = w.id AND p.state = 'published'
+      ) AS has_published_version
+    FROM works w`;
+  const statement = query
+    ? env.DB.prepare(
+      `${select}
+       WHERE w.title LIKE ? ESCAPE '\\' OR COALESCE(w.author, '') LIKE ? ESCAPE '\\'
+       ORDER BY w.updated_at DESC
+       LIMIT ?`,
+    ).bind(
+      `%${query.replace(/[\\%_]/g, "\\$&")}%`,
+      `%${query.replace(/[\\%_]/g, "\\$&")}%`,
+      limit,
+    )
+    : env.DB.prepare(`${select} ORDER BY w.updated_at DESC LIMIT ?`).bind(limit);
+  const result = await statement.all<Row>();
+  return json({
+    items: (result.results ?? []).map((work) => ({
+      id: String(work.id),
+      slug: String(work.slug),
+      title: String(work.title),
+      author: work.author == null ? undefined : String(work.author),
+      status: String(work.status),
+      audioSyncStatus: String(work.audio_sync_status ?? "pending"),
+      hasReferenceAudio: Number(work.has_reference_audio ?? 0) > 0,
+      hasStandardAudio: Number(work.has_standard_audio ?? 0) > 0,
+      hasControlSpec: Boolean(work.current_spec_version_id),
+      hasPublishedVersion: Number(work.has_published_version ?? 0) > 0,
+      createdAt: String(work.created_at),
+      updatedAt: String(work.updated_at),
+    })),
+  });
 }
 
 async function createWork(request: Request, env: Env) {
@@ -345,49 +408,94 @@ async function createWork(request: Request, env: Env) {
   const author = String(body.author ?? "").trim();
   const fullText = String(body.full_text ?? "");
   const requestedWorkId = String(body.work_id ?? "").trim();
+  const expectedUpdatedAt = String(body.expected_updated_at ?? body.expectedUpdatedAt ?? "").trim();
   if (!title || !fullText.trim()) {
     return apiError(400, "INVALID_WORK", "作品名称和完整正文不能为空。");
   }
 
-  const savedAt = now();
   if (requestedWorkId) {
     const existing = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(requestedWorkId));
     if (!existing) return apiError(404, "WORK_NOT_FOUND", "找不到要更新的作品。");
+    if (expectedUpdatedAt && String(existing.updated_at) !== expectedUpdatedAt) {
+      return apiError(
+        409,
+        "WORK_VERSION_CONFLICT",
+        "作品已在其他窗口更新。为避免覆盖最新内容，请重新加载后再编辑。",
+        { expected_updated_at: expectedUpdatedAt, actual_updated_at: existing.updated_at },
+      );
+    }
+    const savedAt = nextUpdatedAt(String(existing.updated_at));
     const sourceChanged = String(existing.source_text) !== fullText;
     if (sourceChanged) {
-      await env.DB.batch([
+      const results = await env.DB.batch([
         env.DB.prepare(
           `UPDATE works
               SET title = ?, author = ?, source_text = ?, status = 'draft', audio_sync_status = 'pending',
                   current_spec_version_id = NULL, published_revision_id = NULL, updated_at = ?
-            WHERE id = ?`,
-        ).bind(title, author || null, fullText, savedAt, requestedWorkId),
+            WHERE id = ?${expectedUpdatedAt ? " AND updated_at = ?" : ""}`,
+        ).bind(
+          title,
+          author || null,
+          fullText,
+          savedAt,
+          requestedWorkId,
+          ...expectedUpdatedAt ? [expectedUpdatedAt] : [],
+        ),
         env.DB.prepare(
-          "UPDATE publications SET state = 'withdrawn', withdrawn_at = ? WHERE work_id = ? AND state = 'published'",
-        ).bind(savedAt, requestedWorkId),
+          `UPDATE publications SET state = 'withdrawn', withdrawn_at = ?
+            WHERE work_id = ? AND state = 'published'
+              AND EXISTS (SELECT 1 FROM works WHERE id = ? AND updated_at = ?)`,
+        ).bind(savedAt, requestedWorkId, requestedWorkId, savedAt),
         env.DB.prepare(
-          "UPDATE assets SET kind = 'reference_audio_archived' WHERE work_id = ? AND kind = 'reference_audio'",
-        ).bind(requestedWorkId),
+          `UPDATE assets SET kind = 'reference_audio_archived'
+            WHERE work_id = ? AND kind = 'reference_audio'
+              AND EXISTS (SELECT 1 FROM works WHERE id = ? AND updated_at = ?)`,
+        ).bind(requestedWorkId, requestedWorkId, savedAt),
         env.DB.prepare(
-          "UPDATE assets SET kind = 'standard_ai_audio_archived' WHERE work_id = ? AND kind = 'standard_ai_audio'",
-        ).bind(requestedWorkId),
+          `UPDATE assets SET kind = 'standard_ai_audio_archived'
+            WHERE work_id = ? AND kind = 'standard_ai_audio'
+              AND EXISTS (SELECT 1 FROM works WHERE id = ? AND updated_at = ?)`,
+        ).bind(requestedWorkId, requestedWorkId, savedAt),
         env.DB.prepare(
           `UPDATE processing_jobs
               SET status = 'failed', progress = 0, error_code = 'WORK_SOURCE_CHANGED',
                   error_message = '作品正文已更新，请重新上传匹配的参考朗诵并发起分析。', updated_at = ?
             WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
-              AND status IN ('queued', 'processing')`,
-        ).bind(savedAt, requestedWorkId),
+              AND status IN ('queued', 'processing')
+              AND EXISTS (SELECT 1 FROM works WHERE id = ? AND updated_at = ?)`,
+        ).bind(savedAt, requestedWorkId, requestedWorkId, savedAt),
       ]);
+      if (expectedUpdatedAt && Number(results[0]?.meta.changes ?? 0) === 0) {
+        return apiError(
+          409,
+          "WORK_VERSION_CONFLICT",
+          "作品已在其他窗口更新。为避免覆盖最新内容，请重新加载后再编辑。",
+        );
+      }
     } else {
-      await env.DB.prepare(
-        "UPDATE works SET title = ?, author = ?, updated_at = ? WHERE id = ?",
-      ).bind(title, author || null, savedAt, requestedWorkId).run();
+      const updated = await env.DB.prepare(
+        `UPDATE works SET title = ?, author = ?, updated_at = ?
+          WHERE id = ?${expectedUpdatedAt ? " AND updated_at = ?" : ""}`,
+      ).bind(
+        title,
+        author || null,
+        savedAt,
+        requestedWorkId,
+        ...expectedUpdatedAt ? [expectedUpdatedAt] : [],
+      ).run();
+      if (expectedUpdatedAt && Number(updated.meta.changes ?? 0) === 0) {
+        return apiError(
+          409,
+          "WORK_VERSION_CONFLICT",
+          "作品已在其他窗口更新。为避免覆盖最新内容，请重新加载后再编辑。",
+        );
+      }
     }
     return json({ work: await getWorkPayload(env, requestedWorkId) });
   }
 
   const workId = id("work");
+  const savedAt = now();
   await env.DB.prepare(
     `INSERT INTO works
        (id, slug, title, author, genre, language, source_text, status, created_at, updated_at)
@@ -420,6 +528,15 @@ async function uploadReferenceAudio(request: Request, env: Env, workId: string) 
   } catch {
     return apiError(400, "INVALID_MULTIPART", "参考朗诵必须使用文件上传表单。");
   }
+  const expectedUpdatedAt = String(form.get("expected_updated_at") ?? "").trim();
+  if (expectedUpdatedAt && String(work.updated_at) !== expectedUpdatedAt) {
+    return apiError(
+      409,
+      "WORK_VERSION_CONFLICT",
+      "作品已在其他窗口更新。为避免覆盖最新内容，请重新加载后再编辑。",
+      { expected_updated_at: expectedUpdatedAt, actual_updated_at: work.updated_at },
+    );
+  }
   const fileValue = form.get("reference_audio_file") ?? form.get("file");
   if (!(fileValue instanceof File) || fileValue.size <= 0) {
     return apiError(400, "REFERENCE_AUDIO_REQUIRED", "请选择真实的参考朗诵音频文件。");
@@ -436,7 +553,7 @@ async function uploadReferenceAudio(request: Request, env: Env, workId: string) 
   const durationValue = Number(form.get("duration_ms") ?? 0);
   const durationMs = Number.isFinite(durationValue) && durationValue > 0 ? Math.round(durationValue) : null;
   const assetId = id("asset");
-  const uploadedAt = now();
+  const uploadedAt = nextUpdatedAt(String(work.updated_at));
   const bytes = await fileValue.arrayBuffer();
   const checksum = await sha256Hex(bytes);
   const filename = fileValue.name || "reference-audio";
@@ -485,6 +602,53 @@ async function uploadReferenceAudio(request: Request, env: Env, workId: string) 
   const asset = await first<Row>(env.DB.prepare("SELECT * FROM assets WHERE id = ?").bind(assetId));
   if (!asset) return apiError(500, "ASSET_SAVE_FAILED", "参考朗诵已上传，但素材记录保存失败。");
   return json({ reference_audio: referenceAssetPayload(asset), work: await getWorkPayload(env, workId) }, 201);
+}
+
+async function deleteReferenceAudio(request: Request, env: Env, workId: string) {
+  if (!env.DB) return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 尚未绑定，无法更新作品素材。");
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  let expectedUpdatedAt = "";
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    expectedUpdatedAt = String(body.expected_updated_at ?? body.expectedUpdatedAt ?? "").trim();
+  } catch {
+    // An empty DELETE body is accepted for compatibility with older clients.
+  }
+  if (expectedUpdatedAt && String(work.updated_at) !== expectedUpdatedAt) {
+    return apiError(
+      409,
+      "WORK_VERSION_CONFLICT",
+      "作品已在其他窗口更新。为避免覆盖最新内容，请重新加载后再编辑。",
+      { expected_updated_at: expectedUpdatedAt, actual_updated_at: work.updated_at },
+    );
+  }
+  const deletedAt = nextUpdatedAt(String(work.updated_at));
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE assets SET kind = 'reference_audio_archived' WHERE work_id = ? AND kind = 'reference_audio'",
+    ).bind(workId),
+    env.DB.prepare(
+      "UPDATE assets SET kind = 'standard_ai_audio_archived' WHERE work_id = ? AND kind = 'standard_ai_audio'",
+    ).bind(workId),
+    env.DB.prepare(
+      `UPDATE processing_jobs
+          SET status = 'failed', progress = 0, error_code = 'REFERENCE_AUDIO_REMOVED',
+              error_message = '参考朗诵已移除，请上传匹配音频并重新发起分析。', updated_at = ?
+        WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
+          AND status IN ('queued', 'processing')`,
+    ).bind(deletedAt, workId),
+    env.DB.prepare(
+      `UPDATE works
+          SET status = 'draft', audio_sync_status = 'pending', current_spec_version_id = NULL,
+              published_revision_id = NULL, updated_at = ?
+        WHERE id = ?`,
+    ).bind(deletedAt, workId),
+    env.DB.prepare(
+      "UPDATE publications SET state = 'withdrawn', withdrawn_at = ? WHERE work_id = ? AND state = 'published'",
+    ).bind(deletedAt, workId),
+  ]);
+  return json({ ok: true, work: await getWorkPayload(env, workId) });
 }
 
 async function ensureStandardAiAudio(env: Env, work: Row, reference: Row) {
@@ -546,7 +710,7 @@ async function ensureStandardAiAudio(env: Env, work: Row, reference: Row) {
   }
 
   const assetId = id("asset");
-  const createdAt = now();
+  const createdAt = nextUpdatedAt(String(work.updated_at));
   const checksum = await sha256Hex(standardBytes.slice().buffer);
   const storageKey = `works/${work.id}/standard-ai/${assetId}.mp3`;
   const metadata = {
@@ -784,6 +948,8 @@ async function createAnalysisJob(env: Env, origin: string, workId: string) {
     ).bind(now(), workId).run();
     return apiError(502, "VOICE_CHANGER_FAILED", message);
   }
+  const currentWork = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!currentWork) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
   let active = await first<Row>(env.DB.prepare(
     `SELECT * FROM processing_jobs
       WHERE work_id = ? AND type = 'standard_audio_analysis' AND status IN ('queued', 'processing')
@@ -801,7 +967,7 @@ async function createAnalysisJob(env: Env, origin: string, workId: string) {
   }
 
   const jobId = id("job");
-  const createdAt = now();
+  const createdAt = nextUpdatedAt(String(currentWork.updated_at));
   const handoffExpiresAt = Math.floor(Date.now() / 1000) + 6 * 60 * 60;
   await env.DB.batch([
     env.DB.prepare(
@@ -1209,6 +1375,15 @@ async function saveControlSpec(request: Request, env: Env, workId: string) {
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
   if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
   const body = await request.json() as Record<string, unknown>;
+  const expectedUpdatedAt = String(body.expected_updated_at ?? body.expectedUpdatedAt ?? "").trim();
+  if (expectedUpdatedAt && String(work.updated_at) !== expectedUpdatedAt) {
+    return apiError(
+      409,
+      "WORK_VERSION_CONFLICT",
+      "作品已在其他窗口更新。为避免覆盖最新控制谱，请重新加载后再编辑。",
+      { expected_updated_at: expectedUpdatedAt, actual_updated_at: work.updated_at },
+    );
+  }
   const spec = body.control_spec as Record<string, unknown> | undefined;
   if (!spec) return apiError(400, "CONTROL_SPEC_REQUIRED", "请提供 control_spec。");
   const analysisPackage = await latestAnalysisPackage(env, workId, String(work.source_text));
@@ -1224,7 +1399,7 @@ async function saveControlSpec(request: Request, env: Env, workId: string) {
   const version = Number(latest?.version ?? 0) + 1;
   const specId = id("spec");
   const updated = { ...specWithTiming, id: specId, workId, version };
-  const createdAt = now();
+  const createdAt = nextUpdatedAt(String(work.updated_at));
   const source = String(body.source ?? "human");
   const standardAudio = await first<Row>(env.DB.prepare(
     "SELECT id FROM assets WHERE work_id = ? AND kind = 'standard_ai_audio' ORDER BY created_at DESC LIMIT 1",
@@ -1248,12 +1423,27 @@ async function saveControlSpec(request: Request, env: Env, workId: string) {
   return json({ control_spec: updated, work: await getWorkPayload(env, workId) });
 }
 
-async function publishWork(env: Env, workId: string, origin: string) {
+async function publishWork(request: Request, env: Env, workId: string, origin: string) {
   if (!env.DB || !env.AUDIO_BUCKET) {
     return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 或 R2 尚未绑定，无法发布作品。");
   }
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
   if (!work?.current_spec_version_id) return apiError(409, "CONTROL_SPEC_REQUIRED", "作品没有已确认控制谱。");
+  let expectedUpdatedAt = "";
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    expectedUpdatedAt = String(body.expected_updated_at ?? body.expectedUpdatedAt ?? "").trim();
+  } catch {
+    // An empty POST body is accepted for compatibility with older clients.
+  }
+  if (expectedUpdatedAt && String(work.updated_at) !== expectedUpdatedAt) {
+    return apiError(
+      409,
+      "WORK_VERSION_CONFLICT",
+      "作品已在其他窗口更新。为避免发布旧版本，请重新加载后再发布。",
+      { expected_updated_at: expectedUpdatedAt, actual_updated_at: work.updated_at },
+    );
+  }
   const audio = await first<Row>(env.DB.prepare(
     `SELECT av.id, av.audio_asset_id, av.timeline_json, a.kind AS asset_kind
        FROM audio_versions av
@@ -1274,7 +1464,7 @@ async function publishWork(env: Env, workId: string, origin: string) {
   }
   const existing = await first<Row>(env.DB.prepare("SELECT id FROM publications WHERE slug = ?").bind(work.slug));
   const publicationId = String(existing?.id ?? id("publication"));
-  const publishedAt = now();
+  const publishedAt = nextUpdatedAt(String(work.updated_at));
   const publicationStatement = existing
     ? env.DB.prepare(
       "UPDATE publications SET control_spec_version_id = ?, audio_version_id = ?, state = 'published', published_at = ?, withdrawn_at = NULL WHERE id = ?",
@@ -1355,12 +1545,14 @@ async function api(request: Request, env: Env): Promise<Response | null> {
       },
     });
   }
+  if (url.pathname === "/api/works" && request.method === "GET") return listWorks(request, env);
   if (url.pathname === "/api/works" && request.method === "POST") return createWork(request, env);
   if (url.pathname === "/api/analysis-jobs" && request.method === "POST") {
     return createAnalysisJobFromRequest(request, env, url.origin);
   }
   const uploadMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/reference-audio$/);
   if (uploadMatch && request.method === "POST") return uploadReferenceAudio(request, env, uploadMatch[1]);
+  if (uploadMatch && request.method === "DELETE") return deleteReferenceAudio(request, env, uploadMatch[1]);
   const createJobMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/analysis-jobs$/);
   if (createJobMatch && request.method === "POST") {
     return createAnalysisJob(env, url.origin, createJobMatch[1]);
@@ -1383,7 +1575,7 @@ async function api(request: Request, env: Env): Promise<Response | null> {
   const specMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/control-spec$/);
   if (specMatch && request.method === "PATCH") return saveControlSpec(request, env, specMatch[1]);
   const publishMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/publish$/);
-  if (publishMatch && request.method === "POST") return publishWork(env, publishMatch[1], url.origin);
+  if (publishMatch && request.method === "POST") return publishWork(request, env, publishMatch[1], url.origin);
   return apiError(404, "API_NOT_FOUND", "找不到接口。");
 }
 

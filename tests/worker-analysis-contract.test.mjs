@@ -47,6 +47,19 @@ test("worker exposes the production standard-audio analysis contract", async () 
   assert.doesNotMatch(worker, /LLM_API_KEY/);
 });
 
+test("worker exposes a searchable work library with optimistic concurrency", async () => {
+  const worker = await readFile(workerUrl, "utf8");
+
+  assert.match(worker, /request\.method === "GET"\) return listWorks/);
+  assert.match(worker, /ORDER BY w\.updated_at DESC/);
+  assert.match(worker, /w\.title LIKE \? ESCAPE/);
+  assert.match(worker, /COALESCE\(w\.author, ''\) LIKE \? ESCAPE/);
+  assert.match(worker, /expected_updated_at/);
+  assert.match(worker, /WORK_VERSION_CONFLICT/);
+  assert.match(worker, /status:\s*409|409,\s*"WORK_VERSION_CONFLICT"/);
+  assert.match(worker, /request\.method === "DELETE"\) return deleteReferenceAudio/);
+});
+
 test("D1 schema and migrations retain analysis data and legacy audio metadata", async () => {
   const [schema, migration, promptTraceMigration, standardAudioMigration] = await Promise.all([
     readFile(schemaUrl, "utf8"),
