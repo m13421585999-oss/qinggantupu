@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -55,6 +56,14 @@ const workflowSteps: Array<{
 const prosodyOptions = Object.keys(PROSODY_LABELS) as ProsodyType[];
 const rhythmOptions = Object.keys(RHYTHM_LABELS) as Rhythm[];
 const endingOptions = Object.keys(ENDING_LABELS) as EndingTone[];
+
+const GENRE_LABELS: Record<RecitationWork["genre"], string> = {
+  modern_poetry: "现代诗",
+  classical_poetry: "古典诗词",
+  prose: "散文",
+  speech: "演讲",
+  other: "朗诵作品",
+};
 
 function formatTime(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -248,11 +257,12 @@ function AcousticProsodyCurve({
   activeTokenIndex?: number;
   editing: boolean;
 }) {
+  const gradientId = useId();
   const rowPoints = teachingPoints.filter((point) => Number.isFinite(metrics.tokenCenters[point.tokenIndex]));
   if (metrics.width <= 0 || !rowPoints.length) return null;
 
   const height = metrics.height;
-  const verticalPadding = 12;
+  const verticalPadding = 7;
   const visualStep = (height - verticalPadding * 2) / (PROSODY_VISUAL_LEVEL_COUNT - 1);
   const points = rowPoints.map((point) => ({
     ...point,
@@ -263,6 +273,8 @@ function AcousticProsodyCurve({
   const label = sentence.prosody.length
     ? sentence.prosody.map((event) => PROSODY_LABELS[event.type]).join("、")
     : "教学宏观语势";
+  const spline = monotoneSplinePath(points);
+  const fillPath = `${spline} L ${points.at(-1)!.x} ${height + 1} L ${points[0].x} ${height + 1} Z`;
 
   return (
     <svg
@@ -272,6 +284,13 @@ function AcousticProsodyCurve({
       role="img"
       aria-label={`${label}；每字宏观语势曲线`}
     >
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#b6452e" stopOpacity="0.14" />
+          <stop offset="100%" stopColor="#b6452e" stopOpacity="0.015" />
+        </linearGradient>
+      </defs>
+      <path className="curve-fill" d={fillPath} fill={`url(#${gradientId})`} />
       <line
         className="curve-baseline"
         x1={points[0].x}
@@ -279,7 +298,7 @@ function AcousticProsodyCurve({
         y1={baselineY}
         y2={baselineY}
       />
-      <path className="curve-path acoustic-path" d={monotoneSplinePath(points)} />
+      <path className="curve-path acoustic-path" d={spline} />
       {points.map((point) => {
         const playing = point.tokenIndex === activeTokenIndex;
         return (
@@ -291,7 +310,7 @@ function AcousticProsodyCurve({
             key={point.tokenIndex}
             cx={point.x}
             cy={point.y}
-            r={playing ? 3.75 : editing ? 2.5 : 1.8}
+            r={playing ? 4.75 : editing ? 3.4 : 2.9}
           />
         );
       })}
@@ -426,11 +445,6 @@ function IndexedGraphTrack({
 
   return (
     <div className="graph-track-layout">
-      <div className="track-labels" aria-hidden="true">
-        <span><i />拼音</span>
-        <span className="strong"><i />文稿</span>
-        <span><i />语势</span>
-      </div>
       <div className="graph-track-viewport">
         <div className="attached-token-track">
           <div className="token-unit-flow" ref={trackRef} aria-label={sentence.text}>
@@ -588,15 +602,9 @@ function GraphSentence({
       tabIndex={onSelect ? 0 : undefined}
       aria-label={onSelect ? `选择第 ${sentence.order} 句：${sentence.text}` : undefined}
     >
-      <span className="sentence-card-corner corner-top-left" aria-hidden="true" />
-      <span className="sentence-card-corner corner-top-right" aria-hidden="true" />
-      <span className="sentence-card-corner corner-bottom-left" aria-hidden="true" />
-      <span className="sentence-card-corner corner-bottom-right" aria-hidden="true" />
-      <div className="sentence-card-topline">
-        <div className="sentence-badges">
-          <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
-          <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
-        </div>
+      <div className="sentence-rail">
+        <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
+        <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
         {onPlay ? (
           <button
             type="button"
@@ -613,11 +621,13 @@ function GraphSentence({
         ) : null}
       </div>
 
-      <IndexedGraphTrack
-        sentence={sentence}
-        activeTokenId={activeTokenId}
-        editing={Boolean(editing)}
-      />
+      <div className="sentence-body">
+        <IndexedGraphTrack
+          sentence={sentence}
+          activeTokenId={activeTokenId}
+          editing={Boolean(editing)}
+        />
+      </div>
     </div>
   );
 }
@@ -741,7 +751,7 @@ function Player({
   const activeSentence = activeSentenceAt(sentences, track.timeline, currentMs);
 
   return (
-    <div className={`player ${compact ? "player-compact" : ""}`}>
+    <div className={`player ${compact ? "player-compact" : ""} ${isPlaying ? "playing" : ""}`}>
       <button
         type="button"
         className="play-main"
@@ -754,10 +764,10 @@ function Player({
         <div className="player-now">
           <span>
             {compact
-              ? `标准 AI 朗诵 · ${title}`
+              ? `标准 AI 朗诵${activeSentence ? ` · 第 ${activeSentence.order} 句` : " · 整篇"}`
               : `${source === "reference" ? "真人原始朗诵" : "标准 AI 朗诵"}${activeSentence ? ` · 第 ${activeSentence.order} 句` : ""}`}
           </span>
-          <strong>{activeSentence?.text ?? track.filename}</strong>
+          <strong>{activeSentence?.text ?? title}</strong>
         </div>
         <label className="progress-wrap">
           <span className="visually-hidden">播放进度</span>
@@ -1727,23 +1737,27 @@ function ViewerView({
   return (
     <div className="viewer-shell">
       <section className="viewer-hero">
-        <div className="hero-orb hero-orb-one" />
-        <div className="hero-orb hero-orb-two" />
+        <div className="viewer-hero-art" aria-hidden="true" />
         <div className="viewer-hero-inner">
           <div className="viewer-breadcrumb">
             <span>作品库</span><b>›</b><strong>{work.title}</strong>
           </div>
           <div className="viewer-title-row">
-            <div>
+            <div className="viewer-title-block">
               <p className="eyebrow">朗诵情感图谱</p>
               <h1>{work.title}</h1>
-              <p className="viewer-author">{work.author}</p>
+              {work.author ? <p className="viewer-author">{work.author}</p> : null}
+              <div className="viewer-meta">
+                <span>{GENRE_LABELS[work.genre] ?? "朗诵作品"}</span>
+                <span>{spec.sentences.length} 个图谱句</span>
+                <span>{formatTime(standardAudio.durationMs)} · 标准 AI 朗诵</span>
+              </div>
             </div>
-            <button type="button" className="hero-play" onClick={onPlayAll}>
+            <button type="button" className={`hero-play ${isPlaying ? "playing" : ""}`} onClick={onPlayAll}>
               <span>{isPlaying ? "Ⅱ" : "▶"}</span>
               <div>
                 <strong>{isPlaying ? "暂停示范" : "播放整篇"}</strong>
-                <small>{formatTime(standardAudio.durationMs)} · 标准 AI 朗诵 · 逐字跟随</small>
+                <small>{isPlaying ? "正在逐字跟随播放" : `${formatTime(standardAudio.durationMs)} · 逐字跟随`}</small>
               </div>
             </button>
           </div>
@@ -1756,13 +1770,20 @@ function ViewerView({
             <p className="eyebrow">三层情感图谱</p>
             <h2>跟着红字、停顿和声音曲线来听</h2>
           </div>
-          <div className="legend viewer-legend">
-            <span><i className="legend-focus" />表达焦点</span>
-            <span><b>/</b> 短停</span>
-            <span><b>{"///"}</b> 长停</span>
-            <span><b>——</b> 拖音</span>
-            <span><b>↗ ↘ →</b> 句尾语调</span>
-          </div>
+        </div>
+
+        <div className="legend viewer-legend" aria-label="图谱符号说明">
+          <span><b className="legend-focus-char">春</b> 红字：表达焦点</span>
+          <span><b>/</b> 短停</span>
+          <span><b>{"///"}</b> 长停</span>
+          <span><b className="legend-prolong">——</b> 拖音</span>
+          <span><b>↗ ↘ →</b> 句尾语调</span>
+          <span>
+            <svg className="legend-curve" viewBox="0 0 34 12" aria-hidden="true">
+              <path d="M2 9 C 8 9 9 3 15 3 S 24 8 32 5" />
+            </svg>
+            曲线：宏观语势
+          </span>
         </div>
 
         <div className="viewer-graph-list">
@@ -1780,6 +1801,14 @@ function ViewerView({
               </div>
             );
           })}
+        </div>
+
+        <div className="viewer-footnote">
+          <span aria-hidden="true">同</span>
+          <p>
+            <strong>声音与图谱同源。</strong>
+            你听到的每一个字都来自同一条标准 AI 朗诵；逐字高亮与语势曲线以字符级时间戳同步。
+          </p>
         </div>
       </section>
     </div>

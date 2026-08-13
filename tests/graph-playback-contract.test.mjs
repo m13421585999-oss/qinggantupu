@@ -112,6 +112,42 @@ test("comma enumeration comma and period each fully replace adjacent pause marks
   assert.equal(renderedTrackText(units), "甲、乙，丙→。");
 });
 
+test("viewer chrome explains every graph symbol and the shared-audio promise", async () => {
+  const studio = await readFile(new URL("../components/RecitationStudio.tsx", import.meta.url), "utf8");
+  assert.match(studio, /红字：表达焦点/);
+  assert.match(studio, /\/<\/b> 短停/);
+  assert.match(studio, /长停/);
+  assert.match(studio, /拖音/);
+  assert.match(studio, /↗ ↘ →<\/b> 句尾语调/);
+  assert.match(studio, /曲线：宏观语势/);
+  assert.match(studio, /声音与图谱同源/);
+  assert.match(studio, /播放整篇/);
+  assert.match(studio, /听本句/);
+  assert.match(studio, /标准 AI 朗诵/);
+});
+
+test("mobile uses a portrait rotation gate and preserves the desktop structure in landscape", async () => {
+  const [layout, css] = await Promise.all([
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(layout, /className="mobile-portrait-gate"/);
+  assert.match(layout, /请将手机旋转至横屏/);
+  assert.match(layout, /与电脑端一致的完整朗诵图谱/);
+  assert.match(css, /\.mobile-portrait-gate\s*\{\s*display:\s*none;/s);
+  assert.match(
+    css,
+    /@media \(max-width:\s*900px\) and \(orientation:\s*portrait\)[\s\S]*?\.app-orientation-shell\s*\{\s*display:\s*none;/,
+  );
+  assert.match(
+    css,
+    /@media \(max-width:\s*900px\) and \(orientation:\s*portrait\)[\s\S]*?\.mobile-portrait-gate\s*\{[\s\S]*?display:\s*grid;/,
+  );
+  assert.match(css, /@media \(max-width:\s*900px\) and \(orientation:\s*landscape\)/);
+  assert.match(css, /@media \(max-width:\s*620px\) and \(orientation:\s*portrait\)/);
+  assert.doesNotMatch(css, /@media \(max-width:\s*620px\)\s*\{/);
+});
+
 test("sentence playback adds pre-roll and tail padding without changing timestamps", () => {
   assert.equal(SENTENCE_PRE_ROLL_MS, 180);
   assert.equal(SENTENCE_TAIL_PADDING_MS, 120);
@@ -142,6 +178,8 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(studio, /data-prosody-anchor="true"/);
   assert.match(studio, /data-token-index=\{point\.tokenIndex\}/);
   assert.match(studio, /point\.tokenIndex === activeTokenIndex/);
+  assert.match(studio, /className="curve-fill"/);
+  assert.match(studio, /linearGradient/);
   assert.match(studio, /rect\.left - trackRect\.left \+ rect\.width \/ 2/);
   assert.doesNotMatch(studio, /event-path/);
   assert.match(studio, /addEventListener\("seeked"/);
@@ -153,7 +191,7 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(css, /\.pause-mark\s*\{[^}]*font-weight:\s*700/s);
   assert.match(css, /\.tone-arrow\s*\{[^}]*font-weight:\s*700/s);
   assert.match(css, /\.curve-path\s*\{[^}]*stroke-width:\s*2\.25/s);
-  assert.match(css, /\.token-prosody-anchor\s*\{[^}]*opacity:\s*0\.62/s);
+  assert.match(css, /\.token-prosody-anchor\s*\{[^}]*opacity:\s*0\.9/s);
   assert.match(css, /\.token-prosody-anchor\.playing\s*\{[^}]*stroke-width:\s*2/s);
   assert.doesNotMatch(css, /\.track-marker-cell|\.track-spacer-cell|--track-columns/);
   assert.doesNotMatch(css, /\.pause-mark\s*\{[^}]*position:\s*absolute/s);
