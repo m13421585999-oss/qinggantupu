@@ -4527,6 +4527,315 @@ button.annotation-char:hover {
   box-shadow: none;
 }
 
+/* Studio step 2 reuses the exact viewer paper and adds only lightweight editing affordances. */
+.studio-shell-paper-editor {
+  display: block;
+}
+
+.studio-shell-paper-editor .studio-main {
+  grid-column: auto;
+}
+
+.inline-paper-editor {
+  width: 100%;
+  min-height: 0;
+  padding: 18px 0 146px;
+  background: #ddd6cc;
+}
+
+.inline-editor-toolbar {
+  position: sticky;
+  z-index: 42;
+  top: var(--header-height);
+  display: flex;
+  width: min(100% - 32px, 1500px);
+  min-height: 68px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 auto 14px;
+  padding: 10px 18px;
+  border: 1px solid rgba(111, 84, 56, 0.18);
+  background: rgba(251, 247, 239, 0.96);
+  box-shadow: 0 10px 24px rgba(57, 42, 29, 0.08);
+  backdrop-filter: blur(16px);
+}
+
+.inline-editor-toolbar strong {
+  display: block;
+  margin-top: 3px;
+  color: #594a3e;
+  font-size: 13px;
+}
+
+.inline-paper-editor .viewer-scale-viewport {
+  background: transparent;
+}
+
+.viewer-artboard .editor-paper-shell {
+  padding-top: 0;
+}
+
+.editable-viewer-paper {
+  outline: 1px solid rgba(185, 64, 46, 0.08);
+}
+
+.inline-edit-legend {
+  color: #735d4e !important;
+}
+
+.editable-token {
+  cursor: pointer;
+  outline: 0;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.editable-token:hover,
+.editable-token:focus-visible {
+  border-radius: 2px;
+  background: linear-gradient(180deg, transparent 48%, rgba(185, 64, 46, 0.14) 48%);
+  box-shadow: 0 0 0 3px rgba(185, 64, 46, 0.07);
+}
+
+.prosody-anchor-hit-target {
+  cursor: ns-resize;
+  fill: transparent;
+  pointer-events: all;
+  stroke: transparent;
+  touch-action: none;
+  outline: none;
+}
+
+.prosody-anchor-hit-target:hover,
+.prosody-anchor-hit-target:focus-visible {
+  fill: rgba(185, 64, 46, 0.06);
+  stroke: rgba(185, 64, 46, 0.28);
+  stroke-width: 1;
+}
+
+.prosody-anchor-hit-target:hover + .token-prosody-anchor,
+.prosody-anchor-hit-target:focus-visible + .token-prosody-anchor {
+  fill: var(--red);
+  opacity: 1;
+  stroke-width: 2;
+}
+
+.visual-edit-hotspot,
+.hero-visual-edit-hotspot {
+  position: absolute;
+  z-index: 8;
+  right: 12px;
+  bottom: 11px;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 248, 239, 0.56);
+  background: rgba(50, 35, 25, 0.54);
+  color: #fffaf2;
+  font-size: 11px;
+  font-weight: 750;
+  opacity: 0;
+  transition: opacity 140ms ease, background 140ms ease;
+  backdrop-filter: blur(8px);
+}
+
+.visual-edit-cover {
+  z-index: 4;
+  inset: 0;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: rgba(47, 32, 23, 0.35);
+  color: #fffaf2;
+  text-align: center;
+  opacity: 0;
+}
+
+.scene-play-overlay-editing {
+  z-index: 5;
+}
+
+.visual-edit-cover span {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.visual-edit-cover small {
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.scene-visual-frame:hover .visual-edit-hotspot,
+.visual-edit-hotspot:focus-visible,
+.viewer-hero:hover .hero-visual-edit-hotspot,
+.hero-visual-edit-hotspot:focus-visible {
+  opacity: 1;
+}
+
+.scene-visual-frame:has(.visual-edit-cover) {
+  cursor: pointer;
+}
+
+.mode-inline-editor .player {
+  left: 28px;
+}
+
+.hero-visual-edit-hotspot {
+  top: 18px;
+  right: 20px;
+  bottom: auto;
+  display: grid;
+  justify-items: start;
+  gap: 1px;
+  padding: 7px 11px;
+  border-color: rgba(166, 62, 43, 0.28);
+  background: rgba(255, 253, 248, 0.9);
+  color: var(--red-dark);
+  text-align: left;
+}
+
+.hero-visual-edit-hotspot span {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.hero-visual-edit-hotspot small {
+  color: var(--ink-faint);
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.token-inline-popover {
+  position: fixed;
+  z-index: 180;
+  width: 300px;
+  padding: 14px;
+  border: 1px solid rgba(119, 87, 58, 0.22);
+  background:
+    repeating-linear-gradient(0deg, rgba(91, 72, 52, 0.012) 0, rgba(91, 72, 52, 0.012) 1px, transparent 1px, transparent 5px),
+    #fffaf2;
+  box-shadow: 0 18px 48px rgba(56, 39, 25, 0.2);
+}
+
+.token-inline-heading,
+.token-inline-footer,
+.token-inline-ending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.token-inline-heading strong {
+  font-family: "Songti SC", STSong, serif;
+  font-size: 16px;
+}
+
+.token-inline-heading > button {
+  width: 28px;
+  height: 28px;
+  color: var(--ink-soft);
+  font-size: 21px;
+}
+
+.token-inline-actions {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.token-inline-actions button,
+.token-inline-ending button,
+.token-inline-more,
+.token-inline-save {
+  min-height: 36px;
+  border: 1px solid rgba(117, 86, 58, 0.16);
+  background: rgba(255, 253, 248, 0.72);
+  color: #645143;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.token-inline-actions button:hover:not(:disabled),
+.token-inline-ending button:hover,
+.token-inline-more:hover {
+  border-color: rgba(185, 64, 46, 0.38);
+  color: var(--red-dark);
+}
+
+.token-inline-actions button.chosen,
+.token-inline-ending button.chosen,
+.token-inline-save {
+  border-color: rgba(185, 64, 46, 0.38);
+  background: var(--red-soft);
+  color: var(--red-dark);
+}
+
+.token-inline-actions button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.token-inline-ending {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(111, 84, 56, 0.13);
+}
+
+.token-inline-ending span {
+  margin-right: auto;
+  color: var(--ink-faint);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.token-inline-ending button {
+  width: 38px;
+  min-height: 32px;
+  font-size: 17px;
+}
+
+.token-inline-footer {
+  margin-top: 12px;
+}
+
+.token-inline-more,
+.token-inline-save {
+  flex: 1;
+}
+
+.curve-save-popover p {
+  margin-top: 8px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .inline-editor-toolbar {
+    position: relative;
+    top: auto;
+    min-height: 56px;
+    margin-bottom: 8px;
+  }
+
+  .inline-editor-toolbar .eyebrow {
+    display: none;
+  }
+
+  .token-inline-popover {
+    max-height: calc(100vh - 20px);
+    overflow: auto;
+  }
+}
+
 .mode-viewer .player-compact {
   right: 50%;
   bottom: 0;

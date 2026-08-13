@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyProsodyPointOverrides,
   buildTeachingProsodyPoints,
   monotoneSplinePath,
   PROSODY_VISUAL_LEVEL_COUNT,
   PROSODY_SMOOTHING_WINDOW,
+  prosodyVisualLevelFromPointerY,
+  upsertProsodyPointOverride,
 } from "../lib/prosody-visual.ts";
 
 test("teaching prosody creates exactly one anchor for every spoken token index", () => {
@@ -47,6 +50,53 @@ test("macro rise and valley survive visual smoothing", () => {
 
   assert.ok(valley.tokenIndex >= 3 && valley.tokenIndex <= 5);
   assert.ok(points.at(-1).visualLevel > valley.visualLevel);
+});
+
+test("human teaching overrides change only the rendered visual level", () => {
+  const acousticPoints = [
+    { tokenIndex: 0, macroPitchCenter: -0.4, normalizedLevel: -0.2 },
+    { tokenIndex: 1, macroPitchCenter: 0.8, normalizedLevel: 0.6 },
+    { tokenIndex: 2, macroPitchCenter: 0.1, normalizedLevel: 0.2 },
+  ];
+  const automatic = buildTeachingProsodyPoints([0, 1, 2], acousticPoints);
+  const snapshot = structuredClone(automatic);
+  const rendered = applyProsodyPointOverrides(automatic, [
+    { tokenIndex: 1, visualLevel: 8, source: "human" },
+  ]);
+
+  assert.deepEqual(automatic, snapshot, "automatic acoustic-derived points are not mutated");
+  assert.equal(rendered[1].visualLevel, 8);
+  assert.equal(rendered[1].isOverridden, true);
+  assert.equal(rendered[1].sourceLevel, automatic[1].sourceLevel);
+  assert.equal(rendered[1].smoothedLevel, automatic[1].smoothedLevel);
+  assert.equal(rendered[0], automatic[0], "unmodified anchors retain their original object");
+});
+
+test("upserting an override is sparse, sorted, deduplicated, and visually clamped", () => {
+  const overrides = [
+    { tokenIndex: 7, visualLevel: 2, source: "human" },
+    { tokenIndex: 3, visualLevel: 4, source: "human" },
+  ];
+  const next = upsertProsodyPointOverride(overrides, 3, 20);
+
+  assert.deepEqual(next, [
+    { tokenIndex: 3, visualLevel: 8, source: "human" },
+    { tokenIndex: 7, visualLevel: 2, source: "human" },
+  ]);
+  assert.deepEqual(overrides, [
+    { tokenIndex: 7, visualLevel: 2, source: "human" },
+    { tokenIndex: 3, visualLevel: 4, source: "human" },
+  ], "the sentence draft owns the returned override array");
+});
+
+test("pointer Y maps through a scaled SVG and clamps to the nine teaching levels", () => {
+  const options = { rectTop: 100, rectHeight: 48, viewBoxHeight: 96 };
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 103.5 }), 8);
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 124 }), 4);
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 144.5 }), 0);
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 70 }), 8);
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 180 }), 0);
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 124, rectHeight: 0 }), undefined);
 });
 
 test("monotone spline passes through token anchors without template replacement", () => {

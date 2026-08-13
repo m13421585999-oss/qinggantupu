@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   generateWorkVisualAssets,
   generateWorkVisualPlan,
@@ -18,12 +18,17 @@ import {
 } from "@/lib/visual-assets";
 import styles from "./WorkVisualPanel.module.css";
 
-interface WorkVisualPanelProps {
+export interface WorkVisualPanelProps {
   workId: string;
   title: string;
   author?: string;
   disabled?: boolean;
   onNotify?: (message: string) => void;
+  compact?: boolean;
+  initialKind?: VisualAssetKind;
+  initialSceneId?: string;
+  onClose?: () => void;
+  onVisualsChange?: (visuals: WorkVisualBundle) => void;
 }
 
 interface CropDraft {
@@ -42,6 +47,7 @@ function statusLabel(asset?: VisualAsset) {
   if (!asset) return "尚未生成";
   if (asset.status === "failed") return "生成失败";
   if (asset.status === "queued" || asset.status === "generating") return "正在生成";
+  if (asset.status === "draft" || asset.status === "pending_generation") return "等待生成";
   if (asset.status === "needs_review") return "待人工确认";
   if (!asset.isVisible) return "已隐藏";
   return "使用中";
@@ -250,12 +256,24 @@ function CropDialog({
   );
 }
 
-export function WorkVisualPanel({ workId, title, author, disabled = false, onNotify }: WorkVisualPanelProps) {
+export function WorkVisualPanel({
+  workId,
+  title,
+  author,
+  disabled = false,
+  onNotify,
+  compact = false,
+  initialKind,
+  initialSceneId,
+  onClose,
+  onVisualsChange,
+}: WorkVisualPanelProps) {
   const [loadedVisuals, setVisuals] = useState<WorkVisualBundle>(emptyVisuals);
   const [loadedWorkId, setLoadedWorkId] = useState<string>();
   const [busyKey, setBusyKey] = useState<string>();
   const [error, setError] = useState<string>();
   const [cropDraft, setCropDraft] = useState<CropDraft>();
+  const cropPreviewUrlRef = useRef<string | undefined>(undefined);
   const savedWork = Boolean(workId && !workId.startsWith("draft-"));
   const loading = savedWork && loadedWorkId !== workId;
   const visuals = savedWork && loadedWorkId === workId ? loadedVisuals : emptyVisuals;
@@ -278,8 +296,8 @@ export function WorkVisualPanel({ workId, title, author, disabled = false, onNot
   }, [savedWork, workId]);
 
   useEffect(() => () => {
-    if (cropDraft) URL.revokeObjectURL(cropDraft.previewUrl);
-  }, [cropDraft]);
+    if (cropPreviewUrlRef.current) URL.revokeObjectURL(cropPreviewUrlRef.current);
+  }, []);
 
   const fail = useCallback((requestError: unknown) => {
     const message = requestError instanceof Error ? requestError.message : String(requestError);
@@ -295,14 +313,16 @@ export function WorkVisualPanel({ workId, title, author, disabled = false, onNot
     setBusyKey(key);
     setError(undefined);
     try {
-      setVisuals(await action());
+      const nextVisuals = await action();
+      setVisuals(nextVisuals);
+      onVisualsChange?.(nextVisuals);
       onNotify?.(successMessage);
     } catch (requestError) {
       fail(requestError);
     } finally {
       setBusyKey(undefined);
     }
-  }, [fail, onNotify]);
+  }, [fail, onNotify, onVisualsChange]);
 
   const generationUnavailable = visuals.provider?.configured === false;
   const hero = assetFor(visuals.assets, "hero");
@@ -315,15 +335,24 @@ export function WorkVisualPanel({ workId, title, author, disabled = false, onNot
       fail(new Error("请选择 JPG、PNG 或 WebP 图片。"));
       return;
     }
+    if (cropPreviewUrlRef.current) URL.revokeObjectURL(cropPreviewUrlRef.current);
+    const previewUrl = URL.createObjectURL(file);
+    cropPreviewUrlRef.current = previewUrl;
     setCropDraft({
       file,
       kind,
       sceneId,
-      previewUrl: URL.createObjectURL(file),
+      previewUrl,
       zoom: 1,
       positionX: 50,
       positionY: 50,
     });
+  };
+
+  const closeCrop = () => {
+    if (cropPreviewUrlRef.current) URL.revokeObjectURL(cropPreviewUrlRef.current);
+    cropPreviewUrlRef.current = undefined;
+    setCropDraft(undefined);
   };
 
   const uploadLabel = (kind: VisualAssetKind, sceneId?: string) => (
@@ -343,7 +372,163 @@ export function WorkVisualPanel({ workId, title, author, disabled = false, onNot
   );
 
   if (loading) {
-    return <section className={styles.panel}><div className={styles.empty}>正在读取作品视觉…</div></section>;
+    return compact ? (
+      <div className={styles.compactBackdrop} role="presentation">
+        <section className={styles.compactSheet} role="dialog" aria-modal="true" aria-label="正在读取图片">
+          <div className={styles.empty}>正在读取作品视觉…</div>
+        </section>
+      </div>
+    ) : <section className={styles.panel}><div className={styles.empty}>正在读取作品视觉…</div></section>;
+  }
+
+  if (compact) {
+    const compactKind = initialKind ?? (initialSceneId ? "scene" : "hero");
+    const compactScene = compactKind === "scene"
+      ? visuals.sceneSpecs.find((scene) => scene.sceneId === initialSceneId
+        || scene.sourceSentenceIds.includes(initialSceneId ?? ""))
+      : undefined;
+    const compactAsset = compactKind === "hero"
+      ? hero
+      : compactScene
+        ? assetFor(visuals.assets, "scene", compactScene.sceneId)
+        : undefined;
+    const compactVersions = compactKind === "hero"
+      ? heroVersions
+      : versionsFor(visuals.assets, "scene", compactScene?.sceneId);
+    const compactKey = compactKind === "hero" ? "hero" : `scene-${compactScene?.sceneId ?? "missing"}`;
+    const compactSpec = compactKind === "hero" ? visuals.heroSpec : compactScene;
+
+    return (
+      <div className={styles.compactBackdrop} role="presentation" onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose?.();
+      }}>
+        <section className={styles.compactSheet} role="dialog" aria-modal="true" aria-labelledby="compact-visual-title">
+          <div className={styles.compactHeading}>
+            <div>
+              <p className={styles.eyebrow}>图片编辑</p>
+              <h2 id="compact-visual-title">{compactKind === "hero" ? "作品主视觉" : "本句意境图"}</h2>
+            </div>
+            <button type="button" className={styles.compactClose} onClick={onClose} aria-label="关闭图片编辑">×</button>
+          </div>
+
+          {!savedWork ? <div className={styles.notice}>请先保存作品，再上传视觉资产。</div> : null}
+          {generationUnavailable ? <div className={styles.notice}>图片生成服务尚未配置，仍可上传替换图片。</div> : null}
+          {error ? <div className={styles.error} role="alert">{error}</div> : null}
+          <div className={`${styles.compactPreview} ${compactKind === "hero" ? styles.compactPreviewHero : ""}`}>
+            {compactAsset?.url ? (
+              <img src={compactAsset.url} alt={compactKind === "hero" ? `${title || "作品"}主视觉` : "本句意境图"} />
+            ) : (
+              <div className={styles.placeholder}>
+                <strong>{compactKind === "hero" ? title || "作品主视觉" : "本句意境图"}</strong>
+                <small>{compactKind === "hero" ? `${author || "作者"} · 1500 × 420` : "4:3"}</small>
+              </div>
+            )}
+          </div>
+
+          {compactScene ? <p className={styles.sourceText}>{compactScene.sourceText}</p> : null}
+          <div className={styles.compactStatusRow}>
+            <span className={compactAsset?.status === "ready" && compactAsset.isVisible ? styles.statusReady : styles.status}>{statusLabel(compactAsset)}</span>
+            {compactAsset ? <span className={styles.status}>v{compactAsset.version}</span> : null}
+          </div>
+
+          {!compactSpec ? (
+            <div className={styles.compactSetup}>
+              <strong>{compactKind === "hero" ? "先生成作品视觉方案" : "先为全文建立 Scene Unit"}</strong>
+              <p>
+                {compactKind === "hero"
+                  ? "AI 生图需要先阅读全文，确定全篇统一风格与 Hero 构图。你也可以跳过 AI 生图，直接上传自己的主视觉。"
+                  : "系统需要先阅读全文并找到这句话所属的场景。方案完成后，才可生成或上传本句意境图。"}
+              </p>
+              <div className={styles.actionRow}>
+                <button
+                  type="button"
+                  className={styles.button}
+                  disabled={globalDisabled}
+                  onClick={() => void run("plan", () => generateWorkVisualPlan(workId), "作品视觉方案已生成，可以继续制作图片")}
+                >
+                  {busyKey === "plan" ? <span className={styles.busy} /> : null}
+                  先生成视觉方案
+                </button>
+                {compactKind === "hero" ? uploadLabel("hero") : null}
+                {compactAsset ? (
+                  <button
+                    type="button"
+                    className={styles.buttonQuiet}
+                    disabled={globalDisabled}
+                    onClick={() => void run(
+                      `${compactKey}-visible`,
+                      () => updateVisualAsset(compactAsset.id, compactAsset.isVisible ? "hide" : "show"),
+                      compactAsset.isVisible ? "图片已隐藏" : "图片已恢复显示",
+                    )}
+                  >{compactAsset.isVisible ? "隐藏" : "恢复显示"}</button>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className={styles.actionRow}>
+              <button
+                type="button"
+                className={styles.buttonPrimary}
+                disabled={globalDisabled || generationUnavailable}
+                onClick={() => void run(
+                  compactKey,
+                  () => compactAsset
+                    ? regenerateVisualAsset(compactAsset.id)
+                    : generateWorkVisualAssets(workId, compactKind === "hero"
+                      ? { type: "hero" }
+                      : { type: "scene", sceneId: compactScene!.sceneId }),
+                  compactAsset ? "图片已进入重新生成队列" : "图片已进入生成队列",
+                )}
+              >
+                {busyKey === compactKey ? <span className={styles.busy} /> : null}
+                {compactAsset ? "重新生成" : "生成图片"}
+              </button>
+              {uploadLabel(compactKind, compactScene?.sceneId)}
+              {compactAsset ? (
+                <button
+                  type="button"
+                  className={styles.buttonQuiet}
+                  disabled={globalDisabled}
+                  onClick={() => void run(
+                    `${compactKey}-visible`,
+                    () => updateVisualAsset(compactAsset.id, compactAsset.isVisible ? "hide" : "show"),
+                    compactAsset.isVisible ? "图片已隐藏" : "图片已恢复显示",
+                  )}
+                >{compactAsset.isVisible ? "隐藏" : "恢复显示"}</button>
+              ) : null}
+            </div>
+          )}
+
+          {compactSpec ? (
+            <>
+              <VersionPicker
+                versions={compactVersions}
+                disabled={globalDisabled}
+                onActivate={(asset) => void run(
+                  `activate-${asset.id}`,
+                  () => updateVisualAsset(asset.id, "activate"),
+                  `已启用图片 v${asset.version}`,
+                )}
+              />
+            </>
+          ) : null}
+
+          {cropDraft ? (
+            <CropDialog
+              draft={cropDraft}
+              busy={busyKey === "upload"}
+              onChange={setCropDraft}
+              onCancel={closeCrop}
+              onConfirm={() => void run("upload", async () => {
+                const uploaded = await uploadWorkVisualAsset(workId, await cropImage(cropDraft), cropDraft.kind, cropDraft.sceneId);
+                closeCrop();
+                return uploaded;
+              }, "替换图片已上传并设为使用版本")}
+            />
+          ) : null}
+        </section>
+      </div>
+    );
   }
 
   return (
@@ -484,7 +669,11 @@ export function WorkVisualPanel({ workId, title, author, disabled = false, onNot
               kind="hero"
               spec={visuals.heroSpec}
               disabled={globalDisabled || Boolean(profile?.isLocked)}
-              onUpdated={(bundle) => { setVisuals(bundle); onNotify?.("Hero Prompt 已保存为新版本"); }}
+              onUpdated={(bundle) => {
+                setVisuals(bundle);
+                onVisualsChange?.(bundle);
+                onNotify?.("Hero Prompt 已保存为新版本");
+              }}
               onError={fail}
             />
           ) : null}
@@ -536,7 +725,11 @@ export function WorkVisualPanel({ workId, title, author, disabled = false, onNot
                   sceneId={scene.sceneId}
                   spec={scene}
                   disabled={globalDisabled || Boolean(profile?.isLocked)}
-                  onUpdated={(bundle) => { setVisuals(bundle); onNotify?.("Scene Prompt 已保存为新版本"); }}
+                  onUpdated={(bundle) => {
+                    setVisuals(bundle);
+                    onVisualsChange?.(bundle);
+                    onNotify?.("Scene Prompt 已保存为新版本");
+                  }}
                   onError={fail}
                 />
               </div>
@@ -555,10 +748,7 @@ export function WorkVisualPanel({ workId, title, author, disabled = false, onNot
           draft={cropDraft}
           busy={busyKey === "upload"}
           onChange={setCropDraft}
-          onCancel={() => {
-            URL.revokeObjectURL(cropDraft.previewUrl);
-            setCropDraft(undefined);
-          }}
+          onCancel={closeCrop}
           onConfirm={() => void run("upload", async () => {
             const uploaded = await uploadWorkVisualAsset(
               workId,
@@ -566,8 +756,7 @@ export function WorkVisualPanel({ workId, title, author, disabled = false, onNot
               cropDraft.kind,
               cropDraft.sceneId,
             );
-            URL.revokeObjectURL(cropDraft.previewUrl);
-            setCropDraft(undefined);
+            closeCrop();
             return uploaded;
           }, "替换图片已上传并设为使用版本")}
         />

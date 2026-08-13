@@ -92,6 +92,21 @@ test("control spec import preserves hidden performance profiles without changing
         source: "acoustic",
         source_control_ref: "analysis.acoustic_evidence.prolongations.token-0",
       }],
+      macro_prosody_path: {
+        source: "acoustic",
+        points: [{ token_index: 0, macro_pitch_center: 0.3, normalized_level: 0.2 }],
+        segments: [{
+          start_index: 0,
+          end_index: 0,
+          type: "level",
+          start_level: 0.2,
+          end_level: 0.2,
+        }],
+      },
+      prosody_point_overrides: [
+        { token_index: 0, visual_level: 7, source: "human" },
+        { token_index: 99, visual_level: 2, source: "human" },
+      ],
       prosody: [],
       ending_intonation: { type: "level", strength: 1 },
       confidence: 0.8,
@@ -113,6 +128,10 @@ test("control spec import preserves hidden performance profiles without changing
     end: "solid",
   });
   assert.equal(imported.sentences[0].focus[0].preferredRealization, "combined");
+  assert.equal(imported.sentences[0].macroProsodyPath?.points[0].macroPitchCenter, 0.3);
+  assert.deepEqual(imported.sentences[0].prosodyPointOverrides, [
+    { tokenIndex: 0, visualLevel: 7, source: "human" },
+  ]);
   assert.deepEqual(imported.sentences[0].prolongations[0], {
     id: "sentence-1-prolong-1",
     sourceControlRef: "analysis.acoustic_evidence.prolongations.token-0",

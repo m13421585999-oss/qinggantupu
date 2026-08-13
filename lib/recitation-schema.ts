@@ -197,6 +197,13 @@ export interface MacroProsodyPath {
   source: "acoustic";
 }
 
+/** Sparse creator-authored heights for the teaching curve; acoustic path data stays immutable. */
+export interface ProsodyPointOverride {
+  tokenIndex: number;
+  visualLevel: number;
+  source: "human";
+}
+
 export interface RecitationSentence {
   id: string;
   order: number;
@@ -207,6 +214,7 @@ export interface RecitationSentence {
   /** Hidden execution hints for TTS; intentionally not rendered in the graph UI. */
   performanceProfile?: HiddenPerformanceProfile;
   macroProsodyPath?: MacroProsodyPath;
+  prosodyPointOverrides?: ProsodyPointOverride[];
   prosody: ProsodyEvent[];
   endingIntonation: {
     sourceControlRef?: string;

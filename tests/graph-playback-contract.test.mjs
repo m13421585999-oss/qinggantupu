@@ -176,6 +176,12 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(studio, /buildTeachingProsodyPoints/);
   assert.match(studio, /monotoneSplinePath/);
   assert.match(studio, /data-prosody-anchor="true"/);
+  assert.match(studio, /className="prosody-anchor-hit-target"[\s\S]*?data-export-exclude="true"/);
+  assert.match(studio, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(studio, /releasePointerCapture\(event\.pointerId\)/);
+  assert.match(studio, /onPointerCancel=\{\(event\) => cancelDraggedPoint\(event\.pointerId\)\}/);
+  assert.match(studio, /onLostPointerCapture=\{\(event\) => cancelDraggedPoint\(event\.pointerId\)\}/);
+  assert.match(studio, /event\.key !== "ArrowUp" && event\.key !== "ArrowDown"/);
   assert.match(studio, /data-token-index=\{point\.tokenIndex\}/);
   assert.match(studio, /point\.tokenIndex === activeTokenIndex/);
   assert.match(studio, /className="curve-fill"/);
@@ -196,6 +202,8 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(css, /\.curve-path\s*\{[^}]*stroke-width:\s*2\.25/s);
   assert.match(css, /\.token-prosody-anchor\s*\{[^}]*opacity:\s*0\.9/s);
   assert.match(css, /\.token-prosody-anchor\.playing\s*\{[^}]*stroke-width:\s*2/s);
+  assert.match(css, /\.prosody-anchor-hit-target\s*\{[^}]*touch-action:\s*none/s);
+  assert.doesNotMatch(css, /\.acoustic-prosody-curve\.editing\s*\{[^}]*touch-action:\s*none/s);
   assert.doesNotMatch(css, /\.track-marker-cell|\.track-spacer-cell|--track-columns/);
   assert.doesNotMatch(css, /\.pause-mark\s*\{[^}]*position:\s*absolute/s);
   assert.doesNotMatch(css, /\.tone-arrow\s*\{[^}]*position:\s*absolute/s);

@@ -5,7 +5,6 @@ export type VisualGenerationStatus =
   | "pending_generation"
   | "queued"
   | "generating"
-  | "pending_generation"
   | "ready"
   | "failed"
   | "needs_review";

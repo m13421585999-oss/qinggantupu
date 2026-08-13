@@ -1,4 +1,6 @@
-import type { MacroProsodyPoint } from "./recitation-schema";
+import type { MacroProsodyPoint, ProsodyPointOverride } from "./recitation-schema";
+
+export type { ProsodyPointOverride } from "./recitation-schema";
 
 export const PROSODY_VISUAL_LEVEL_COUNT = 9;
 export const PROSODY_SMOOTHING_WINDOW = 5;
@@ -8,6 +10,8 @@ export interface TeachingProsodyPoint {
   sourceLevel: number;
   smoothedLevel: number;
   visualLevel: number;
+  /** True only when the teaching display height was explicitly adjusted by a creator. */
+  isOverridden?: boolean;
 }
 
 interface SplinePoint {
@@ -112,6 +116,86 @@ export function buildTeachingProsodyPoints(
       Math.min(levelCount - 1, Math.round((smoothedLevels[position] - center) / quantizationStep + middleLevel)),
     ),
   }));
+}
+
+function clampVisualLevel(value: number, visualLevelCount: number) {
+  const levelCount = Math.max(7, Math.min(9, Math.round(visualLevelCount)));
+  return Math.max(0, Math.min(levelCount - 1, Math.round(value)));
+}
+
+/**
+ * Overlay sparse human teaching heights after acoustic smoothing/quantization.
+ * Source pitch centers and normalized acoustic levels remain untouched.
+ */
+export function applyProsodyPointOverrides(
+  points: TeachingProsodyPoint[],
+  overrides: ProsodyPointOverride[] = [],
+  visualLevelCount = PROSODY_VISUAL_LEVEL_COUNT,
+) {
+  const overridesByToken = new Map<number, number>();
+  for (const override of overrides) {
+    if (!Number.isInteger(override.tokenIndex) || !Number.isFinite(override.visualLevel)) continue;
+    overridesByToken.set(
+      override.tokenIndex,
+      clampVisualLevel(override.visualLevel, visualLevelCount),
+    );
+  }
+
+  return points.map((point) => {
+    const visualLevel = overridesByToken.get(point.tokenIndex);
+    return visualLevel === undefined
+      ? point
+      : { ...point, visualLevel, isOverridden: true };
+  });
+}
+
+/** Upsert one sparse override for pointer-drag previews or a saved sentence draft. */
+export function upsertProsodyPointOverride(
+  overrides: ProsodyPointOverride[],
+  tokenIndex: number,
+  visualLevel: number,
+  visualLevelCount = PROSODY_VISUAL_LEVEL_COUNT,
+) {
+  if (!Number.isInteger(tokenIndex) || !Number.isFinite(visualLevel)) return overrides;
+  const nextPoint: ProsodyPointOverride = {
+    tokenIndex,
+    visualLevel: clampVisualLevel(visualLevel, visualLevelCount),
+    source: "human",
+  };
+  return [
+    ...overrides.filter((point) => point.tokenIndex !== tokenIndex),
+    nextPoint,
+  ].sort((left, right) => left.tokenIndex - right.tokenIndex);
+}
+
+/** Map a screen-space pointer Y back into the quantized SVG teaching levels. */
+export function prosodyVisualLevelFromPointerY({
+  clientY,
+  rectTop,
+  rectHeight,
+  viewBoxHeight,
+  verticalPadding = 7,
+  visualLevelCount = PROSODY_VISUAL_LEVEL_COUNT,
+}: {
+  clientY: number;
+  rectTop: number;
+  rectHeight: number;
+  viewBoxHeight: number;
+  verticalPadding?: number;
+  visualLevelCount?: number;
+}) {
+  if (
+    !Number.isFinite(clientY) || !Number.isFinite(rectTop)
+    || !Number.isFinite(rectHeight) || rectHeight <= 0
+    || !Number.isFinite(viewBoxHeight) || viewBoxHeight <= verticalPadding * 2
+  ) return undefined;
+  const levelCount = Math.max(7, Math.min(9, Math.round(visualLevelCount)));
+  const localY = (clientY - rectTop) * viewBoxHeight / rectHeight;
+  const visualStep = (viewBoxHeight - verticalPadding * 2) / (levelCount - 1);
+  return Math.max(
+    0,
+    Math.min(levelCount - 1, Math.round((viewBoxHeight - verticalPadding - localY) / visualStep)),
+  );
 }
 
 /** Monotone cubic spline: passes through every anchor without overshooting it. */

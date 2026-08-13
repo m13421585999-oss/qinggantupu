@@ -8,6 +8,7 @@ import type {
   MacroProsodyPath,
   PauseMark,
   ProlongMark,
+  ProsodyPointOverride,
   ProsodyEvent,
   ProsodyType,
   RecitationSentence,
@@ -506,6 +507,23 @@ function parseMacroProsodyPath(value: unknown, min: number, max: number): MacroP
   return { points, segments, source: "acoustic" };
 }
 
+function parseProsodyPointOverrides(value: unknown, min: number, max: number): ProsodyPointOverride[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const byToken = new Map<number, ProsodyPointOverride>();
+  for (const raw of value) {
+    const entry = object(raw);
+    const tokenIndex = integer(entry.token_index ?? entry.tokenIndex);
+    const visualLevel = integer(entry.visual_level ?? entry.visualLevel);
+    if (
+      tokenIndex === undefined || tokenIndex < min || tokenIndex > max
+      || visualLevel === undefined || visualLevel < 0 || visualLevel > 8
+    ) continue;
+    byToken.set(tokenIndex, { tokenIndex, visualLevel, source: "human" });
+  }
+  const overrides = [...byToken.values()].sort((left, right) => left.tokenIndex - right.tokenIndex);
+  return overrides.length ? overrides : undefined;
+}
+
 function parseRhythm(value: unknown): Rhythm {
   const entry = object(value);
   return rhythmAliases[String(typeof value === "string" ? value : entry.type ?? entry.label)] ?? "relaxed";
@@ -748,6 +766,11 @@ export function importControlSpec(
       performanceProfile: sentencePerformanceProfile,
       macroProsodyPath: parseMacroProsodyPath(
         entry.macro_prosody_path ?? entry.macroProsodyPath,
+        min,
+        max,
+      ),
+      prosodyPointOverrides: parseProsodyPointOverrides(
+        entry.prosody_point_overrides ?? entry.prosodyPointOverrides,
         min,
         max,
       ),
