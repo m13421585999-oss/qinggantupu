@@ -25,8 +25,7 @@ import {
   type TeachingProsodyPoint,
 } from "@/lib/prosody-visual";
 import {
-  graphUnitVisualWeight,
-  splitGraphUnitsIntoSemanticLines,
+  splitGraphUnitsByMeasuredWidth,
 } from "@/lib/semantic-scene-lines";
 import { ViewerScaleWrapper } from "@/components/ViewerScaleWrapper";
 import { WorkVisualPanel } from "@/components/WorkVisualPanel";
@@ -156,6 +155,27 @@ async function seekAudioBeforePlayback(audio: HTMLAudioElement, targetSeconds: n
     timeout = window.setTimeout(finish, 1600);
     audio.currentTime = target;
   });
+}
+
+async function prepareViewerImagesForExport(target: HTMLElement) {
+  const images = Array.from(target.querySelectorAll("img"));
+  await Promise.all(images.map(async (image) => {
+    image.loading = "eager";
+    if (!image.complete) {
+      await new Promise<void>((resolve) => {
+        const finish = () => resolve();
+        image.addEventListener("load", finish, { once: true });
+        image.addEventListener("error", finish, { once: true });
+        window.setTimeout(finish, 5_000);
+      });
+    }
+    if (image.complete && image.naturalWidth > 0) {
+      await image.decode?.().catch(() => undefined);
+    }
+  }));
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => (
+    window.requestAnimationFrame(() => resolve())
+  )));
 }
 
 function focusSet(sentence: RecitationSentence) {
@@ -296,6 +316,22 @@ interface CurveRowMetrics extends CurveMetrics {
   top: number;
 }
 
+const VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE = 56;
+const VIEWER_MANUSCRIPT_MIN_FONT_SIZE = 38;
+
+function protectedSentenceBoundaries(sentence: RecitationSentence) {
+  const protectedIndexes = new Set<number>();
+  const protectInside = (start: number, end: number) => {
+    for (let index = start; index < end; index += 1) protectedIndexes.add(index);
+  };
+  sentence.focus.forEach((target) => {
+    const indexes = [...target.tokenIndexes].sort((left, right) => left - right);
+    if (indexes.length > 1) protectInside(indexes[0], indexes.at(-1)!);
+  });
+  sentence.prosody.forEach((event) => protectInside(event.coreZone.start, event.coreZone.end));
+  return [...protectedIndexes];
+}
+
 function AcousticProsodyCurve({
   sentence,
   metrics,
@@ -422,6 +458,31 @@ function IndexedGraphTrack({
     () => buildGraphTokenUnits(sentence),
     [sentence],
   );
+  const viewerLayoutKey = useMemo(() => tokenUnits.map((unit) => [
+    unit.token.id,
+    unit.prolongation?.id,
+    unit.pause?.id,
+    unit.endingTone,
+    ...unit.prefixPunctuation.map((token) => token.id),
+    ...unit.suffixPunctuation.map((token) => token.id),
+  ].join(":" )).join("|"), [tokenUnits]);
+  const [viewerLayout, setViewerLayout] = useState<{
+    key: string;
+    fontSize: number;
+    lines: Array<typeof tokenUnits>;
+  }>(() => ({
+    key: viewerLayoutKey,
+    fontSize: VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE,
+    lines: tokenUnits.length ? [tokenUnits] : [],
+  }));
+  const viewerFontSize = viewerLayout.key === viewerLayoutKey
+    ? viewerLayout.fontSize
+    : VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE;
+  const readingLines = useMemo(() => (
+    viewerLayout.key === viewerLayoutKey
+      ? viewerLayout.lines
+      : tokenUnits.length ? [tokenUnits] : []
+  ), [tokenUnits, viewerLayout, viewerLayoutKey]);
   const activeTokenIndex = sentence.tokens.find((token) => token.id === activeTokenId)?.index;
   const teachingProsodyPoints = useMemo(
     () => buildTeachingProsodyPoints(
@@ -430,28 +491,66 @@ function IndexedGraphTrack({
     ),
     [sentence.macroProsodyPath, tokenUnits],
   );
-  const readingLines = useMemo(() => (
-    semanticLines
-      ? splitGraphUnitsIntoSemanticLines(tokenUnits, {
-          singleLineCapacity: 20.5,
-          preferredBoundaryIndexes: sentence.prosody.map((event) => event.activeSpan.end),
-        })
-      : [tokenUnits]
-  ), [semanticLines, sentence.prosody, tokenUnits]);
-  const readingLineStyle = useCallback((line: typeof tokenUnits) => {
-    if (!semanticLines) return undefined;
-    const visualWeight = Math.max(1, line.reduce(
-      (sum, unit) => sum + graphUnitVisualWeight(unit),
-      0,
-    ));
-    const tokenWidth = Math.min(44, Math.max(18, Math.floor(1030 / visualWeight)));
-    const fontSize = Math.min(40, Math.max(21, Math.round(tokenWidth * 0.92)));
-    return {
-      "--token-char-width": `${tokenWidth}px`,
-      "--manuscript-font-size": `${fontSize}px`,
-      "--token-unit-gap": `${tokenWidth < 30 ? 1 : tokenWidth < 38 ? 2 : 4}px`,
-    } as CSSProperties;
-  }, [semanticLines]);
+  const fitViewerManuscript = useCallback(() => {
+    const track = trackRef.current;
+    if (!track || !semanticLines || !tokenUnits.length) return;
+
+    const availableWidth = track.clientWidth;
+    const currentLine = track.querySelector<HTMLElement>(".semantic-token-line");
+    if (availableWidth <= 0 || !currentLine) return;
+
+    const renderedWidth = currentLine.scrollWidth;
+    if (readingLines.length === 1 && renderedWidth <= availableWidth + 0.5) {
+      if (viewerFontSize < VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE) {
+        const ratio = availableWidth / Math.max(renderedWidth, 1);
+        const nextSize = Math.min(
+          VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE,
+          Math.max(viewerFontSize + 1, Math.floor(viewerFontSize * ratio)),
+        );
+        if (nextSize !== viewerFontSize) {
+          setViewerLayout({ key: viewerLayoutKey, fontSize: nextSize, lines: [tokenUnits] });
+        }
+      }
+      return;
+    }
+
+    if (readingLines.length === 1 && viewerFontSize > VIEWER_MANUSCRIPT_MIN_FONT_SIZE) {
+      const nextSize = Math.max(
+        VIEWER_MANUSCRIPT_MIN_FONT_SIZE,
+        Math.min(viewerFontSize - 1, Math.floor(viewerFontSize * availableWidth / Math.max(renderedWidth, 1))),
+      );
+      setViewerLayout({ key: viewerLayoutKey, fontSize: nextSize, lines: [tokenUnits] });
+      return;
+    }
+
+    if (readingLines.length !== 1 || viewerFontSize !== VIEWER_MANUSCRIPT_MIN_FONT_SIZE) return;
+
+    const computedStyle = window.getComputedStyle(currentLine);
+    const unitGap = Number.parseFloat(computedStyle.columnGap) || 0;
+    const trackRect = track.getBoundingClientRect();
+    const coordinateScale = track.offsetWidth > 0 ? trackRect.width / track.offsetWidth : 1;
+    const localScale = Number.isFinite(coordinateScale) && coordinateScale > 0
+      ? coordinateScale
+      : 1;
+    const unitWidths = new Map(tokenUnits.flatMap((unit) => {
+      const element = unitRefs.current.get(unit.token.index);
+      return element ? [[unit.token.index, element.getBoundingClientRect().width / localScale]] : [];
+    }));
+    const splitLines = splitGraphUnitsByMeasuredWidth(tokenUnits, {
+      maxLineWidth: availableWidth,
+      unitWidths,
+      unitGap,
+      preferredBoundaryIndexes: sentence.prosody.map((event) => event.activeSpan.end),
+      protectedBoundaryIndexes: protectedSentenceBoundaries(sentence),
+    });
+    if (splitLines.length > 1) {
+      setViewerLayout({
+        key: viewerLayoutKey,
+        fontSize: VIEWER_MANUSCRIPT_MIN_FONT_SIZE,
+        lines: splitLines,
+      });
+    }
+  }, [readingLines, semanticLines, sentence, tokenUnits, viewerFontSize, viewerLayoutKey]);
 
   const measure = useCallback(() => {
     const track = trackRef.current;
@@ -553,8 +652,31 @@ function IndexedGraphTrack({
     };
   }, [measure]);
 
+  useLayoutEffect(() => {
+    if (!semanticLines) return;
+    const track = trackRef.current;
+    if (!track) return;
+    let frame = window.requestAnimationFrame(fitViewerManuscript);
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(fitViewerManuscript);
+    });
+    observer.observe(track);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [fitViewerManuscript, semanticLines]);
+
+  const viewerTrackStyle = semanticLines ? {
+    "--manuscript-font-size": `${viewerFontSize}px`,
+    "--token-char-width": `${viewerFontSize}px`,
+    "--pinyin-font-size": `${Math.max(13, Math.round(18 * viewerFontSize / VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE))}px`,
+    "--token-unit-gap": `${viewerFontSize <= 42 ? 2 : 4}px`,
+  } as CSSProperties : undefined;
+
   return (
-    <div className="graph-track-layout">
+    <div className="graph-track-layout" style={viewerTrackStyle}>
       <div className="graph-track-viewport">
         <div className="attached-token-track">
           <div
@@ -567,7 +689,6 @@ function IndexedGraphTrack({
                 className="semantic-token-line"
                 data-semantic-line={lineIndex + 1}
                 key={`${sentence.id}-line-${lineIndex}`}
-                style={readingLineStyle(line)}
               >
                 {line.map((unit) => {
               const unitIsPlaying = activeTokenIndex !== undefined
@@ -704,6 +825,7 @@ function GraphSentence({
   onPlay,
   viewerSceneImageUrl,
   viewerSceneAlt,
+  viewerSceneImagePriority = false,
 }: {
   sentence: RecitationSentence;
   selected?: boolean;
@@ -714,8 +836,13 @@ function GraphSentence({
   onPlay?: () => void;
   viewerSceneImageUrl?: string;
   viewerSceneAlt?: string;
+  viewerSceneImagePriority?: boolean;
 }) {
   const isViewerScene = viewerSceneAlt !== undefined;
+  const [failedSceneImageUrl, setFailedSceneImageUrl] = useState<string>();
+  const sceneImageAvailable = Boolean(
+    viewerSceneImageUrl && viewerSceneImageUrl !== failedSceneImageUrl,
+  );
   return (
     <div
       className={`graph-sentence ${selected ? "selected" : ""} ${active ? "active" : ""}`}
@@ -733,22 +860,47 @@ function GraphSentence({
       <div className={`sentence-rail ${isViewerScene ? "scene-visual-rail" : ""}`}>
         {isViewerScene ? (
           <div className={`scene-visual-frame ${active ? "active" : ""}`}>
-            {viewerSceneImageUrl ? (
+            {sceneImageAvailable && viewerSceneImageUrl ? (
               // Generated scene assets are same-origin persisted R2 objects.
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={viewerSceneImageUrl} alt={viewerSceneAlt} loading="lazy" />
+              <img
+                src={viewerSceneImageUrl}
+                alt={viewerSceneAlt}
+                loading={viewerSceneImagePriority ? "eager" : "lazy"}
+                fetchPriority={viewerSceneImagePriority ? "high" : "auto"}
+                decoding="async"
+                onError={() => setFailedSceneImageUrl(viewerSceneImageUrl)}
+              />
             ) : (
-              <div className="scene-visual-fallback" role="img" aria-label={`${viewerSceneAlt}，意境图待生成`}>
-                <span aria-hidden="true">{String(sentence.order).padStart(2, "0")}</span>
-              </div>
+              <div className="scene-visual-fallback" role="img" aria-label={`${viewerSceneAlt}，使用作品视觉后备背景`} />
             )}
+            <div className="scene-visual-meta">
+              <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
+              <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
+            </div>
+            {onPlay ? (
+              <span className="scene-play-overlay" data-export-exclude="true">
+                <button
+                  type="button"
+                  className="sentence-play"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onPlay();
+                  }}
+                  aria-label={`播放第 ${sentence.order} 句`}
+                >
+                  <span aria-hidden="true">▶</span>
+                  听本句
+                </button>
+              </span>
+            ) : null}
           </div>
         ) : null}
-        <div className={isViewerScene ? "scene-visual-meta" : undefined}>
+        {!isViewerScene ? <div>
           <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
           <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
-        </div>
-        {onPlay ? (
+        </div> : null}
+        {onPlay && !isViewerScene ? (
           <span data-export-exclude="true">
             <button
               type="button"
@@ -910,10 +1062,10 @@ function Player({
         <div className="player-now">
           <span>
             {compact
-              ? `标准 AI 朗诵${activeSentence ? ` · 第 ${activeSentence.order} 句` : " · 整篇"}`
+              ? "标准朗诵 · 整篇"
               : `${source === "reference" ? "真人原始朗诵" : "标准 AI 朗诵"}${activeSentence ? ` · 第 ${activeSentence.order} 句` : ""}`}
           </span>
-          <strong>{activeSentence?.text ?? title}</strong>
+          <strong>{compact ? title : activeSentence?.text ?? title}</strong>
         </div>
         <label className="progress-wrap">
           <span className="visually-hidden">播放进度</span>
@@ -2134,6 +2286,9 @@ function ViewerView({
   exporting: boolean;
   onExport: () => void;
 }) {
+  const heroAsset = work.visuals?.heroAsset?.url ? work.visuals.heroAsset : undefined;
+  const [failedHeroImageUrl, setFailedHeroImageUrl] = useState<string>();
+  const showHeroImage = Boolean(heroAsset?.url && heroAsset.url !== failedHeroImageUrl);
   const spec = work.controlSpec;
   const standardAudio = work.standardAiAudio ?? work.aiDemoAudio;
   if (!spec || !standardAudio?.timeline) {
@@ -2150,7 +2305,6 @@ function ViewerView({
   }
   const active = activeSentenceAt(spec.sentences, standardAudio.timeline, currentMs);
   const visuals = work.visuals;
-  const heroAsset = visuals?.heroAsset?.url ? visuals.heroAsset : undefined;
   const sceneSpecs = visuals?.sceneSpecs ?? [];
   const sceneAssets = visuals?.sceneAssets ?? [];
   const sceneAssetForSentence = (sentenceId: string): VisualAsset | undefined => sceneAssets.find((asset) => {
@@ -2159,29 +2313,33 @@ function ViewerView({
     const sceneSpec = sceneSpecs.find((candidate) => candidate.sceneId === asset.sceneId);
     return asset.sceneId === sentenceId || sceneSpec?.sourceSentenceIds.includes(sentenceId);
   });
+  const activeSentenceIndex = Math.max(0, spec.sentences.findIndex((sentence) => sentence.id === active?.id));
 
   return (
     <ViewerScaleWrapper artboardRef={exportTargetRef}>
     <div className="viewer-shell">
-      <section className={`viewer-hero ${heroAsset ? "has-generated-hero" : "uses-fallback-hero"}`}>
-        {heroAsset ? (
+      <section className={`viewer-hero ${showHeroImage ? "has-generated-hero" : "uses-fallback-hero"}`}>
+        {showHeroImage && heroAsset ? (
           // Generated Hero assets are reviewed, persisted and served from the same site.
           // eslint-disable-next-line @next/next/no-img-element
           <img
             className="viewer-hero-image"
             src={heroAsset.url}
             alt={`${work.title}${work.author ? `，${work.author}` : ""}，朗诵情感图谱主视觉`}
+            decoding="async"
+            fetchPriority="high"
+            onError={() => setFailedHeroImageUrl(heroAsset.url)}
           />
         ) : <div className="viewer-hero-art" aria-hidden="true" />}
         <div className="viewer-hero-inner">
           <div className="viewer-breadcrumb">
             <span>作品库</span><b>›</b><strong>{work.title}</strong>
           </div>
-          <div className={`viewer-title-row ${heroAsset ? "generated-hero-title-row" : ""}`}>
-            <div className={heroAsset ? "visually-hidden" : "viewer-title-block"}>
-              <p className="eyebrow">朗诵情感图谱</p>
+          <div className={`viewer-title-row ${showHeroImage ? "generated-hero-title-row" : ""}`}>
+            <div className={showHeroImage ? "visually-hidden" : "viewer-title-block"}>
+              <p className="viewer-title-kicker"><span aria-hidden="true" />朗诵情感图谱</p>
               <h1>{work.title}</h1>
-              {work.author ? <p className="viewer-author">{work.author}</p> : null}
+              {work.author ? <p className="viewer-author">作者 · {work.author}</p> : null}
             </div>
             <div className="viewer-hero-actions" data-export-exclude="true">
               <button type="button" className="export-image-button" onClick={onExport} disabled={exporting}>
@@ -2222,7 +2380,7 @@ function ViewerView({
         </div>
 
         <div className="viewer-graph-list">
-          {spec.sentences.map((sentence) => {
+          {spec.sentences.map((sentence, sentenceIndex) => {
             const isActive = active?.id === sentence.id && currentMs > 0;
             const sceneAsset = sceneAssetForSentence(sentence.id);
             return (
@@ -2235,19 +2393,13 @@ function ViewerView({
                   onPlay={() => onPlaySentence(sentence)}
                   viewerSceneImageUrl={sceneAsset?.url}
                   viewerSceneAlt={`${sentence.text}的意境图`}
+                  viewerSceneImagePriority={sentenceIndex === 0 || sentenceIndex === activeSentenceIndex || sentenceIndex === activeSentenceIndex + 1}
                 />
               </div>
             );
           })}
         </div>
 
-        <div className="viewer-footnote">
-          <span aria-hidden="true">同</span>
-          <p>
-            <strong>声音与图谱同源。</strong>
-            你听到的每一个字都来自同一条标准 AI 朗诵；逐字高亮与语势曲线以字符级时间戳同步。
-          </p>
-        </div>
       </section>
     </div>
     </ViewerScaleWrapper>
@@ -2968,6 +3120,7 @@ export function RecitationStudio() {
     setExportingImage(true);
     try {
       await document.fonts?.ready;
+      await prepareViewerImagesForExport(target);
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       const { toBlob } = await import("html-to-image");
       const width = Math.ceil(target.scrollWidth);

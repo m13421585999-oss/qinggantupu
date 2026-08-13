@@ -3474,16 +3474,16 @@ button.annotation-char:hover {
 .viewer-artboard .viewer-shell {
   width: 1600px;
   min-height: 0;
-  padding: 28px 0 36px;
+  padding: 22px 0 36px;
   background:
-    linear-gradient(180deg, #eee8e0 0, #e8e1d8 520px, #e6ded5 100%),
+    linear-gradient(180deg, #eee8e0 0, #e7dfd6 430px, #e3dbd2 100%),
     #e8e1d8;
 }
 
 .viewer-artboard .viewer-hero {
   position: relative;
   width: 1500px;
-  height: 420px;
+  height: 300px;
   margin: 0 auto;
   overflow: hidden;
   border: 1px solid rgba(105, 78, 53, 0.16);
@@ -3500,6 +3500,7 @@ button.annotation-char:hover {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
 }
 
 .viewer-artboard .viewer-hero-art {
@@ -3524,9 +3525,9 @@ button.annotation-char:hover {
   width: 100%;
   height: 100%;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: center;
   margin: 0;
-  padding: 42px 48px;
+  padding: 30px 42px;
 }
 
 .viewer-artboard .viewer-breadcrumb {
@@ -3535,8 +3536,8 @@ button.annotation-char:hover {
 
 .viewer-artboard .viewer-title-row {
   width: 100%;
-  min-height: 220px;
-  align-items: flex-end;
+  min-height: 0;
+  align-items: center;
   gap: 42px;
   margin: 0;
 }
@@ -3545,20 +3546,44 @@ button.annotation-char:hover {
   max-width: 880px;
 }
 
+.viewer-artboard .viewer-title-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--red-dark);
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+}
+
+.viewer-artboard .viewer-title-kicker span {
+  width: 34px;
+  height: 2px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--red), rgba(185, 64, 46, 0.18));
+}
+
 .viewer-artboard .viewer-title-row h1 {
   max-width: 920px;
-  margin-top: 16px;
-  font-size: 66px;
+  margin-top: 12px;
+  font-size: 58px;
   line-height: 1.08;
 }
 
 .viewer-artboard .viewer-author {
-  margin-top: 18px;
-  font-size: 18px;
+  display: inline-flex;
+  margin-top: 14px;
+  padding: 7px 12px;
+  border-left: 3px solid rgba(185, 64, 46, 0.72);
+  background: rgba(255, 251, 243, 0.62);
+  color: #604b3c;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
 }
 
 .viewer-artboard .generated-hero-title-row {
-  min-height: 0;
+  height: 100%;
   justify-content: flex-end;
 }
 
@@ -3568,7 +3593,7 @@ button.annotation-char:hover {
 
 .viewer-artboard .hero-play {
   min-width: 244px;
-  min-height: 78px;
+  min-height: 68px;
   padding: 12px 22px 12px 14px;
   border-color: rgba(122, 73, 46, 0.24);
   background: rgba(255, 253, 248, 0.92);
@@ -3578,13 +3603,16 @@ button.annotation-char:hover {
 .viewer-artboard .viewer-content {
   width: 1500px;
   margin: 0 auto;
-  padding: 28px 0 0;
+  padding: 18px 0 0;
 }
 
 .viewer-artboard .viewer-legend {
-  min-height: 54px;
-  margin-bottom: 20px;
-  padding: 11px 18px;
+  min-height: 42px;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 8px 18px;
+  margin-bottom: 16px;
+  padding: 8px 16px;
   border-color: rgba(123, 91, 61, 0.16);
   border-radius: 14px;
   background: rgba(255, 253, 248, 0.72);
@@ -3593,7 +3621,7 @@ button.annotation-char:hover {
 
 .viewer-artboard .viewer-graph-list {
   display: grid;
-  gap: 22px;
+  gap: 18px;
 }
 
 .viewer-artboard .viewer-sentence-wrap .graph-sentence {
@@ -3620,10 +3648,10 @@ button.annotation-char:hover {
 .viewer-artboard .viewer-sentence-wrap .scene-visual-rail {
   position: relative;
   display: block;
-  flex: 0 0 320px;
-  width: 320px;
+  flex: 0 0 292px;
+  width: 292px;
   min-height: 318px;
-  padding: 18px 20px;
+  padding: 24px 16px;
   border-right: 1px solid rgba(108, 80, 55, 0.12);
   border-bottom: 0;
   background: #f3ece3;
@@ -3631,8 +3659,8 @@ button.annotation-char:hover {
 
 .scene-visual-frame {
   position: relative;
-  width: 280px;
-  height: 220px;
+  width: 260px;
+  height: 190px;
   overflow: hidden;
   border: 1px solid rgba(109, 81, 56, 0.15);
   border-radius: 15px;
@@ -3646,8 +3674,9 @@ button.annotation-char:hover {
   right: 0;
   bottom: 0;
   left: 0;
-  height: 58px;
-  background: linear-gradient(180deg, transparent, rgba(31, 23, 17, 0.42));
+  z-index: 1;
+  height: 76px;
+  background: linear-gradient(180deg, transparent, rgba(31, 23, 17, 0.64));
   content: "";
   pointer-events: none;
 }
@@ -3671,24 +3700,20 @@ button.annotation-char:hover {
   height: 100%;
   place-items: center;
   background:
-    radial-gradient(circle at 74% 24%, rgba(202, 136, 85, 0.3), transparent 25%),
-    linear-gradient(145deg, #efe5d8, #dcd1c4);
+    radial-gradient(circle at 76% 23%, rgba(205, 142, 91, 0.24), transparent 24%),
+    linear-gradient(135deg, rgba(255, 252, 246, 0.74), transparent 45%),
+    url("/recitation-card-shanshui.jpg") center / cover no-repeat,
+    linear-gradient(145deg, #eee4d7, #d9cec1);
   color: rgba(127, 80, 50, 0.62);
   font-family: "Songti SC", STSong, serif;
-}
-
-.scene-visual-fallback span {
-  font-size: 42px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
 }
 
 .scene-visual-meta {
   position: absolute;
   z-index: 2;
-  top: 192px;
-  right: 33px;
-  left: 33px;
+  top: 14px;
+  right: 14px;
+  left: 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3697,7 +3722,8 @@ button.annotation-char:hover {
 
 .scene-visual-meta .sentence-number {
   color: #fff9ef;
-  font-size: 18px;
+  font-size: 16px;
+  font-weight: 800;
   text-shadow: 0 1px 8px rgba(30, 19, 12, 0.45);
 }
 
@@ -3708,33 +3734,47 @@ button.annotation-char:hover {
   backdrop-filter: blur(8px);
 }
 
-.viewer-artboard .scene-visual-rail > [data-export-exclude="true"] {
+.scene-play-overlay {
   position: absolute;
-  right: 20px;
-  bottom: 17px;
-  left: 20px;
+  z-index: 3;
+  right: 14px;
+  bottom: 12px;
+  left: 14px;
 }
 
-.viewer-artboard .scene-visual-rail .sentence-play {
+.viewer-artboard .scene-visual-frame .sentence-play {
   width: 100%;
-  min-height: 46px;
-  background: rgba(255, 253, 248, 0.82);
+  min-height: 36px;
+  border-color: rgba(255, 248, 239, 0.4);
+  background: rgba(35, 25, 19, 0.34);
+  color: #fffaf2;
+  backdrop-filter: blur(8px);
+}
+
+.viewer-artboard .scene-visual-frame .sentence-play span {
+  color: #f6c8b4;
+}
+
+.graph-sentence.active .scene-visual-frame .sentence-play {
+  border-color: rgba(255, 218, 200, 0.74);
+  background: rgba(151, 50, 35, 0.72);
 }
 
 .viewer-artboard .viewer-sentence-wrap .sentence-body {
   display: flex;
   min-width: 0;
   align-items: center;
-  padding: 34px 42px 32px;
+  padding: 28px 38px 26px 32px;
   background: rgba(255, 253, 248, 0.96);
 }
 
 .viewer-artboard .viewer-sentence-wrap .graph-track-layout {
-  --pinyin-row-height: 32px;
-  --manuscript-row-height: 60px;
-  --curve-row-height: 78px;
-  --manuscript-font-size: 40px;
-  --token-char-width: 44px;
+  --pinyin-row-height: 34px;
+  --manuscript-row-height: 68px;
+  --curve-row-height: 84px;
+  --manuscript-font-size: 56px;
+  --pinyin-font-size: 18px;
+  --token-char-width: 56px;
   --token-unit-gap: 4px;
   width: 100%;
 }
@@ -3757,21 +3797,24 @@ button.annotation-char:hover {
 }
 
 .viewer-artboard .semantic-token-line + .semantic-token-line {
-  margin-top: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(174, 124, 76, 0.12);
 }
 
 .viewer-artboard .semantic-token-line .graph-token-unit {
   flex: 0 0 auto;
 }
 
-.viewer-artboard .curve-line {
-  background: linear-gradient(180deg, rgba(249, 242, 232, 0.44), rgba(247, 235, 216, 0.12));
+.viewer-artboard .semantic-token-line .token-pinyin {
+  color: #735d4e;
+  font-size: var(--pinyin-font-size);
+  font-weight: 500;
 }
 
-.viewer-artboard .viewer-footnote {
-  margin: 22px 0 0;
-  border-color: rgba(123, 91, 61, 0.14);
-  background: rgba(255, 253, 248, 0.66);
+.viewer-artboard .curve-line {
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(246, 229, 218, 0.48), rgba(244, 237, 229, 0.12));
 }
 
 .mode-viewer .player-compact {
