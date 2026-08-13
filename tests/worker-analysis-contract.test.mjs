@@ -58,6 +58,14 @@ test("worker exposes a searchable work library with optimistic concurrency", asy
   assert.match(worker, /WORK_VERSION_CONFLICT/);
   assert.match(worker, /status:\s*409|409,\s*"WORK_VERSION_CONFLICT"/);
   assert.match(worker, /request\.method === "DELETE"\) return deleteReferenceAudio/);
+  assert.match(worker, /request\.method === "DELETE"\) return deleteWork/);
+  assert.match(worker, /WORK_VERSION_REQUIRED/);
+  assert.match(worker, /DELETE FROM publications WHERE work_id/);
+  assert.match(worker, /DELETE FROM audio_versions WHERE work_id/);
+  assert.match(worker, /DELETE FROM processing_jobs WHERE work_id/);
+  assert.match(worker, /DELETE FROM control_spec_versions WHERE work_id/);
+  assert.match(worker, /DELETE FROM assets WHERE work_id/);
+  assert.match(worker, /AUDIO_BUCKET\.delete\(storageKeys/);
 });
 
 test("D1 schema and migrations retain analysis data and legacy audio metadata", async () => {

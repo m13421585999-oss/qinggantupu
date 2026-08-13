@@ -1652,6 +1652,8 @@ function WorkLibrary({
   onQuery,
   onNew,
   onOpen,
+  onDelete,
+  deletingWorkId,
 }: {
   open: boolean;
   loading: boolean;
@@ -1662,6 +1664,8 @@ function WorkLibrary({
   onQuery: (value: string) => void;
   onNew: () => void;
   onOpen: (workId: string) => void;
+  onDelete: (work: WorkSummary) => void;
+  deletingWorkId?: string;
 }) {
   if (!open) return null;
   return (
@@ -1736,12 +1740,56 @@ function WorkLibrary({
                       rel="noreferrer"
                     >查看发布版 ↗</a>
                   ) : null}
+                  <button
+                    type="button"
+                    className="text-button work-delete-button"
+                    onClick={() => onDelete(item)}
+                    disabled={deletingWorkId === item.id}
+                  >{deletingWorkId === item.id ? "正在删除" : "删除作品"}</button>
                 </div>
               </article>
             );
           })}
         </div>
       </aside>
+    </div>
+  );
+}
+
+function DeleteWorkDialog({
+  work,
+  deleting,
+  current,
+  hasUnsavedChanges,
+  onCancel,
+  onConfirm,
+}: {
+  work: WorkSummary | null;
+  deleting: boolean;
+  current: boolean;
+  hasUnsavedChanges: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!work) return null;
+  return (
+    <div className="switch-work-dialog-backdrop">
+      <section className="switch-work-dialog delete-work-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-work-title">
+        <span className="switch-work-icon" aria-hidden="true">删</span>
+        <p className="eyebrow">永久删除作品</p>
+        <h2 id="delete-work-title">确定删除《{work.title}》吗？</h2>
+        <p>
+          正文、参考朗诵、标准 AI 音频、分析结果、控制谱和发布版都会永久删除，且无法恢复。
+          {current && hasUnsavedChanges ? " 当前尚未保存的修改也会一起丢失。" : ""}
+        </p>
+        <div className="switch-work-actions">
+          <button type="button" className="secondary-button" onClick={onCancel} disabled={deleting}>取消</button>
+          <button type="button" className="danger-button" onClick={onConfirm} disabled={deleting}>
+            {deleting ? <span className="button-spinner" aria-hidden="true" /> : null}
+            {deleting ? "正在删除" : "永久删除"}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -2090,6 +2138,8 @@ export function RecitationStudio() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryItems, setLibraryItems] = useState<WorkSummary[]>([]);
   const [libraryQuery, setLibraryQuery] = useState("");
+  const [workPendingDelete, setWorkPendingDelete] = useState<WorkSummary | null>(null);
+  const [deletingWorkId, setDeletingWorkId] = useState<string>();
   const [pendingWorkAction, setPendingWorkAction] = useState<PendingWorkAction | null>(null);
   const [sourceChangeConfirmOpen, setSourceChangeConfirmOpen] = useState(false);
   const [destructiveChangeKind, setDestructiveChangeKind] = useState<DestructiveChangeKind>("source");
@@ -2848,6 +2898,30 @@ export function RecitationStudio() {
     void performPendingWorkAction(action);
   };
 
+  const handleDeleteWork = async () => {
+    const target = workPendingDelete;
+    if (!target || deletingWorkId) return;
+    setDeletingWorkId(target.id);
+    try {
+      await apiJson<{ ok: true; deleted_work: { id: string; title: string } }>(
+        await fetch(`/api/works/${encodeURIComponent(target.id)}`, {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ expected_updated_at: target.updatedAt }),
+        }),
+      );
+      const deletingCurrentWork = target.id === work.id;
+      setLibraryItems((items) => items.filter((item) => item.id !== target.id));
+      setWorkPendingDelete(null);
+      if (deletingCurrentWork) createNewWork();
+      showToast(`《${target.title}》已永久删除`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeletingWorkId(undefined);
+    }
+  };
+
   const handlePublish = async () => {
     try {
       const result = await apiJson<{ work: RecitationWork; public_url: string }>(
@@ -2990,8 +3064,19 @@ export function RecitationStudio() {
           onQuery={setLibraryQuery}
           onNew={() => requestWorkAction({ kind: "new" })}
           onOpen={(workId) => requestWorkAction({ kind: "open", workId })}
+          onDelete={setWorkPendingDelete}
+          deletingWorkId={deletingWorkId}
         />
       ) : null}
+
+      <DeleteWorkDialog
+        work={workPendingDelete}
+        deleting={Boolean(deletingWorkId)}
+        current={workPendingDelete?.id === work.id}
+        hasUnsavedChanges={hasUnsavedChanges}
+        onCancel={() => setWorkPendingDelete(null)}
+        onConfirm={() => void handleDeleteWork()}
+      />
 
       <SwitchWorkDialog
         open={Boolean(pendingWorkAction)}
