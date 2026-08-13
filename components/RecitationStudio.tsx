@@ -461,6 +461,17 @@ function IndexedGraphTrack({
     }
 
     const trackRect = track.getBoundingClientRect();
+    // The viewer artboard is transformed as a whole on narrow landscape screens.
+    // DOMRect values are post-transform pixels, whereas positioned curve layers use
+    // the artboard's unscaled coordinate space. Normalize once so screen, playback
+    // and the unscaled PNG export all share the same token centers and row heights.
+    const coordinateScale = track.offsetWidth > 0
+      ? trackRect.width / track.offsetWidth
+      : 1;
+    const localScale = Number.isFinite(coordinateScale) && coordinateScale > 0
+      ? coordinateScale
+      : 1;
+    const localX = (value: number) => value / localScale;
     const visualRows: Array<{
       unitTop: number;
       curveTop: number;
@@ -477,13 +488,13 @@ function IndexedGraphTrack({
 
       const unitRect = unitElement.getBoundingClientRect();
       const curveRect = curveSlot.getBoundingClientRect();
-      const unitTop = unitRect.top - trackRect.top;
+      const unitTop = localX(unitRect.top - trackRect.top);
       let row = visualRows.find((candidate) => Math.abs(candidate.unitTop - unitTop) < 2);
       if (!row) {
         row = {
           unitTop,
-          curveTop: curveRect.top - trackRect.top,
-          curveHeight: curveRect.height,
+          curveTop: localX(curveRect.top - trackRect.top),
+          curveHeight: localX(curveRect.height),
           indexes: [],
           characters: [],
         };
@@ -503,16 +514,16 @@ function IndexedGraphTrack({
         const element = tokenRefs.current.get(index);
         if (!element) return [];
         const rect = element.getBoundingClientRect();
-        return [[index, rect.left - trackRect.left + rect.width / 2]];
+        return [[index, localX(rect.left - trackRect.left + rect.width / 2)]];
       }));
 
       return {
         key: `${sentence.id}-curve-row-${rowIndex}`,
         top: row.curveTop,
-        width: trackRect.width,
+        width: localX(trackRect.width),
         height: row.curveHeight,
-        trackStart: firstRect.left - trackRect.left + firstRect.width / 2,
-        trackEnd: lastRect.left - trackRect.left + lastRect.width / 2,
+        trackStart: localX(firstRect.left - trackRect.left + firstRect.width / 2),
+        trackEnd: localX(lastRect.left - trackRect.left + lastRect.width / 2),
         tokenCenters,
       };
     }));
@@ -2980,6 +2991,10 @@ export function RecitationStudio() {
         style: {
           minHeight: "0",
           paddingBottom: "28px",
+          position: "relative",
+          top: "0",
+          left: "0",
+          margin: "0",
           transform: "none",
           transformOrigin: "top left",
           width: "1600px",

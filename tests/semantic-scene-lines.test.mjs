@@ -65,6 +65,9 @@ test("viewer keeps the fixed artboard, visual asset dimensions and player safety
   assert.match(studio, /<ViewerScaleWrapper artboardRef=\{exportTargetRef\}>/);
   assert.match(studio, /semanticLines=\{isViewerScene\}/);
   assert.match(studio, /viewerSceneImageUrl/);
+  assert.match(studio, /trackRect\.width \/ track\.offsetWidth/);
+  assert.match(studio, /position: "relative"/);
+  assert.match(studio, /transform: "none"/);
   assert.match(css, /\.viewer-artboard\s*\{[\s\S]*?width:\s*1600px;/);
   assert.match(css, /\.viewer-artboard \.viewer-hero\s*\{[\s\S]*?width:\s*1500px;[\s\S]*?height:\s*420px;/);
   assert.match(css, /\.viewer-artboard \.viewer-sentence-wrap \.graph-sentence\s*\{[\s\S]*?width:\s*1500px;[\s\S]*?min-height:\s*320px;/);
