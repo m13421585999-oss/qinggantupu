@@ -334,15 +334,33 @@ function AcousticProsodyCurve({
           <stop offset="100%" stopColor="#b6452e" stopOpacity="0.015" />
         </linearGradient>
       </defs>
-      <path className="curve-fill" d={fillPath} fill={`url(#${gradientId})`} />
+      <path
+        className="curve-fill"
+        d={fillPath}
+        fill={`url(#${gradientId})`}
+        stroke="none"
+      />
       <line
         className="curve-baseline"
         x1={points[0].x}
         x2={points.at(-1)?.x ?? points[0].x}
         y1={baselineY}
         y2={baselineY}
+        stroke="rgba(128, 91, 57, 0.18)"
+        strokeWidth="1"
+        strokeDasharray="3 6"
       />
-      <path className="curve-path acoustic-path" d={spline} />
+      <path
+        className="curve-path acoustic-path"
+        d={spline}
+        fill="none"
+        stroke="#b6452e"
+        strokeWidth="2.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+        opacity="0.9"
+      />
       {points.map((point) => {
         const playing = point.tokenIndex === activeTokenIndex;
         return (
@@ -355,6 +373,11 @@ function AcousticProsodyCurve({
             cx={point.x}
             cy={point.y}
             r={playing ? 4.75 : editing ? 3.4 : 2.9}
+            fill={playing ? "#a93627" : editing ? "#a95b49" : "#b6452e"}
+            opacity={playing ? 1 : editing ? 0.95 : 0.9}
+            stroke={playing ? "#fff5e8" : "rgba(255, 250, 240, 0.92)"}
+            strokeWidth={playing ? 2 : editing ? 1.25 : 1.2}
+            vectorEffect="non-scaling-stroke"
           />
         );
       })}
@@ -2085,7 +2108,13 @@ function ViewerView({
           <span><b>↗ ↘ →</b> 句尾语调</span>
           <span>
             <svg className="legend-curve" viewBox="0 0 34 12" aria-hidden="true">
-              <path d="M2 9 C 8 9 9 3 15 3 S 24 8 32 5" />
+              <path
+                d="M2 9 C 8 9 9 3 15 3 S 24 8 32 5"
+                fill="none"
+                stroke="#a93627"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
             </svg>
             曲线：宏观语势
           </span>

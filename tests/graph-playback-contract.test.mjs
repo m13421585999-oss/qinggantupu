@@ -180,6 +180,9 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(studio, /point\.tokenIndex === activeTokenIndex/);
   assert.match(studio, /className="curve-fill"/);
   assert.match(studio, /linearGradient/);
+  assert.match(studio, /className="curve-path acoustic-path"[\s\S]*?fill="none"[\s\S]*?stroke="#b6452e"/);
+  assert.match(studio, /data-prosody-anchor="true"[\s\S]*?fill=\{playing \? "#a93627"/);
+  assert.match(studio, /stroke=\{playing \? "#fff5e8"/);
   assert.match(studio, /rect\.left - trackRect\.left \+ rect\.width \/ 2/);
   assert.doesNotMatch(studio, /event-path/);
   assert.match(studio, /addEventListener\("seeked"/);
