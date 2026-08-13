@@ -947,22 +947,16 @@ p {
 .graph-sentence {
   position: relative;
   isolation: isolate;
+  display: flex;
   min-width: 0;
   overflow: hidden;
-  padding: 24px 28px 28px;
-  border: 1px solid rgba(203, 160, 95, 0.46);
-  border-radius: 22px 22px 22px 8px;
-  background-color: #fffaf0;
-  background-image:
-    linear-gradient(90deg, rgba(255, 253, 247, 0.8), rgba(255, 251, 241, 0.66)),
-    url("/recitation-card-shanshui.jpg");
-  background-position: center, center bottom;
-  background-size: cover, cover;
+  border: 1px solid rgba(122, 96, 70, 0.18);
+  border-radius: 16px;
+  background: var(--paper);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.74),
-    0 18px 48px rgba(104, 72, 36, 0.1),
-    0 2px 7px rgba(79, 52, 25, 0.06);
-  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+    0 1px 2px rgba(62, 46, 30, 0.04),
+    0 14px 36px rgba(62, 46, 30, 0.06);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .graph-sentence > * {
@@ -970,106 +964,56 @@ p {
   z-index: 1;
 }
 
-.graph-sentence::before {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  background:
-    radial-gradient(circle at 8% 15%, rgba(255, 255, 255, 0.7), transparent 30%),
-    linear-gradient(180deg, rgba(255, 252, 245, 0.46), rgba(255, 248, 235, 0.12));
-  content: "";
-  pointer-events: none;
-}
-
 .graph-sentence:hover {
-  border-color: rgba(199, 134, 63, 0.66);
+  border-color: rgba(122, 96, 70, 0.3);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.8),
-    0 20px 54px rgba(104, 72, 36, 0.13),
-    0 3px 8px rgba(79, 52, 25, 0.07);
+    0 2px 4px rgba(62, 46, 30, 0.05),
+    0 18px 44px rgba(62, 46, 30, 0.09);
 }
 
 .graph-sentence.selected {
-  border-color: rgba(184, 61, 35, 0.58);
-  box-shadow: 0 0 0 3px rgba(184, 61, 35, 0.07), 0 18px 48px rgba(104, 72, 36, 0.12);
+  border-color: rgba(184, 61, 35, 0.5);
+  box-shadow: 0 0 0 3px rgba(184, 61, 35, 0.07), 0 14px 36px rgba(62, 46, 30, 0.08);
 }
 
 .graph-sentence.active {
-  border-color: rgba(184, 61, 35, 0.74);
-  background-color: #fff8e9;
-  box-shadow: 0 0 0 3px rgba(184, 61, 35, 0.08), 0 22px 54px rgba(94, 58, 32, 0.13);
+  border-color: rgba(184, 61, 35, 0.62);
+  background: #fffcf4;
+  box-shadow: 0 0 0 3px rgba(184, 61, 35, 0.08), 0 16px 40px rgba(62, 46, 30, 0.1);
 }
 
-.sentence-card-corner {
-  position: absolute;
-  z-index: 3;
-  width: 19px;
-  height: 19px;
-  opacity: 0.65;
-  pointer-events: none;
-}
-
-.corner-top-left {
-  top: 5px;
-  left: 5px;
-  border-top: 1px solid #d9a14f;
-  border-left: 1px solid #d9a14f;
-  border-radius: 8px 0 0;
-}
-
-.corner-top-right {
-  top: 5px;
-  right: 5px;
-  border-top: 1px solid #d9a14f;
-  border-right: 1px solid #d9a14f;
-  border-radius: 0 8px 0 0;
-}
-
-.corner-bottom-left {
-  bottom: 5px;
-  left: 5px;
-  border-bottom: 1px solid #d9a14f;
-  border-left: 1px solid #d9a14f;
-  border-radius: 0 0 0 8px;
-}
-
-.corner-bottom-right {
-  right: 5px;
-  bottom: 5px;
-  border-right: 1px solid #d9a14f;
-  border-bottom: 1px solid #d9a14f;
-  border-radius: 0 0 8px;
-}
-
-.sentence-card-topline {
+.sentence-rail {
   display: flex;
-  min-height: 38px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.sentence-badges {
-  display: flex;
-  align-items: center;
+  flex: 0 0 112px;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 12px;
+  padding: 26px 14px;
+  border-right: 1px solid rgba(122, 96, 70, 0.12);
+  background: rgba(250, 245, 236, 0.55);
+}
+
+.sentence-body {
+  flex: 1;
+  min-width: 0;
+  padding: 24px 30px 26px;
 }
 
 .sentence-number {
   color: #b9412b;
   font-family: "Songti SC", STSong, serif;
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 800;
   letter-spacing: 0.04em;
 }
 
 .soft-tag,
 .prosody-tag {
-  padding: 7px 14px;
+  padding: 6px 13px;
+  border: 1px solid rgba(146, 108, 66, 0.35);
   border-radius: 999px;
-  background: rgba(230, 215, 190, 0.62);
-  color: #67503d;
+  background: rgba(244, 234, 218, 0.72);
+  color: #5d4429;
   font-family: "Songti SC", STSong, serif;
   font-size: 12px;
   font-weight: 700;
@@ -1087,24 +1031,30 @@ p {
 
 .sentence-play {
   display: inline-flex;
-  min-height: 38px;
+  min-height: 40px;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 0 17px;
-  border: 1px solid rgba(201, 145, 76, 0.48);
+  padding: 0 12px;
+  white-space: nowrap;
+  border: 1px solid rgba(150, 51, 35, 0.32);
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 251, 240, 0.92), rgba(239, 224, 201, 0.76));
-  color: #5f4b3c;
+  background: var(--paper);
+  color: var(--red-dark);
   font-family: "Songti SC", STSong, serif;
   font-size: 12px;
   font-weight: 700;
-  box-shadow: 0 5px 12px rgba(124, 82, 39, 0.12), inset 0 1px rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.04em;
+  transition: 160ms ease;
+}
+
+.sentence-rail .sentence-play {
+  width: 100%;
 }
 
 .sentence-play:hover {
-  border-color: rgba(185, 64, 46, 0.42);
-  background: linear-gradient(180deg, #fffaf0, #f2dfc4);
-  color: var(--red-dark);
+  border-color: rgba(150, 51, 35, 0.6);
+  background: #fdf3ea;
   transform: translateY(-1px);
 }
 
@@ -1282,11 +1232,11 @@ p {
   bottom: 20px;
   left: 288px;
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) auto;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
-  min-height: 84px;
-  padding: 13px 18px;
+  gap: 14px;
+  min-height: 72px;
+  padding: 10px 16px;
   border: 1px solid rgba(111, 86, 60, 0.15);
   border-radius: 20px;
   background: rgba(255, 253, 248, 0.96);
@@ -1303,8 +1253,8 @@ p {
 
 .play-main {
   display: grid;
-  width: 52px;
-  height: 52px;
+  width: 46px;
+  height: 46px;
   place-items: center;
   border-radius: 50%;
   background: linear-gradient(145deg, #c14d35, #963323);
@@ -1622,6 +1572,21 @@ p {
     radial-gradient(circle at 82% 12%, rgba(233, 216, 188, 0.55), transparent 46%);
 }
 
+.viewer-hero-art {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(52%, 780px);
+  background: url("/recitation-card-shanshui.jpg") right center / cover no-repeat;
+  -webkit-mask-image: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.9) 48%);
+  mask-image: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.9) 48%);
+  mix-blend-mode: multiply;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 .viewer-hero-inner {
   position: relative;
   z-index: 2;
@@ -1857,6 +1822,13 @@ p {
   letter-spacing: -0.12em;
 }
 
+.legend-focus-char {
+  color: #c8452f;
+  font-family: "Songti SC", STSong, serif;
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .legend-curve {
   width: 34px;
   height: 12px;
@@ -1876,17 +1848,36 @@ p {
 }
 
 .viewer-sentence-wrap .graph-sentence {
-  padding: 30px 38px 34px;
-  border-radius: 25px 25px 25px 9px;
+  border-radius: 18px;
 }
 
-.viewer-sentence-wrap .sentence-card-topline {
-  margin-bottom: 25px;
+.viewer-sentence-wrap .graph-sentence::after {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 44%;
+  background: url("/recitation-card-shanshui.jpg") right bottom / cover no-repeat;
+  content: "";
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 64%);
+  mask-image: linear-gradient(90deg, transparent, #000 64%);
+  opacity: 0.32;
+  pointer-events: none;
+}
+
+.viewer-sentence-wrap .sentence-rail {
+  flex-basis: 128px;
+  gap: 14px;
+  padding: 30px 16px;
+}
+
+.viewer-sentence-wrap .sentence-body {
+  padding: 28px 40px 30px;
 }
 
 .viewer-sentence-wrap .sentence-play {
   min-height: 44px;
-  padding: 0 20px;
   font-size: 13px;
 }
 
@@ -2158,40 +2149,7 @@ p {
   --manuscript-font-size: clamp(24px, 2.25vw, 34px);
   --token-char-width: clamp(34px, 2.85vw, 46px);
   --token-unit-gap: clamp(3px, 0.55vw, 9px);
-  display: grid;
   min-width: 0;
-  grid-template-columns: 55px minmax(0, 1fr);
-  gap: 16px;
-}
-
-.track-labels {
-  display: grid;
-  align-self: start;
-  grid-template-rows: var(--pinyin-row-height) var(--manuscript-row-height) var(--curve-row-height);
-  align-items: center;
-  color: #8b6848;
-  font-family: "Songti SC", STSong, serif;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.11em;
-}
-
-.track-labels .strong {
-  color: #745235;
-}
-
-.track-labels span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-}
-
-.track-labels i {
-  width: 6px;
-  height: 6px;
-  border: 1.5px solid #dda85d;
-  transform: rotate(45deg);
 }
 
 .graph-track-viewport,
@@ -2410,16 +2368,10 @@ p {
 .viewer-sentence-wrap .graph-track-layout {
   --pinyin-row-height: 40px;
   --manuscript-row-height: 72px;
-  --curve-row-height: 88px;
+  --curve-row-height: 96px;
   --manuscript-font-size: clamp(32px, 3.55vw, 50px);
   --token-char-width: clamp(43px, 3.85vw, 62px);
   --token-unit-gap: clamp(3px, 0.6vw, 10px);
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 22px;
-}
-
-.viewer-sentence-wrap .track-labels {
-  font-size: 13px;
 }
 
 .curve-baseline {
@@ -2441,23 +2393,27 @@ p {
   filter: drop-shadow(0 2px 5px rgba(189, 63, 45, 0.2));
 }
 
+.curve-fill {
+  stroke: none;
+}
+
 .acoustic-path {
   stroke: #b6452e;
-  opacity: 0.82;
+  opacity: 0.9;
 }
 
 .token-prosody-anchor {
-  fill: #9f7568;
-  opacity: 0.62;
-  stroke: rgba(255, 250, 240, 0.88);
-  stroke-width: 1;
+  fill: #b6452e;
+  opacity: 0.9;
+  stroke: rgba(255, 250, 240, 0.92);
+  stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
   transition: r 120ms ease, fill 120ms ease, opacity 120ms ease, stroke-width 120ms ease;
 }
 
 .acoustic-prosody-curve.editing .token-prosody-anchor {
   fill: #a95b49;
-  opacity: 0.78;
+  opacity: 0.95;
   stroke-width: 1.25;
 }
 
@@ -2819,16 +2775,15 @@ button.annotation-char:hover {
   .viewer-sentence-wrap .graph-track-layout {
     --pinyin-row-height: 34px;
     --manuscript-row-height: 60px;
-    --curve-row-height: 78px;
+    --curve-row-height: 84px;
     --manuscript-font-size: clamp(28px, 4.8vw, 38px);
     --token-char-width: clamp(38px, 5.2vw, 48px);
     --token-unit-gap: clamp(2px, 0.45vw, 6px);
-    grid-template-columns: 56px minmax(0, 1fr);
-    gap: 14px;
   }
 
-  .viewer-sentence-wrap .track-labels {
-    font-size: 10px;
+  .viewer-hero-art {
+    width: 46%;
+    opacity: 0.42;
   }
 
   .app-header {
@@ -3084,9 +3039,16 @@ button.annotation-char:hover {
   }
 
   .viewer-sentence-wrap .graph-sentence {
-    padding: 20px 16px 23px;
-    border-radius: 18px 18px 18px 7px;
-    background-position: 62% center, 62% bottom;
+    border-radius: 14px;
+  }
+
+  .viewer-sentence-wrap .graph-sentence::after {
+    width: 58%;
+    opacity: 0.2;
+  }
+
+  .viewer-hero-art {
+    display: none;
   }
 
   .graph-track-layout {
@@ -3096,42 +3058,47 @@ button.annotation-char:hover {
     --manuscript-font-size: clamp(22px, 6.4vw, 27px);
     --token-char-width: clamp(29px, 8.2vw, 35px);
     --token-unit-gap: 2px;
-    grid-template-columns: 36px minmax(0, 1fr);
-    gap: 7px;
-  }
-
-  .track-labels {
-    font-size: 8px;
-  }
-
-  .track-labels span {
-    gap: 4px;
-  }
-
-  .track-labels i {
-    width: 4px;
-    height: 4px;
   }
 
   .viewer-sentence-wrap .graph-track-layout {
     --pinyin-row-height: 28px;
     --manuscript-row-height: 48px;
-    --curve-row-height: 66px;
+    --curve-row-height: 70px;
     --manuscript-font-size: clamp(23px, 7vw, 29px);
     --token-char-width: clamp(30px, 8.5vw, 37px);
     --token-unit-gap: 2px;
-    grid-template-columns: 38px minmax(0, 1fr);
-    gap: 8px;
   }
 
-  .viewer-sentence-wrap .track-labels {
-    font-size: 8px;
+  .graph-sentence {
+    flex-direction: column;
   }
 
-  .sentence-card-topline,
-  .viewer-sentence-wrap .sentence-card-topline {
-    min-height: 34px;
-    margin-bottom: 16px;
+  .sentence-rail {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 16px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(122, 96, 70, 0.12);
+    background: rgba(250, 245, 236, 0.55);
+  }
+
+  .sentence-rail .sentence-play {
+    width: auto;
+    margin-left: auto;
+  }
+
+  .sentence-body {
+    padding: 16px 16px 18px;
+  }
+
+  .viewer-sentence-wrap .sentence-rail {
+    padding: 15px 18px;
+  }
+
+  .viewer-sentence-wrap .sentence-body {
+    padding: 18px;
   }
 
   .sentence-number {

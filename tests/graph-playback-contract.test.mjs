@@ -156,6 +156,8 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(studio, /data-prosody-anchor="true"/);
   assert.match(studio, /data-token-index=\{point\.tokenIndex\}/);
   assert.match(studio, /point\.tokenIndex === activeTokenIndex/);
+  assert.match(studio, /className="curve-fill"/);
+  assert.match(studio, /linearGradient/);
   assert.match(studio, /rect\.left - trackRect\.left \+ rect\.width \/ 2/);
   assert.doesNotMatch(studio, /event-path/);
   assert.match(studio, /addEventListener\("seeked"/);
@@ -167,7 +169,7 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(css, /\.pause-mark\s*\{[^}]*font-weight:\s*700/s);
   assert.match(css, /\.tone-arrow\s*\{[^}]*font-weight:\s*700/s);
   assert.match(css, /\.curve-path\s*\{[^}]*stroke-width:\s*2\.25/s);
-  assert.match(css, /\.token-prosody-anchor\s*\{[^}]*opacity:\s*0\.62/s);
+  assert.match(css, /\.token-prosody-anchor\s*\{[^}]*opacity:\s*0\.9/s);
   assert.match(css, /\.token-prosody-anchor\.playing\s*\{[^}]*stroke-width:\s*2/s);
   assert.doesNotMatch(css, /\.track-marker-cell|\.track-spacer-cell|--track-columns/);
   assert.doesNotMatch(css, /\.pause-mark\s*\{[^}]*position:\s*absolute/s);

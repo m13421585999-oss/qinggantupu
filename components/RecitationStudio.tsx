@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -256,11 +257,12 @@ function AcousticProsodyCurve({
   activeTokenIndex?: number;
   editing: boolean;
 }) {
+  const gradientId = useId();
   const rowPoints = teachingPoints.filter((point) => Number.isFinite(metrics.tokenCenters[point.tokenIndex]));
   if (metrics.width <= 0 || !rowPoints.length) return null;
 
   const height = metrics.height;
-  const verticalPadding = 12;
+  const verticalPadding = 7;
   const visualStep = (height - verticalPadding * 2) / (PROSODY_VISUAL_LEVEL_COUNT - 1);
   const points = rowPoints.map((point) => ({
     ...point,
@@ -271,6 +273,8 @@ function AcousticProsodyCurve({
   const label = sentence.prosody.length
     ? sentence.prosody.map((event) => PROSODY_LABELS[event.type]).join("、")
     : "教学宏观语势";
+  const spline = monotoneSplinePath(points);
+  const fillPath = `${spline} L ${points.at(-1)!.x} ${height + 1} L ${points[0].x} ${height + 1} Z`;
 
   return (
     <svg
@@ -280,6 +284,13 @@ function AcousticProsodyCurve({
       role="img"
       aria-label={`${label}；每字宏观语势曲线`}
     >
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#b6452e" stopOpacity="0.14" />
+          <stop offset="100%" stopColor="#b6452e" stopOpacity="0.015" />
+        </linearGradient>
+      </defs>
+      <path className="curve-fill" d={fillPath} fill={`url(#${gradientId})`} />
       <line
         className="curve-baseline"
         x1={points[0].x}
@@ -287,7 +298,7 @@ function AcousticProsodyCurve({
         y1={baselineY}
         y2={baselineY}
       />
-      <path className="curve-path acoustic-path" d={monotoneSplinePath(points)} />
+      <path className="curve-path acoustic-path" d={spline} />
       {points.map((point) => {
         const playing = point.tokenIndex === activeTokenIndex;
         return (
@@ -299,7 +310,7 @@ function AcousticProsodyCurve({
             key={point.tokenIndex}
             cx={point.x}
             cy={point.y}
-            r={playing ? 3.75 : editing ? 2.5 : 1.8}
+            r={playing ? 4.75 : editing ? 3.4 : 2.9}
           />
         );
       })}
@@ -434,11 +445,6 @@ function IndexedGraphTrack({
 
   return (
     <div className="graph-track-layout">
-      <div className="track-labels" aria-hidden="true">
-        <span><i />拼音</span>
-        <span className="strong"><i />文稿</span>
-        <span><i />语势</span>
-      </div>
       <div className="graph-track-viewport">
         <div className="attached-token-track">
           <div className="token-unit-flow" ref={trackRef} aria-label={sentence.text}>
@@ -596,15 +602,9 @@ function GraphSentence({
       tabIndex={onSelect ? 0 : undefined}
       aria-label={onSelect ? `选择第 ${sentence.order} 句：${sentence.text}` : undefined}
     >
-      <span className="sentence-card-corner corner-top-left" aria-hidden="true" />
-      <span className="sentence-card-corner corner-top-right" aria-hidden="true" />
-      <span className="sentence-card-corner corner-bottom-left" aria-hidden="true" />
-      <span className="sentence-card-corner corner-bottom-right" aria-hidden="true" />
-      <div className="sentence-card-topline">
-        <div className="sentence-badges">
-          <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
-          <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
-        </div>
+      <div className="sentence-rail">
+        <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
+        <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
         {onPlay ? (
           <button
             type="button"
@@ -621,11 +621,13 @@ function GraphSentence({
         ) : null}
       </div>
 
-      <IndexedGraphTrack
-        sentence={sentence}
-        activeTokenId={activeTokenId}
-        editing={Boolean(editing)}
-      />
+      <div className="sentence-body">
+        <IndexedGraphTrack
+          sentence={sentence}
+          activeTokenId={activeTokenId}
+          editing={Boolean(editing)}
+        />
+      </div>
     </div>
   );
 }
@@ -1735,6 +1737,7 @@ function ViewerView({
   return (
     <div className="viewer-shell">
       <section className="viewer-hero">
+        <div className="viewer-hero-art" aria-hidden="true" />
         <div className="viewer-hero-inner">
           <div className="viewer-breadcrumb">
             <span>作品库</span><b>›</b><strong>{work.title}</strong>
@@ -1770,7 +1773,7 @@ function ViewerView({
         </div>
 
         <div className="legend viewer-legend" aria-label="图谱符号说明">
-          <span><i className="legend-focus" />红字：表达焦点</span>
+          <span><b className="legend-focus-char">春</b> 红字：表达焦点</span>
           <span><b>/</b> 短停</span>
           <span><b>{"///"}</b> 长停</span>
           <span><b className="legend-prolong">——</b> 拖音</span>
