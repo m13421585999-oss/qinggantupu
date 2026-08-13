@@ -16,6 +16,12 @@ import {
 } from "@/lib/graph-track";
 import { sentencePlaybackWindow } from "@/lib/sentence-playback";
 import {
+  buildTeachingProsodyPoints,
+  monotoneSplinePath,
+  PROSODY_VISUAL_LEVEL_COUNT,
+  type TeachingProsodyPoint,
+} from "@/lib/prosody-visual";
+import {
   ENDING_LABELS,
   PROSODY_LABELS,
   RHYTHM_LABELS,
@@ -106,10 +112,6 @@ function pauseAfter(sentence: RecitationSentence, tokenIndex: number) {
 
 function prolongFor(sentence: RecitationSentence, tokenIndex: number) {
   return sentence.prolongations.find((prolong) => prolong.tokenIndex === tokenIndex);
-}
-
-function primaryProsody(sentence: RecitationSentence): ProsodyEvent | undefined {
-  return sentence.prosody[0];
 }
 
 function sentenceTiming(
@@ -225,158 +227,50 @@ interface CurveMetrics {
   height: number;
   trackStart: number;
   trackEnd: number;
-  activeStart: number;
-  activeEnd: number;
-  coreStart: number;
-  coreEnd: number;
   tokenCenters: Record<number, number>;
 }
 
 interface CurveRowMetrics extends CurveMetrics {
   key: string;
   top: number;
-  overlapsProsody: boolean;
-}
-
-function ProsodyCurve({
-  type,
-  strength,
-  metrics,
-  active,
-  gradientKey,
-}: {
-  type: ProsodyType;
-  strength: 1 | 2 | 3;
-  metrics: CurveMetrics;
-  active: boolean;
-  gradientKey: string;
-}) {
-  const { width, height } = metrics;
-  if (width <= 0) return null;
-
-  const top = 8;
-  const bottom = height - 8;
-  const middle = height / 2;
-  const amplitude = 8 + strength * 7;
-  const left = Math.max(4, metrics.trackStart);
-  const right = Math.min(width - 4, metrics.trackEnd);
-  const activeLeft = Math.max(left, Math.min(right, metrics.activeStart));
-  const activeRight = Math.max(activeLeft, Math.min(right, metrics.activeEnd));
-  const coreLeft = Math.max(activeLeft, Math.min(activeRight, metrics.coreStart));
-  const coreRight = Math.max(coreLeft, Math.min(activeRight, metrics.coreEnd));
-  const anchor = (coreLeft + coreRight) / 2;
-  const leftControl = activeLeft + (coreLeft - activeLeft) * 0.65;
-  const rightControl = activeRight - (activeRight - coreRight) * 0.65;
-
-  let dotX = anchor;
-  let dotY = middle;
-  let path = "";
-  if (type === "peak") {
-    dotY = Math.max(top, middle - amplitude);
-    path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${leftControl} ${middle}, ${coreLeft} ${dotY}, ${anchor} ${dotY} C ${coreRight} ${dotY}, ${rightControl} ${middle}, ${activeRight} ${middle} L ${right} ${middle}`;
-  } else if (type === "valley") {
-    dotY = Math.min(bottom, middle + amplitude);
-    path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${leftControl} ${middle}, ${coreLeft} ${dotY}, ${anchor} ${dotY} C ${coreRight} ${dotY}, ${rightControl} ${middle}, ${activeRight} ${middle} L ${right} ${middle}`;
-  } else if (type === "rising") {
-    dotX = coreRight;
-    dotY = Math.max(top, middle - amplitude);
-    path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${coreLeft} ${middle + amplitude * 0.35}, ${coreRight} ${dotY + 5}, ${activeRight} ${dotY} L ${right} ${dotY}`;
-  } else {
-    dotX = coreRight;
-    dotY = Math.min(bottom, middle + amplitude);
-    path = `M ${left} ${middle} L ${activeLeft} ${middle} C ${coreLeft} ${middle - amplitude * 0.35}, ${coreRight} ${dotY - 5}, ${activeRight} ${dotY} L ${right} ${dotY}`;
-  }
-
-  const gradientId = `curve-${gradientKey}-${type}-${active ? "active" : "idle"}`;
-  return (
-    <svg
-      className="prosody-curve"
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      role="img"
-      aria-label={`${PROSODY_LABELS[type]}语势，强度 ${strength}`}
-    >
-      <defs>
-        <linearGradient id={gradientId} x1="0" x2="1">
-          <stop offset="0" stopColor={active ? "#dc6a4d" : "#9c8278"} />
-          <stop offset="0.55" stopColor={active ? "#bd3f2d" : "#755e56"} />
-          <stop offset="1" stopColor={active ? "#e29a59" : "#ad8b75"} />
-        </linearGradient>
-      </defs>
-      <line
-        className="curve-baseline"
-        x1={left}
-        x2={right}
-        y1={middle}
-        y2={middle}
-      />
-      <path
-        className={active ? "curve-path active" : "curve-path"}
-        d={path}
-        stroke={`url(#${gradientId})`}
-      />
-      <circle
-        className={active ? "curve-dot active" : "curve-dot"}
-        data-prosody-anchor="true"
-        cx={dotX}
-        cy={dotY}
-        r={active ? 4.5 : 3.5}
-      />
-    </svg>
-  );
-}
-
-function smoothPointPath(points: Array<{ x: number; y: number }>) {
-  if (!points.length) return "";
-  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-  return points.slice(1).reduce((path, point, index) => {
-    const previous = points[index];
-    const middleX = (previous.x + point.x) / 2;
-    return `${path} C ${middleX} ${previous.y}, ${middleX} ${point.y}, ${point.x} ${point.y}`;
-  }, `M ${points[0].x} ${points[0].y}`);
 }
 
 function AcousticProsodyCurve({
   sentence,
   metrics,
-  active,
-  levelDomain,
+  teachingPoints,
+  activeTokenIndex,
+  editing,
 }: {
   sentence: RecitationSentence;
   metrics: CurveMetrics;
-  active: boolean;
-  levelDomain?: readonly [number, number];
+  teachingPoints: TeachingProsodyPoint[];
+  activeTokenIndex?: number;
+  editing: boolean;
 }) {
-  const macro = sentence.macroProsodyPath;
-  const acousticPoints = (macro?.points ?? []).flatMap((point) => {
-    const x = metrics.tokenCenters[point.tokenIndex];
-    return Number.isFinite(x) ? [{ ...point, x }] : [];
-  });
-  if (metrics.width <= 0 || acousticPoints.length < 2) return null;
+  const rowPoints = teachingPoints.filter((point) => Number.isFinite(metrics.tokenCenters[point.tokenIndex]));
+  if (metrics.width <= 0 || !rowPoints.length) return null;
 
   const height = metrics.height;
-  const levels = acousticPoints.map((point) => point.normalizedLevel);
-  const rawMin = levelDomain?.[0] ?? Math.min(...levels);
-  const rawMax = levelDomain?.[1] ?? Math.max(...levels);
-  const center = (rawMin + rawMax) / 2;
-  const range = Math.max(2, rawMax - rawMin + 0.8);
-  const yFor = (level: number) => height / 2 - ((level - center) / range) * (height - 16);
-  const points = acousticPoints.map((point) => ({
+  const verticalPadding = 12;
+  const visualStep = (height - verticalPadding * 2) / (PROSODY_VISUAL_LEVEL_COUNT - 1);
+  const points = rowPoints.map((point) => ({
     ...point,
-    y: yFor(point.normalizedLevel),
+    x: metrics.tokenCenters[point.tokenIndex],
+    y: height - verticalPadding - point.visualLevel * visualStep,
   }));
-  const baselineY = yFor(0);
+  const baselineY = height - verticalPadding - ((PROSODY_VISUAL_LEVEL_COUNT - 1) / 2) * visualStep;
   const label = sentence.prosody.length
     ? sentence.prosody.map((event) => PROSODY_LABELS[event.type]).join("、")
-    : "真实宏观声音路径";
+    : "教学宏观语势";
 
   return (
     <svg
-      className="prosody-curve acoustic-prosody-curve"
+      className={`prosody-curve acoustic-prosody-curve ${editing ? "editing" : ""}`}
       viewBox={`0 0 ${metrics.width} ${height}`}
       preserveAspectRatio="none"
       role="img"
-      aria-label={`${label}；声学连续曲线`}
+      aria-label={`${label}；每字宏观语势曲线`}
     >
       <line
         className="curve-baseline"
@@ -385,39 +279,20 @@ function AcousticProsodyCurve({
         y1={baselineY}
         y2={baselineY}
       />
-      <path className="curve-path acoustic-path" d={smoothPointPath(points)} />
-      {sentence.prosody.map((event) => {
-        let eventPoints = points.filter(
-          (point) => point.tokenIndex >= event.activeSpan.start && point.tokenIndex <= event.activeSpan.end,
-        );
-        if (eventPoints.length === 1) {
-          const position = points.findIndex((point) => point.tokenIndex === eventPoints[0].tokenIndex);
-          eventPoints = points.slice(Math.max(0, position - 1), Math.min(points.length, position + 2));
-        }
-        if (eventPoints.length < 2) return null;
-        const corePoints = eventPoints.filter(
-          (point) => point.tokenIndex >= event.coreZone.start && point.tokenIndex <= event.coreZone.end,
-        );
-        const candidates = corePoints.length ? corePoints : eventPoints;
-        const anchor = event.type === "peak"
-          ? candidates.reduce((best, point) => point.y < best.y ? point : best)
-          : event.type === "valley"
-            ? candidates.reduce((best, point) => point.y > best.y ? point : best)
-            : candidates.at(-1)!;
+      <path className="curve-path acoustic-path" d={monotoneSplinePath(points)} />
+      {points.map((point) => {
+        const playing = point.tokenIndex === activeTokenIndex;
         return (
-          <g key={event.id} aria-label={`${PROSODY_LABELS[event.type]}，强度 ${event.strength}`}>
-            <path
-              className={active ? "curve-path event-path active" : "curve-path event-path"}
-              d={smoothPointPath(eventPoints)}
-            />
-            <circle
-              className={active ? "curve-dot active" : "curve-dot"}
-              data-prosody-anchor="true"
-              cx={anchor.x}
-              cy={anchor.y}
-              r={active ? 4.5 : 3.5}
-            />
-          </g>
+          <circle
+            className={`token-prosody-anchor ${playing ? "playing" : ""}`}
+            data-prosody-anchor="true"
+            data-token-index={point.tokenIndex}
+            data-visual-level={point.visualLevel}
+            key={point.tokenIndex}
+            cx={point.x}
+            cy={point.y}
+            r={playing ? 3.75 : editing ? 2.5 : 1.8}
+          />
         );
       })}
     </svg>
@@ -435,30 +310,30 @@ function ToneArrow({ type }: { type: EndingTone }) {
 function IndexedGraphTrack({
   sentence,
   activeTokenId,
-  active,
+  editing = false,
 }: {
   sentence: RecitationSentence;
   activeTokenId?: string;
-  active: boolean;
+  editing?: boolean;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const tokenRefs = useRef(new Map<number, HTMLSpanElement>());
   const unitRefs = useRef(new Map<number, HTMLSpanElement>());
   const curveSlotRefs = useRef(new Map<number, HTMLSpanElement>());
   const [curveRows, setCurveRows] = useState<CurveRowMetrics[]>([]);
-  const prosody = primaryProsody(sentence);
   const focused = focusSet(sentence);
   const tokenUnits = useMemo(
     () => buildGraphTokenUnits(sentence),
     [sentence],
   );
   const activeTokenIndex = sentence.tokens.find((token) => token.id === activeTokenId)?.index;
-  const acousticLevelDomain = useMemo(() => {
-    const levels = sentence.macroProsodyPath?.points.map((point) => point.normalizedLevel) ?? [];
-    return levels.length
-      ? [Math.min(...levels), Math.max(...levels)] as const
-      : undefined;
-  }, [sentence.macroProsodyPath]);
+  const teachingProsodyPoints = useMemo(
+    () => buildTeachingProsodyPoints(
+      tokenUnits.map((unit) => unit.token.index),
+      sentence.macroProsodyPath?.points ?? [],
+    ),
+    [sentence.macroProsodyPath, tokenUnits],
+  );
 
   const measure = useCallback(() => {
     const track = trackRef.current;
@@ -500,37 +375,12 @@ function IndexedGraphTrack({
       row.characters.push(characterElement);
     }
 
-    const closestElement = (indexes: number[], target: number) => {
-      const closestIndex = indexes.reduce((closest, index) => (
-        Math.abs(index - target) < Math.abs(closest - target) ? index : closest
-      ));
-      return tokenRefs.current.get(closestIndex);
-    };
-
     setCurveRows(visualRows.map((row, rowIndex) => {
       const first = row.characters[0];
       const last = row.characters.at(-1)!;
       const firstRect = first.getBoundingClientRect();
       const lastRect = last.getBoundingClientRect();
       const uniqueIndexes = [...new Set(row.indexes)].sort((left, right) => left - right);
-      const rowStartIndex = uniqueIndexes[0];
-      const rowEndIndex = uniqueIndexes.at(-1)!;
-      const activeStartElement = prosody
-        ? closestElement(uniqueIndexes, Math.max(rowStartIndex, prosody.activeSpan.start))
-        : undefined;
-      const activeEndElement = prosody
-        ? closestElement(uniqueIndexes, Math.min(rowEndIndex, prosody.activeSpan.end))
-        : undefined;
-      const coreStartElement = prosody
-        ? closestElement(uniqueIndexes, Math.max(rowStartIndex, prosody.coreZone.start))
-        : undefined;
-      const coreEndElement = prosody
-        ? closestElement(uniqueIndexes, Math.min(rowEndIndex, prosody.coreZone.end))
-        : undefined;
-      const activeStartRect = activeStartElement?.getBoundingClientRect();
-      const activeEndRect = activeEndElement?.getBoundingClientRect();
-      const coreStartRect = coreStartElement?.getBoundingClientRect();
-      const coreEndRect = coreEndElement?.getBoundingClientRect();
       const tokenCenters = Object.fromEntries(uniqueIndexes.flatMap((index) => {
         const element = tokenRefs.current.get(index);
         if (!element) return [];
@@ -545,27 +395,10 @@ function IndexedGraphTrack({
         height: row.curveHeight,
         trackStart: firstRect.left - trackRect.left + firstRect.width / 2,
         trackEnd: lastRect.left - trackRect.left + lastRect.width / 2,
-        activeStart: activeStartRect
-          ? activeStartRect.left - trackRect.left
-          : firstRect.left - trackRect.left,
-        activeEnd: activeEndRect
-          ? activeEndRect.right - trackRect.left
-          : lastRect.right - trackRect.left,
-        coreStart: coreStartRect
-          ? coreStartRect.left - trackRect.left
-          : firstRect.left - trackRect.left,
-        coreEnd: coreEndRect
-          ? coreEndRect.right - trackRect.left
-          : lastRect.right - trackRect.left,
         tokenCenters,
-        overlapsProsody: Boolean(
-          prosody
-          && prosody.activeSpan.start <= rowEndIndex
-          && prosody.activeSpan.end >= rowStartIndex
-        ),
       };
     }));
-  }, [prosody, sentence.id, tokenUnits]);
+  }, [sentence.id, tokenUnits]);
 
   useLayoutEffect(() => {
     const track = trackRef.current;
@@ -709,16 +542,9 @@ function IndexedGraphTrack({
                     <AcousticProsodyCurve
                       sentence={sentence}
                       metrics={row}
-                      active={active}
-                      levelDomain={acousticLevelDomain}
-                    />
-                  ) : prosody && row.overlapsProsody ? (
-                    <ProsodyCurve
-                      type={prosody.type}
-                      strength={prosody.strength}
-                      metrics={row}
-                      active={active}
-                      gradientKey={row.key.replace(/[^a-zA-Z0-9_-]/g, "-")}
+                      teachingPoints={teachingProsodyPoints}
+                      activeTokenIndex={activeTokenIndex}
+                      editing={editing}
                     />
                   ) : null}
                 </div>
@@ -736,6 +562,7 @@ function GraphSentence({
   selected,
   active,
   activeTokenId,
+  editing,
   onSelect,
   onPlay,
 }: {
@@ -743,6 +570,7 @@ function GraphSentence({
   selected?: boolean;
   active?: boolean;
   activeTokenId?: string;
+  editing?: boolean;
   onSelect?: () => void;
   onPlay?: () => void;
 }) {
@@ -788,7 +616,7 @@ function GraphSentence({
       <IndexedGraphTrack
         sentence={sentence}
         activeTokenId={activeTokenId}
-        active={Boolean(active)}
+        editing={Boolean(editing)}
       />
     </div>
   );
@@ -1656,6 +1484,7 @@ function EditorStage({
                 key={sentence.id}
                 sentence={sentence}
                 selected={editingSentenceId === sentence.id}
+                editing
                 active={active?.id === sentence.id && currentMs > 0}
                 activeTokenId={active?.id === sentence.id && currentMs > 0 ? activeTokenId : undefined}
                 onSelect={() => onEditSentence(sentence.id)}

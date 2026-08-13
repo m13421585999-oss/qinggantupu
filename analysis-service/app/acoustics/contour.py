@@ -121,6 +121,8 @@ def _interpolate_missing(values: list[float | None]) -> list[float] | None:
 def continuous_macro_prosody_path(
     indexes: list[int],
     values: list[float | None],
+    *,
+    macro_pitch_centers: list[float | None] | None = None,
 ) -> dict[str, Any]:
     """Build one height-continuous macro F0 path anchored to source token indexes.
 
@@ -130,6 +132,8 @@ def continuous_macro_prosody_path(
     """
 
     if not indexes or len(indexes) != len(values):
+        return {"points": [], "segments": []}
+    if macro_pitch_centers is not None and len(macro_pitch_centers) != len(indexes):
         return {"points": [], "segments": []}
     interpolated = _interpolate_missing(values)
     if interpolated is None:
@@ -145,6 +149,11 @@ def continuous_macro_prosody_path(
     points = [
         {
             "token_index": index,
+            "macro_pitch_center": rounded(
+                macro_pitch_centers[position]
+                if macro_pitch_centers is not None
+                else values[position]
+            ),
             "raw_normalized_pitch": rounded(values[position]),
             "normalized_level": round(smoothed[position], 3),
         }

@@ -2397,21 +2397,30 @@ p {
 
 .acoustic-path {
   stroke: #b6452e;
-  opacity: 0.9;
+  opacity: 0.82;
 }
 
-.event-path {
-  stroke: #c8452f;
-  opacity: 0.84;
-}
-
-.curve-dot {
-  fill: #b6452e;
+.token-prosody-anchor {
+  fill: #9f7568;
+  opacity: 0.62;
+  stroke: rgba(255, 250, 240, 0.88);
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
+  transition: r 120ms ease, fill 120ms ease, opacity 120ms ease, stroke-width 120ms ease;
 }
 
-.curve-dot.active {
+.acoustic-prosody-curve.editing .token-prosody-anchor {
+  fill: #a95b49;
+  opacity: 0.78;
+  stroke-width: 1.25;
+}
+
+.token-prosody-anchor.playing {
   fill: var(--red);
+  opacity: 1;
+  stroke: #fff5e8;
+  stroke-width: 2;
+  filter: drop-shadow(0 1px 4px rgba(166, 48, 34, 0.45));
 }
 
 .sentence-drawer-backdrop {

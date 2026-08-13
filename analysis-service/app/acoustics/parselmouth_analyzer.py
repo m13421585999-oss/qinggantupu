@@ -232,6 +232,51 @@ def _effective_voice_measurement(
     }
 
 
+def _effective_voiced_pitch_center(
+    *,
+    pitch_times: np.ndarray,
+    pitch_values: np.ndarray,
+    intensity_times: np.ndarray,
+    intensity_values: np.ndarray,
+    start_s: float,
+    end_s: float,
+    noise_floor_db: float,
+    speech_reference_db: float,
+    pitch_floor_hz: float | None = None,
+    pitch_ceiling_hz: float | None = None,
+) -> float | None:
+    """Median F0 from the token's effective sounding frames, excluding quiet tails."""
+    raw_pitch = np.asarray(_interval(pitch_times, pitch_values, start_s, end_s), dtype=float)
+    raw_pitch_times = np.asarray(_interval(pitch_times, pitch_times, start_s, end_s), dtype=float)
+    if not len(raw_pitch) or len(raw_pitch) != len(raw_pitch_times):
+        return None
+    finite_intensity_mask = np.isfinite(intensity_values)
+    if np.any(finite_intensity_mask):
+        sampled_intensity = np.interp(
+            raw_pitch_times,
+            intensity_times[finite_intensity_mask],
+            intensity_values[finite_intensity_mask],
+        )
+    else:
+        sampled_intensity = np.full(len(raw_pitch_times), noise_floor_db, dtype=float)
+    local_peak = float(np.quantile(sampled_intensity, 0.9))
+    activity_floor = max(
+        noise_floor_db + 6.0,
+        min(local_peak - 14.0, speech_reference_db - 16.0),
+    )
+    active_mask = (
+        np.isfinite(raw_pitch)
+        & (raw_pitch > 0)
+        & (sampled_intensity >= activity_floor - 3.0)
+    )
+    if pitch_floor_hz is not None:
+        active_mask &= raw_pitch >= pitch_floor_hz
+    if pitch_ceiling_hz is not None:
+        active_mask &= raw_pitch <= pitch_ceiling_hz
+    active_pitch = raw_pitch[active_mask]
+    return float(median(active_pitch.tolist())) if len(active_pitch) else None
+
+
 def _boundary_type(tokens: list[dict[str, Any]], position: int) -> str:
     between: list[str] = []
     for token in tokens[position + 1 :]:
@@ -397,7 +442,13 @@ def _sentence_summary(
         position for position in range(start, end + 1) if tokens[position]["char"] not in PUNCTUATION
     ]
     indexes = [tokens[position]["index"] for position in positions]
-    pitch = [evidence[position]["normalized_pitch"] for position in positions]
+    pitch = [
+        evidence[position].get("macro_pitch_center")
+        if evidence[position].get("macro_pitch_center") is not None
+        else evidence[position]["normalized_pitch"]
+        for position in positions
+    ]
+    raw_pitch_centers = list(pitch)
     smooth_pitch = rolling_median(pitch, radius=2)
     energy = [evidence[position]["normalized_energy"] for position in positions]
     duration_ratios = [
@@ -431,7 +482,11 @@ def _sentence_summary(
     if len(tail_pitch_path) >= 2 and len(pitch_for_path) >= 2:
         pitch_for_path[-2] = tail_pitch_path[-2]["normalized_level"]
         pitch_for_path[-1] = tail_pitch_path[-1]["normalized_level"]
-    macro_path = continuous_macro_prosody_path(indexes, pitch_for_path)
+    macro_path = continuous_macro_prosody_path(
+        indexes,
+        pitch_for_path,
+        macro_pitch_centers=raw_pitch_centers,
+    )
     return {
         "id": f"sentence-{order}",
         "order": order,
@@ -555,6 +610,16 @@ def analyze_wav(
             noise_floor_db=noise_floor_db,
             speech_reference_db=speech_reference_db,
         )
+        effective_pitch_center_hz = _effective_voiced_pitch_center(
+            pitch_times=pitch_times,
+            pitch_values=pitch_values,
+            intensity_times=intensity_times,
+            intensity_values=intensity_values,
+            start_s=start_s,
+            end_s=end_s,
+            noise_floor_db=noise_floor_db,
+            speech_reference_db=speech_reference_db,
+        )
         alignment_duration_ms = max(0, token["end_ms"] - token["start_ms"])
         token_acoustics.append(
             {
@@ -572,6 +637,7 @@ def analyze_wav(
                     "voiced_continuity_ratio"
                 ],
                 "f0_hz": round(float(median(f0_samples)), 2) if f0_samples else None,
+                "_macro_pitch_center_hz": effective_pitch_center_hz,
                 "_pitch_start_hz": f0_start,
                 "_pitch_end_hz": f0_end,
                 "normalized_pitch": None,
@@ -611,6 +677,9 @@ def analyze_wav(
             item["effective_voiced_duration_ms"] / max(effective_baseline, 1), 3
         )
         item["normalized_pitch"] = rounded(semitone_normalize(item["f0_hz"], f0_pool))
+        item["macro_pitch_center"] = rounded(
+            semitone_normalize(item["_macro_pitch_center_hz"], f0_pool)
+        )
         item["pitch_start"] = rounded(semitone_normalize(item["_pitch_start_hz"], f0_pool))
         item["pitch_end"] = rounded(semitone_normalize(item["_pitch_end_hz"], f0_pool))
         if item["pitch_start"] is not None and item["pitch_end"] is not None:
@@ -719,6 +788,7 @@ def analyze_wav(
         if item.get("normalized_energy") is not None and abs(item["normalized_energy"]) >= 0.9
     ]
     for item in token_acoustics:
+        item.pop("_macro_pitch_center_hz", None)
         item.pop("_pitch_start_hz", None)
         item.pop("_pitch_end_hz", None)
     return {

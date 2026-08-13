@@ -176,6 +176,8 @@ export interface ProsodyEvent {
 
 export interface MacroProsodyPoint {
   tokenIndex: number;
+  /** Median pitch center inside this token's effective voiced interval. */
+  macroPitchCenter?: number;
   normalizedLevel: number;
   rawNormalizedPitch?: number;
 }

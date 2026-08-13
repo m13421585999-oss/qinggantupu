@@ -476,6 +476,7 @@ function parseMacroProsodyPath(value: unknown, min: number, max: number): MacroP
     }
     return [{
       tokenIndex,
+      macroPitchCenter: number(point.macro_pitch_center ?? point.macroPitchCenter),
       normalizedLevel,
       rawNormalizedPitch: number(point.raw_normalized_pitch ?? point.rawNormalizedPitch),
     }];

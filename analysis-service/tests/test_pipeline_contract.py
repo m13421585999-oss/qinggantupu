@@ -5,6 +5,7 @@ import numpy as np
 from app.acoustics.contour import continuous_macro_prosody_path, macro_contour
 from app.acoustics.parselmouth_analyzer import (
     _effective_voice_measurement,
+    _effective_voiced_pitch_center,
     _ending_intonation,
 )
 from app.acoustics.prolongation import assess_prolongation_candidate
@@ -69,6 +70,8 @@ def test_continuous_macro_path_keeps_valley_and_final_rise() -> None:
         [1.1, 0.7, 0.1, -0.8, -1.25, -1.0, -0.35, 0.45, 1.35],
     )
     levels = [point["normalized_level"] for point in path["points"]]
+    assert [point["token_index"] for point in path["points"]] == indexes
+    assert all("macro_pitch_center" in point for point in path["points"])
     assert levels[4] == min(levels)
     assert levels[-1] > levels[-2] > levels[4]
     assert "falling" in {segment["type"] for segment in path["segments"]}
@@ -76,6 +79,17 @@ def test_continuous_macro_path_keeps_valley_and_final_rise() -> None:
     for left, right in zip(path["segments"], path["segments"][1:], strict=False):
         assert left["end_index"] == right["start_index"]
         assert left["end_level"] == right["start_level"]
+
+
+def test_macro_pitch_center_remains_token_evidence_when_path_tail_is_adjusted() -> None:
+    path = continuous_macro_prosody_path(
+        [0, 1, 2],
+        [-0.2, 0.3, 1.4],
+        macro_pitch_centers=[-0.1, 0.1, 0.45],
+    )
+
+    assert [point["macro_pitch_center"] for point in path["points"]] == [-0.1, 0.1, 0.45]
+    assert path["points"][-1]["raw_normalized_pitch"] == 1.4
 
 
 def test_ending_intonation_prefers_real_final_phrase_rise() -> None:
@@ -141,6 +155,23 @@ def test_token_window_separates_sounding_duration_from_low_energy_tail() -> None
     assert 290 <= measurement["effective_voiced_duration_ms"] <= 320
     assert 680 <= measurement["low_energy_tail_ms"] <= 710
     assert measurement["voiced_continuity_ratio"] == 1.0
+
+
+def test_macro_pitch_center_uses_effective_voiced_frames_not_quiet_tail() -> None:
+    pitch_times = np.arange(0.005, 1.0, 0.01)
+    sounding = pitch_times < 0.305
+    center = _effective_voiced_pitch_center(
+        pitch_times=pitch_times,
+        pitch_values=np.where(sounding, 182.0, 310.0),
+        intensity_times=pitch_times,
+        intensity_values=np.where(sounding, 68.0, 28.0),
+        start_s=0.0,
+        end_s=1.0,
+        noise_floor_db=28.0,
+        speech_reference_db=68.0,
+    )
+
+    assert center == 182.0
 
 
 def test_dynamic_timing_profile_uses_current_acoustic_evidence() -> None:
