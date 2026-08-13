@@ -460,8 +460,11 @@ function IndexedGraphTrack({
   );
   const viewerLayoutKey = useMemo(() => tokenUnits.map((unit) => [
     unit.token.id,
+    unit.token.char,
+    unit.token.displayPinyin,
     unit.prolongation?.id,
     unit.pause?.id,
+    unit.pause?.type,
     unit.endingTone,
     ...unit.prefixPunctuation.map((token) => token.id),
     ...unit.suffixPunctuation.map((token) => token.id),
