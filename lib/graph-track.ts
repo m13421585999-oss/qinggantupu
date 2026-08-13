@@ -99,7 +99,8 @@ export function buildGraphTokenUnits(sentence: RecitationSentence): GraphTokenUn
   }
 
   const endingHost = units.at(-1);
-  if (endingHost) endingHost.endingTone = sentence.endingIntonation.type;
+  const endingTone = sentence.endingIntonation.type;
+  if (endingHost && endingTone !== "level") endingHost.endingTone = endingTone;
 
   return units;
 }

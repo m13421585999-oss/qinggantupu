@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   applyProsodyPointOverrides,
   buildTeachingProsodyPoints,
+  extendProsodyCurveToTokenEdges,
   monotoneSplinePath,
   PROSODY_VISUAL_LEVEL_COUNT,
   PROSODY_SMOOTHING_WINDOW,
@@ -97,6 +98,24 @@ test("pointer Y maps through a scaled SVG and clamps to the nine teaching levels
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 70 }), 8);
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 180 }), 0);
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 124, rectHeight: 0 }), undefined);
+});
+
+test("paint-only curve endpoints extend to character edges without creating editable tokens", () => {
+  const anchors = [
+    { x: 40, y: 30, tokenIndex: 4 },
+    { x: 88, y: 18, tokenIndex: 5 },
+  ];
+  const snapshot = structuredClone(anchors);
+  const drawingPoints = extendProsodyCurveToTokenEdges(anchors, 18, 112);
+
+  assert.deepEqual(anchors, snapshot, "source token anchors remain untouched");
+  assert.deepEqual(drawingPoints, [
+    { x: 18, y: 30 },
+    { x: 40, y: 30 },
+    { x: 88, y: 18 },
+    { x: 112, y: 18 },
+  ]);
+  assert.ok(drawingPoints.every((point) => !("tokenIndex" in point)));
 });
 
 test("monotone spline passes through token anchors without template replacement", () => {

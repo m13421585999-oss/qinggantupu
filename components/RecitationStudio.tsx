@@ -21,6 +21,7 @@ import { sentencePlaybackWindow } from "@/lib/sentence-playback";
 import {
   applyProsodyPointOverrides,
   buildTeachingProsodyPoints,
+  extendProsodyCurveToTokenEdges,
   monotoneSplinePath,
   PROSODY_VISUAL_LEVEL_COUNT,
   prosodyVisualLevelFromPointerY,
@@ -40,11 +41,8 @@ import {
   type AudioTrack,
   type ControlSpec,
   type EndingTone,
-  type ProsodyType,
-  type ProsodyEvent,
   type RecitationSentence,
   type RecitationWork,
-  type Rhythm,
   type TimedToken,
 } from "@/lib/recitation-schema";
 import type { VisualAsset, VisualAssetKind, WorkVisualBundle } from "@/lib/visual-assets";
@@ -82,9 +80,7 @@ const workflowSteps: Array<{
   { id: 3, title: "预览发布", subtitle: "观看端 · 同步高亮" },
 ];
 
-const prosodyOptions = Object.keys(PROSODY_LABELS) as ProsodyType[];
-const rhythmOptions = Object.keys(RHYTHM_LABELS) as Rhythm[];
-const endingOptions = Object.keys(ENDING_LABELS) as EndingTone[];
+const editableEndingOptions: EndingTone[] = ["rising", "falling"];
 
 function formatTime(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -470,8 +466,9 @@ function AcousticProsodyCurve({
   const label = sentence.prosody.length
     ? sentence.prosody.map((event) => PROSODY_LABELS[event.type]).join("、")
     : "教学宏观语势";
-  const spline = monotoneSplinePath(points);
-  const fillPath = `${spline} L ${points.at(-1)!.x} ${height + 1} L ${points[0].x} ${height + 1} Z`;
+  const drawingPoints = extendProsodyCurveToTokenEdges(points, metrics.trackStart, metrics.trackEnd);
+  const spline = monotoneSplinePath(drawingPoints);
+  const fillPath = `${spline} L ${drawingPoints.at(-1)!.x} ${height + 1} L ${drawingPoints[0].x} ${height + 1} Z`;
   const visualLevelFromPointer = (clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect?.height) return undefined;
@@ -519,8 +516,8 @@ function AcousticProsodyCurve({
       />
       <line
         className="curve-baseline"
-        x1={points[0].x}
-        x2={points.at(-1)?.x ?? points[0].x}
+        x1={drawingPoints[0].x}
+        x2={drawingPoints.at(-1)?.x ?? drawingPoints[0].x}
         y1={baselineY}
         y2={baselineY}
         stroke="rgba(128, 91, 57, 0.18)"
@@ -621,9 +618,10 @@ function AcousticProsodyCurve({
 }
 
 function ToneArrow({ type }: { type: EndingTone }) {
+  if (type === "level") return null;
   return (
     <span className={`tone-arrow tone-${type}`} aria-label={ENDING_LABELS[type]}>
-      {type === "rising" ? "↗" : type === "falling" ? "↘" : "→"}
+      {type === "rising" ? "↗" : "↘"}
     </span>
   );
 }
@@ -823,8 +821,8 @@ function IndexedGraphTrack({
         top: row.curveTop,
         width: localX(trackRect.width),
         height: row.curveHeight,
-        trackStart: localX(firstRect.left - trackRect.left + firstRect.width / 2),
-        trackEnd: localX(lastRect.left - trackRect.left + lastRect.width / 2),
+        trackStart: localX(firstRect.left - trackRect.left),
+        trackEnd: localX(lastRect.right - trackRect.left),
         tokenCenters,
       };
     }));
@@ -874,7 +872,7 @@ function IndexedGraphTrack({
   const viewerTrackStyle = semanticLines ? {
     "--manuscript-font-size": `${viewerFontSize}px`,
     "--token-char-width": `${viewerFontSize}px`,
-    "--pinyin-font-size": `${Math.max(13, Math.round(18 * viewerFontSize / VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE))}px`,
+    "--pinyin-font-size": `${Math.max(15, Math.round(21 * viewerFontSize / VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE))}px`,
     "--token-unit-gap": `${viewerFontSize <= 42 ? 2 : 4}px`,
   } as CSSProperties : undefined;
 
@@ -1535,443 +1533,11 @@ function MaterialStage({
   );
 }
 
-function SentenceTokenEditor({
-  sentence,
-  mode,
-  onToken,
-  onBoundary,
-}: {
-  sentence: RecitationSentence;
-  mode: "focus" | "pause" | "prolong";
-  onToken?: (token: TimedToken) => void;
-  onBoundary?: (token: TimedToken) => void;
-}) {
-  const focused = focusSet(sentence);
-  const lastIndex = sentence.tokens.at(-1)?.index;
-  return (
-    <div className={`sentence-token-editor mode-${mode}`}>
-      {sentence.tokens.map((token) => {
-        const isPunctuation = punctuationOnly(token.char);
-        const pause = pauseAfter(sentence, token.index);
-        const prolong = prolongFor(sentence, token.index);
-        return (
-          <span className="annotation-unit" key={`${mode}-${token.id}`}>
-            {mode === "pause" || isPunctuation ? (
-              <span className={isPunctuation ? "annotation-char punctuation" : "annotation-char"}>
-                {token.char}
-              </span>
-            ) : (
-              <button
-                type="button"
-                className={`annotation-char ${mode === "focus" && focused.has(token.index) ? "selected-focus" : ""} ${mode === "prolong" && prolong ? "selected-prolong" : ""}`}
-                aria-pressed={mode === "focus" ? focused.has(token.index) : Boolean(prolong)}
-                onClick={() => onToken?.(token)}
-              >
-                {token.char}{mode === "prolong" && prolong ? <small>——</small> : null}
-              </button>
-            )}
-            {mode === "pause" && token.index !== lastIndex ? (
-              <button
-                type="button"
-                className={`pause-boundary ${pause ? "marked" : ""}`}
-                aria-label={`在“${token.char}”后设置停顿`}
-                onClick={() => onBoundary?.(token)}
-              >
-                {pause ? (pause.type === "long" ? "///" : "/") : "+"}
-              </button>
-            ) : null}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-function SentenceEditDrawer({
-  sentence,
-  onClose,
-  onSave,
-}: {
-  sentence: RecitationSentence | null;
-  onClose: () => void;
-  onSave: (sentence: RecitationSentence) => void;
-}) {
-  const [draft, setDraft] = useState<RecitationSentence | null>(() =>
-    sentence ? structuredClone(sentence) : null,
-  );
-  const [prosodyIndex, setProsodyIndex] = useState(0);
-
-  useEffect(() => {
-    if (!sentence) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [onClose, sentence]);
-
-  if (!sentence || !draft) return null;
-
-  const toggleFocus = (token: TimedToken) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const contains = current.focus.some((target) =>
-        target.tokenIndexes.includes(token.index),
-      );
-      let nextFocus = current.focus
-        .map((target) => ({
-          ...target,
-          tokenIds: contains
-            ? target.tokenIds.filter((id) => id !== token.id)
-            : target.tokenIds,
-          tokenIndexes: contains
-            ? target.tokenIndexes.filter((index) => index !== token.index)
-            : target.tokenIndexes,
-        }))
-        .filter((target) => target.tokenIndexes.length > 0);
-
-      if (!contains) {
-        if (nextFocus[0]) {
-          nextFocus = nextFocus.map((target, index) =>
-            index === 0
-              ? {
-                  ...target,
-                  tokenIds: [...target.tokenIds, token.id],
-                  tokenIndexes: [...target.tokenIndexes, token.index].sort((a, b) => a - b),
-                }
-              : target,
-          );
-        } else {
-          nextFocus = [
-            {
-              id: `${current.id}-focus-manual`,
-              tokenIds: [token.id],
-              tokenIndexes: [token.index],
-              level: "primary",
-              preferredRealization: "free",
-              allowedRealizations: ["free", "combined"],
-              avoid: ["shouting"],
-            },
-          ];
-        }
-      }
-
-      return {
-        ...current,
-        focus: nextFocus,
-      };
-    });
-  };
-
-  const cyclePause = (token: TimedToken) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const existing = current.pauses.find(
-        (pause) => pause.afterTokenIndex === token.index,
-      );
-      if (!existing) {
-        return {
-          ...current,
-          pauses: [
-            ...current.pauses,
-            {
-              id: `${current.id}-pause-${token.index}`,
-              afterTokenId: token.id,
-              afterTokenIndex: token.index,
-              type: "short",
-              source: "human",
-            },
-          ],
-        };
-      }
-      if (existing.type === "short") {
-        return {
-          ...current,
-          pauses: current.pauses.map((pause) =>
-            pause.id === existing.id ? { ...pause, type: "long" } : pause,
-          ),
-        };
-      }
-      return {
-        ...current,
-        pauses: current.pauses.filter((pause) => pause.id !== existing.id),
-      };
-    });
-  };
-
-  const toggleProlong = (token: TimedToken) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const existing = current.prolongations.find(
-        (prolong) => prolong.tokenIndex === token.index,
-      );
-      return {
-        ...current,
-        prolongations: existing
-          ? current.prolongations.filter((prolong) => prolong.id !== existing.id)
-          : [
-              ...current.prolongations,
-              {
-                id: `${current.id}-prolong-${token.index}`,
-                tokenId: token.id,
-                tokenIndex: token.index,
-                degree: 1,
-              },
-            ],
-      };
-    });
-  };
-
-  const spokenIndexes = draft.tokens
-    .filter((token) => !punctuationOnly(token.char))
-    .map((token) => token.index);
-  const sentenceMin = spokenIndexes[0] ?? draft.tokens[0]?.index ?? 0;
-  const sentenceMax = spokenIndexes.at(-1) ?? draft.tokens.at(-1)?.index ?? sentenceMin;
-  const currentProsody = draft.prosody[prosodyIndex] ?? {
-    id: `${draft.id}-prosody-manual`,
-    type: "peak" as const,
-    activeSpan: { start: sentenceMin, end: sentenceMax },
-    coreZone: { start: sentenceMin, end: sentenceMax },
-    strength: 2 as const,
-  };
-  const updateProsody = (change: Partial<ProsodyEvent>) => {
-    const next = { ...currentProsody, ...change };
-    const prosody = [...draft.prosody];
-    prosody[prosodyIndex] = next;
-    setDraft({ ...draft, prosody });
-  };
-  const addProsody = () => {
-    const next: ProsodyEvent = {
-      id: `${draft.id}-prosody-manual-${draft.prosody.length + 1}`,
-      type: "rising",
-      activeSpan: { start: sentenceMin, end: sentenceMax },
-      coreZone: { start: sentenceMin, end: sentenceMax },
-      strength: 1,
-      confidence: 1,
-    };
-    setDraft({ ...draft, prosody: [...draft.prosody, next] });
-    setProsodyIndex(draft.prosody.length);
-  };
-  const removeProsody = () => {
-    const next = draft.prosody.filter((_, index) => index !== prosodyIndex);
-    setDraft({ ...draft, prosody: next });
-    setProsodyIndex(Math.max(0, Math.min(prosodyIndex, next.length - 1)));
-  };
-  const updateSpan = (
-    field: "activeSpan" | "coreZone",
-    edge: "start" | "end",
-    value: number,
-  ) => {
-    const span = { ...currentProsody[field], [edge]: value };
-    if (span.start > span.end) {
-      if (edge === "start") span.end = value;
-      else span.start = value;
-    }
-    if (field === "activeSpan") {
-      const coreZone = {
-        start: Math.max(span.start, currentProsody.coreZone.start),
-        end: Math.min(span.end, currentProsody.coreZone.end),
-      };
-      if (coreZone.start > coreZone.end) coreZone.start = coreZone.end = span.start;
-      updateProsody({ activeSpan: span, coreZone });
-    } else {
-      updateProsody({
-        coreZone: {
-          start: Math.max(currentProsody.activeSpan.start, span.start),
-          end: Math.min(currentProsody.activeSpan.end, span.end),
-        },
-      });
-    }
-  };
-
-  return (
-    <div className="sentence-drawer-backdrop">
-      <button
-        type="button"
-        className="sentence-drawer-scrim"
-        aria-label="关闭并放弃未保存修改"
-        onClick={onClose}
-      />
-      <aside
-        className="sentence-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="sentence-drawer-title"
-      >
-        <div className="sentence-drawer-heading">
-          <div>
-            <p className="eyebrow">句子 {String(draft.order).padStart(2, "0")}</p>
-            <h2 id="sentence-drawer-title">编辑当前图谱句</h2>
-          </div>
-          <button type="button" className="drawer-close" onClick={onClose} aria-label="关闭并放弃未保存修改">
-            ×
-          </button>
-        </div>
-
-        <div className="sentence-drawer-body">
-          <section className="drawer-section split-controls">
-            <label>
-              <span>节奏</span>
-              <select
-                value={draft.rhythm}
-                onChange={(event) =>
-                  setDraft({ ...draft, rhythm: event.target.value as Rhythm })
-                }
-              >
-                {rhythmOptions.map((option) => (
-                  <option key={option} value={option}>{RHYTHM_LABELS[option]}</option>
-                ))}
-              </select>
-            </label>
-            <div className="drawer-field">
-              <span>句尾语调</span>
-              <div className="segmented-choice ending-choice">
-                {endingOptions.map((option) => (
-                  <button
-                    type="button"
-                    key={option}
-                    className={draft.endingIntonation.type === option ? "chosen" : ""}
-                    onClick={() =>
-                      setDraft({
-                        ...draft,
-                        endingIntonation: { ...draft.endingIntonation, type: option },
-                      })
-                    }
-                  >
-                    {ENDING_LABELS[option]}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="drawer-section">
-            <div className="drawer-label-row">
-              <span>语势</span>
-              <small>可以保留一句内部多个连续事件；曲线高度仍来自真实声音路径</small>
-            </div>
-            <div className="segmented-choice prosody-event-tabs">
-              {draft.prosody.map((event, index) => (
-                <button
-                  type="button"
-                  key={event.id}
-                  className={prosodyIndex === index ? "chosen" : ""}
-                  onClick={() => setProsodyIndex(index)}
-                >
-                  {index + 1} · {PROSODY_LABELS[event.type]}
-                </button>
-              ))}
-              <button type="button" onClick={addProsody}>＋ 新增</button>
-              {draft.prosody.length ? (
-                <button type="button" onClick={removeProsody}>删除当前</button>
-              ) : null}
-            </div>
-            <div className="choice-grid four-choices">
-              {prosodyOptions.map((option) => (
-                <button
-                  type="button"
-                  key={option}
-                  className={currentProsody.type === option ? "chosen" : ""}
-                  onClick={() => updateProsody({ type: option })}
-                >
-                  <span className={`mini-curve mini-${option}`} aria-hidden="true" />
-                  {PROSODY_LABELS[option]}
-                </button>
-              ))}
-            </div>
-            <div className="drawer-field strength-field">
-              <span>语势强度</span>
-              <div className="segmented-choice">
-                {([1, 2, 3] as const).map((strength) => (
-                  <button
-                    type="button"
-                    key={strength}
-                    className={currentProsody.strength === strength ? "chosen" : ""}
-                    onClick={() => updateProsody({ strength })}
-                  >
-                    {strength === 1 ? "轻" : strength === 2 ? "中" : "强"}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="prosody-span-editor">
-              <div className="drawer-label-row">
-                <span>语势区间</span>
-                <small>按 token index 设置局部变化与核心区，曲线会按文字真实位置重算</small>
-              </div>
-              <div className="span-select-grid">
-                {([
-                  ["变化开始", "activeSpan", "start", currentProsody.activeSpan.start],
-                  ["变化结束", "activeSpan", "end", currentProsody.activeSpan.end],
-                  ["核心开始", "coreZone", "start", currentProsody.coreZone.start],
-                  ["核心结束", "coreZone", "end", currentProsody.coreZone.end],
-                ] as const).map(([label, field, edge, value]) => (
-                  <label key={`${field}-${edge}`}>
-                    <span>{label}</span>
-                    <select value={value} onChange={(event) => updateSpan(field, edge, Number(event.target.value))}>
-                      {draft.tokens.filter((token) => !punctuationOnly(token.char)).map((token) => (
-                        <option key={token.id} value={token.index}>{token.index} · {token.char}</option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="drawer-section annotation-section">
-            <div className="drawer-label-row">
-              <span>重音</span>
-              <small>点击字词设置表达焦点；红字不等于必须增大音量</small>
-            </div>
-            <SentenceTokenEditor sentence={draft} mode="focus" onToken={toggleFocus} />
-          </section>
-
-          <section className="drawer-section annotation-section">
-            <div className="drawer-label-row">
-              <span>短停 / 长停</span>
-              <small>点击字间位置循环：无 → / → ///</small>
-            </div>
-            <SentenceTokenEditor sentence={draft} mode="pause" onBoundary={cyclePause} />
-          </section>
-
-          <section className="drawer-section annotation-section">
-            <div className="drawer-label-row">
-              <span>拖音</span>
-              <small>点击目标字开启或关闭“——”</small>
-            </div>
-            <SentenceTokenEditor sentence={draft} mode="prolong" onToken={toggleProlong} />
-          </section>
-        </div>
-
-        <div className="sentence-drawer-actions">
-          <button type="button" className="secondary-button" onClick={onClose}>取消并放弃修改</button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => onSave(draft)}
-          >
-            保存本句
-          </button>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
 function EditorStage({
   work,
-  editingSentenceId,
   currentMs,
   activeTokenId,
   timeline,
-  onEditSentence,
-  onCloseEditor,
   onSaveSentence,
   onPlaySentence,
   onVisualsChange,
@@ -1980,12 +1546,9 @@ function EditorStage({
   onContinue,
 }: {
   work: RecitationWork;
-  editingSentenceId: string | null;
   currentMs: number;
   activeTokenId?: string;
   timeline?: AudioTimeline;
-  onEditSentence: (id: string) => void;
-  onCloseEditor: () => void;
   onSaveSentence: (sentence: RecitationSentence) => void;
   onPlaySentence: (sentence: RecitationSentence) => void;
   onVisualsChange: (visuals: WorkVisualBundle) => void;
@@ -2003,12 +1566,9 @@ function EditorStage({
   }>();
   const [visualEditor, setVisualEditor] = useState<{ kind: VisualAssetKind; sceneId?: string }>();
   const [curveDrafts, setCurveDrafts] = useState<Record<string, RecitationSentence>>({});
-  const [advancedEditorDraft, setAdvancedEditorDraft] = useState<RecitationSentence>();
   if (!spec) return null;
   const canPublish = Boolean((work.standardAiAudio ?? work.aiDemoAudio)?.timeline);
   const active = activeSentenceAt(spec.sentences, timeline, currentMs);
-  const storedEditingSentence = spec.sentences.find((sentence) => sentence.id === editingSentenceId) ?? null;
-  const drawerSentence = advancedEditorDraft ?? storedEditingSentence;
   const heroAsset = work.visuals?.heroAsset?.url ? work.visuals.heroAsset : undefined;
   const showHeroImage = Boolean(heroAsset?.url && heroAsset.url !== failedHeroImageUrl);
   const sceneSpecs = work.visuals?.sceneSpecs ?? [];
@@ -2131,22 +1691,6 @@ function EditorStage({
       };
     });
   };
-  const openAdvancedEditor = (sentence: RecitationSentence) => {
-    setAdvancedEditorDraft(structuredClone(sentence));
-    setTokenEditor(undefined);
-    onEditSentence(sentence.id);
-  };
-  const closeAdvancedEditor = () => {
-    const sentenceId = drawerSentence?.id;
-    setAdvancedEditorDraft(undefined);
-    onCloseEditor();
-    if (sentenceId) discardSentenceDraft(sentenceId);
-  };
-  const saveAdvancedEditor = (sentence: RecitationSentence) => {
-    setAdvancedEditorDraft(undefined);
-    commitSentenceEdit(sentence);
-  };
-
   return (
     <section className="stage editor-stage inline-paper-editor">
       <div className="inline-editor-toolbar" data-export-exclude="true">
@@ -2273,19 +1817,18 @@ function EditorStage({
           {selectedToken && isLastSpokenToken ? (
             <div className="token-inline-ending">
               <span>句尾语调</span>
-              {endingOptions.map((type) => (
+              {editableEndingOptions.map((type) => (
                 <button
                   type="button"
                   key={type}
                   className={selectedSentence.endingIntonation.type === type ? "chosen" : ""}
                   onClick={() => previewSentenceEdit(setSentenceEnding(selectedSentence, type))}
-                >{type === "rising" ? "↗" : type === "falling" ? "↘" : "→"}</button>
+                >{type === "rising" ? "↗" : "↘"}</button>
               ))}
             </div>
           ) : null}
           <div className="token-inline-footer">
             <button type="button" className="token-inline-more" onClick={closeInlineEditor}>取消</button>
-            <button type="button" className="token-inline-more" onClick={() => openAdvancedEditor(selectedSentence)}>更多设置</button>
             <button type="button" className="token-inline-save" onClick={() => commitSentenceEdit(selectedSentence)}>保存本句</button>
           </div>
         </div>
@@ -2304,7 +1847,6 @@ function EditorStage({
           <p>拖动只改变教学曲线，不会改写声学事实。</p>
           <div className="token-inline-footer">
             <button type="button" className="token-inline-more" onClick={closeInlineEditor}>取消</button>
-            <button type="button" className="token-inline-more" onClick={() => openAdvancedEditor(selectedSentence)}>更多设置</button>
             <button type="button" className="token-inline-save" onClick={() => commitSentenceEdit(selectedSentence)}>保存本句</button>
           </div>
         </div>
@@ -2322,12 +1864,6 @@ function EditorStage({
           onVisualsChange={onVisualsChange}
         />
       ) : null}
-      <SentenceEditDrawer
-        key={drawerSentence ? `${drawerSentence.id}-drawer` : "closed"}
-        sentence={drawerSentence ?? null}
-        onClose={closeAdvancedEditor}
-        onSave={saveAdvancedEditor}
-      />
     </section>
   );
 }
@@ -2655,7 +2191,6 @@ function StudioView({
   work,
   step,
   highestStep,
-  editingSentenceId,
   analysisJobStatus,
   analysisStatus,
   currentMs,
@@ -2666,8 +2201,6 @@ function StudioView({
   onReferenceFile,
   onDeleteReference,
   onAnalyze,
-  onEditSentence,
-  onCloseEditor,
   onSaveSentence,
   onPlaySentence,
   onVisualsChange,
@@ -2684,7 +2217,6 @@ function StudioView({
   work: RecitationWork;
   step: WorkflowStep;
   highestStep: WorkflowStep;
-  editingSentenceId: string | null;
   analysisJobStatus: AnalysisJobStatus;
   analysisStatus: string;
   currentMs: number;
@@ -2695,8 +2227,6 @@ function StudioView({
   onReferenceFile: (file: File) => void;
   onDeleteReference: () => void;
   onAnalyze: () => void;
-  onEditSentence: (id: string) => void;
-  onCloseEditor: () => void;
   onSaveSentence: (sentence: RecitationSentence) => void;
   onPlaySentence: (sentence: RecitationSentence) => void;
   onVisualsChange: (visuals: WorkVisualBundle) => void;
@@ -2761,12 +2291,9 @@ function StudioView({
         {step === 2 ? (
           <EditorStage
             work={work}
-            editingSentenceId={editingSentenceId}
             currentMs={currentMs}
             activeTokenId={activeTokenId}
             timeline={timeline}
-            onEditSentence={onEditSentence}
-            onCloseEditor={onCloseEditor}
             onSaveSentence={onSaveSentence}
             onPlaySentence={onPlaySentence}
             onVisualsChange={onVisualsChange}
@@ -2890,7 +2417,7 @@ function ViewerView({
           <span><b>/</b> 短停</span>
           <span><b>{"///"}</b> 长停</span>
           <span><b className="legend-prolong">——</b> 拖音</span>
-          <span><b>↗ ↘ →</b> 句尾语调</span>
+          <span><b>↗ ↘</b> 句尾语调</span>
           <span>
             <svg className="legend-curve" viewBox="0 0 34 12" aria-hidden="true">
               <path
@@ -2958,7 +2485,6 @@ export function RecitationStudio() {
   const localReferenceUrlRef = useRef<string | undefined>(undefined);
   const pendingSaveRef = useRef<((saved?: RecitationWork) => void) | null>(null);
   const [step, setStep] = useState<WorkflowStep>(1);
-  const [editingSentenceId, setEditingSentenceId] = useState<string | null>(null);
   const [audioSource, setAudioSource] = useState<AudioSource>("reference");
   const [analysisJobStatus, setAnalysisJobStatus] = useState<AnalysisJobStatus>("idle");
   const [analysisStatus, setAnalysisStatus] = useState("等待参考朗诵");
@@ -2992,7 +2518,6 @@ export function RecitationStudio() {
     setIsPlaying(false);
     setSegmentEndMs(null);
     setPlaybackRate(1);
-    setEditingSentenceId(null);
   }, []);
 
   const applyStoredWork = useCallback((stored: RecitationWork, published = false) => {
@@ -3163,7 +2688,6 @@ export function RecitationStudio() {
   const setWorkflowStep = (next: WorkflowStep) => {
     if (next > highestStep) return;
     setStep(next);
-    setEditingSentenceId(null);
     if (next <= 2) {
       setAudioSource(work.controlSpec && standardPlayback?.timeline ? "standard" : "reference");
     }
@@ -3204,7 +2728,6 @@ export function RecitationStudio() {
     }));
     if (sourceChanged) {
       setStep(1);
-      setEditingSentenceId(null);
       setAudioSource("reference");
     }
   };
@@ -3575,7 +3098,6 @@ export function RecitationStudio() {
     setIsWorkDirty(true);
     setControlSpecDirty(true);
     setSaveState("dirty");
-    setEditingSentenceId(null);
     setAudioSource(work.standardAiAudio?.timeline ? "standard" : "reference");
     try {
       await persistControlSpec(nextSpec, `第 ${nextSentence.order} 句图谱已保存`);
@@ -3901,7 +3423,6 @@ export function RecitationStudio() {
           work={work}
           step={step}
           highestStep={highestStep}
-          editingSentenceId={editingSentenceId}
           analysisJobStatus={analysisJobStatus}
           analysisStatus={analysisStatus}
           currentMs={currentMs}
@@ -3912,8 +3433,6 @@ export function RecitationStudio() {
           onReferenceFile={handleReferenceFile}
           onDeleteReference={handleDeleteReference}
           onAnalyze={handleAnalyze}
-          onEditSentence={setEditingSentenceId}
-          onCloseEditor={() => setEditingSentenceId(null)}
           onSaveSentence={saveSentence}
           onPlaySentence={playSentence}
           onVisualsChange={(visuals) => {

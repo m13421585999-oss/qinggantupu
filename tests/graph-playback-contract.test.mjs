@@ -109,7 +109,8 @@ test("comma enumeration comma and period each fully replace adjacent pause marks
   const units = buildGraphTokenUnits(sentence);
   assert.equal(units.length, 3);
   assert.equal(units.filter((unit) => unit.pause).length, 0);
-  assert.equal(renderedTrackText(units), "甲、乙，丙→。");
+  assert.equal(renderedTrackText(units), "甲、乙，丙。");
+  assert.equal(units.at(-1)?.endingTone, undefined, "legacy level data stays compatible but is not displayed");
 });
 
 test("viewer chrome explains every graph symbol and the shared-audio promise", async () => {
@@ -118,7 +119,8 @@ test("viewer chrome explains every graph symbol and the shared-audio promise", a
   assert.match(studio, /\/<\/b> 短停/);
   assert.match(studio, /长停/);
   assert.match(studio, /拖音/);
-  assert.match(studio, /↗ ↘ →<\/b> 句尾语调/);
+  assert.match(studio, /↗ ↘<\/b> 句尾语调/);
+  assert.doesNotMatch(studio, /更多设置|SentenceEditDrawer/);
   assert.match(studio, /曲线：宏观语势/);
   assert.match(studio, /声音与图谱同源/);
   assert.match(studio, /播放整篇/);
@@ -174,6 +176,9 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(studio, /data-marker="prolongation"/);
   assert.match(studio, /data-marker="ending-intonation"/);
   assert.match(studio, /buildTeachingProsodyPoints/);
+  assert.match(studio, /extendProsodyCurveToTokenEdges\(points, metrics\.trackStart, metrics\.trackEnd\)/);
+  assert.match(studio, /trackStart:\s*localX\(firstRect\.left - trackRect\.left\)/);
+  assert.match(studio, /trackEnd:\s*localX\(lastRect\.right - trackRect\.left\)/);
   assert.match(studio, /monotoneSplinePath/);
   assert.match(studio, /data-prosody-anchor="true"/);
   assert.match(studio, /className="prosody-anchor-hit-target"[\s\S]*?data-export-exclude="true"/);
@@ -202,7 +207,12 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(css, /\.curve-path\s*\{[^}]*stroke-width:\s*2\.25/s);
   assert.match(css, /\.token-prosody-anchor\s*\{[^}]*opacity:\s*0\.9/s);
   assert.match(css, /\.token-prosody-anchor\.playing\s*\{[^}]*stroke-width:\s*2/s);
+  assert.match(css, /\.acoustic-prosody-curve\.editing \.token-prosody-anchor\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(css, /\.editable-viewer-paper \.wrapped-curve-layer\s*\{[^}]*z-index:\s*2/s);
   assert.match(css, /\.prosody-anchor-hit-target\s*\{[^}]*touch-action:\s*none/s);
+  assert.match(css, /--pinyin-font-size:\s*21px/);
+  assert.match(css, /\.viewer-artboard \.semantic-token-line \.token-pinyin\s*\{[^}]*font-weight:\s*600/s);
+  assert.match(css, /\.viewer-artboard \.viewer-author\s*\{[^}]*padding:\s*1px 0;[^}]*border-left:\s*0/s);
   assert.doesNotMatch(css, /\.acoustic-prosody-curve\.editing\s*\{[^}]*touch-action:\s*none/s);
   assert.doesNotMatch(css, /\.track-marker-cell|\.track-spacer-cell|--track-columns/);
   assert.doesNotMatch(css, /\.pause-mark\s*\{[^}]*position:\s*absolute/s);

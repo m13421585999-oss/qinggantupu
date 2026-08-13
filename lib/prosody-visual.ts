@@ -19,6 +19,27 @@ interface SplinePoint {
   y: number;
 }
 
+/**
+ * Add paint-only endpoints at the first/last character edges.
+ * Returned points intentionally contain no token identity, so these endpoints
+ * can never become editable anchors or persisted human overrides.
+ */
+export function extendProsodyCurveToTokenEdges(
+  anchors: SplinePoint[],
+  trackStart: number,
+  trackEnd: number,
+) {
+  if (!anchors.length) return [];
+  const points = anchors.map(({ x, y }) => ({ x, y }));
+  const first = points[0];
+  const last = points.at(-1)!;
+  const start = Number.isFinite(trackStart) ? Math.min(trackStart, first.x) : first.x;
+  const end = Number.isFinite(trackEnd) ? Math.max(trackEnd, last.x) : last.x;
+  if (start < first.x) points.unshift({ x: start, y: first.y });
+  if (end > last.x) points.push({ x: end, y: last.y });
+  return points;
+}
+
 function median(values: number[]) {
   if (!values.length) return 0;
   const sorted = [...values].sort((left, right) => left - right);

@@ -2396,6 +2396,10 @@ p {
   pointer-events: none;
 }
 
+.editable-viewer-paper .wrapped-curve-layer {
+  z-index: 2;
+}
+
 .curve-line {
   position: absolute;
   right: 0;
@@ -2462,6 +2466,7 @@ p {
 .acoustic-prosody-curve.editing .token-prosody-anchor {
   fill: #a95b49;
   opacity: 0.95;
+  pointer-events: none;
   stroke-width: 1.25;
 }
 
@@ -3773,7 +3778,7 @@ button.annotation-char:hover {
   --manuscript-row-height: 68px;
   --curve-row-height: 84px;
   --manuscript-font-size: 56px;
-  --pinyin-font-size: 18px;
+  --pinyin-font-size: 21px;
   --token-char-width: 56px;
   --token-unit-gap: 4px;
   width: 100%;
@@ -3807,9 +3812,10 @@ button.annotation-char:hover {
 }
 
 .viewer-artboard .semantic-token-line .token-pinyin {
-  color: #735d4e;
+  color: #594538;
   font-size: var(--pinyin-font-size);
-  font-weight: 500;
+  font-weight: 600;
+  text-shadow: 0 0.5px 0 rgba(58, 40, 27, 0.12);
 }
 
 .viewer-artboard .curve-line {
@@ -4337,8 +4343,8 @@ button.annotation-char:hover {
   display: block;
   width: fit-content;
   margin-top: 15px;
-  padding: 1px 0 1px 12px;
-  border-left: 2px solid rgba(185, 64, 46, 0.68);
+  padding: 1px 0;
+  border-left: 0;
   background: transparent;
   color: #6c5747;
   font-size: 15px;
