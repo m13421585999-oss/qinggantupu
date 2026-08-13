@@ -638,6 +638,7 @@ function IndexedGraphTrack({
     schedule();
     const observer = new ResizeObserver(schedule);
     observer.observe(track);
+    for (const unit of unitRefs.current.values()) observer.observe(unit);
     window.addEventListener("resize", schedule);
     window.visualViewport?.addEventListener("resize", schedule);
     document.fonts?.addEventListener("loadingdone", schedule);
@@ -666,12 +667,6 @@ function IndexedGraphTrack({
       observer.disconnect();
     };
   }, [fitViewerManuscript, semanticLines]);
-
-  useLayoutEffect(() => {
-    if (!semanticLines) return;
-    const frame = window.requestAnimationFrame(measure);
-    return () => window.cancelAnimationFrame(frame);
-  }, [measure, semanticLines, viewerLayout]);
 
   const viewerTrackStyle = semanticLines ? {
     "--manuscript-font-size": `${viewerFontSize}px`,

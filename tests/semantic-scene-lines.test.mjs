@@ -127,7 +127,7 @@ test("viewer keeps the fixed artboard, visual asset dimensions and player safety
   assert.match(studio, /VIEWER_MANUSCRIPT_MIN_FONT_SIZE = 38/);
   assert.match(studio, /splitGraphUnitsByMeasuredWidth/);
   assert.match(studio, /element\.getBoundingClientRect\(\)\.width/);
-  assert.match(studio, /\[measure, semanticLines, viewerLayout\]/);
+  assert.match(studio, /for \(const unit of unitRefs\.current\.values\(\)\) observer\.observe\(unit\)/);
   assert.match(studio, /viewerSceneImageUrl/);
   assert.match(studio, /trackRect\.width \/ track\.offsetWidth/);
   assert.match(studio, /position: "relative"/);
