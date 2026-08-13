@@ -502,12 +502,11 @@ function IndexedGraphTrack({
     const renderedWidth = currentLine.scrollWidth;
     if (readingLines.length === 1 && renderedWidth <= availableWidth + 0.5) {
       if (viewerFontSize < VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE) {
-        const ratio = availableWidth / Math.max(renderedWidth, 1);
         const nextSize = Math.min(
           VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE,
-          Math.max(viewerFontSize + 1, Math.floor(viewerFontSize * ratio)),
+          Math.floor(viewerFontSize * availableWidth / Math.max(renderedWidth, 1)),
         );
-        if (nextSize !== viewerFontSize) {
+        if (nextSize > viewerFontSize) {
           setViewerLayout({ key: viewerLayoutKey, fontSize: nextSize, lines: [tokenUnits] });
         }
       }
@@ -667,6 +666,12 @@ function IndexedGraphTrack({
       observer.disconnect();
     };
   }, [fitViewerManuscript, semanticLines]);
+
+  useLayoutEffect(() => {
+    if (!semanticLines) return;
+    const frame = window.requestAnimationFrame(measure);
+    return () => window.cancelAnimationFrame(frame);
+  }, [measure, semanticLines, viewerLayout]);
 
   const viewerTrackStyle = semanticLines ? {
     "--manuscript-font-size": `${viewerFontSize}px`,
