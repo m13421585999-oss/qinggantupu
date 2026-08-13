@@ -504,6 +504,96 @@ async function createWork(request: Request, env: Env) {
   return json({ work: await getWorkPayload(env, workId) }, 201);
 }
 
+async function deleteWork(request: Request, env: Env, workId: string) {
+  if (!env.DB || !env.AUDIO_BUCKET) {
+    return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 或 R2 尚未绑定，无法删除作品。");
+  }
+  let expectedUpdatedAt = "";
+  try {
+    const parsed = await request.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return apiError(400, "INVALID_JSON", "删除作品请求必须是 JSON 对象。");
+    }
+    const body = parsed as Record<string, unknown>;
+    expectedUpdatedAt = String(body.expected_updated_at ?? body.expectedUpdatedAt ?? "").trim();
+  } catch {
+    return apiError(400, "INVALID_JSON", "删除作品请求必须是有效的 JSON。");
+  }
+  if (!expectedUpdatedAt) {
+    return apiError(428, "WORK_VERSION_REQUIRED", "删除前必须确认当前作品版本，请刷新作品库后重试。");
+  }
+
+  const work = await first<Row>(env.DB.prepare(
+    "SELECT id, title, updated_at FROM works WHERE id = ?",
+  ).bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到要删除的作品。");
+  if (String(work.updated_at) !== expectedUpdatedAt) {
+    return apiError(
+      409,
+      "WORK_VERSION_CONFLICT",
+      "作品已在其他窗口更新。为避免误删最新版本，请刷新作品库后重新确认。",
+      { expected_updated_at: expectedUpdatedAt, actual_updated_at: work.updated_at },
+    );
+  }
+
+  const assets = await env.DB.prepare(
+    "SELECT storage_key FROM assets WHERE work_id = ? ORDER BY created_at ASC",
+  ).bind(workId).all<Row>();
+  const storageKeys = (assets.results ?? [])
+    .map((asset) => String(asset.storage_key ?? "").trim())
+    .filter(Boolean);
+  const belongsToConfirmedVersion = `EXISTS (
+    SELECT 1 FROM works WHERE id = ? AND updated_at = ?
+  )`;
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM publications WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
+    ).bind(workId, workId, expectedUpdatedAt),
+    env.DB.prepare(
+      `DELETE FROM audio_versions WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
+    ).bind(workId, workId, expectedUpdatedAt),
+    env.DB.prepare(
+      `DELETE FROM processing_jobs WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
+    ).bind(workId, workId, expectedUpdatedAt),
+    env.DB.prepare(
+      `DELETE FROM control_spec_versions WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
+    ).bind(workId, workId, expectedUpdatedAt),
+    env.DB.prepare(
+      `DELETE FROM assets WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
+    ).bind(workId, workId, expectedUpdatedAt),
+    env.DB.prepare(
+      "DELETE FROM works WHERE id = ? AND updated_at = ?",
+    ).bind(workId, expectedUpdatedAt),
+  ]);
+  if (Number(results.at(-1)?.meta.changes ?? 0) === 0) {
+    return apiError(
+      409,
+      "WORK_VERSION_CONFLICT",
+      "作品已在其他窗口更新。为避免误删最新版本，请刷新作品库后重新确认。",
+    );
+  }
+
+  try {
+    for (let offset = 0; offset < storageKeys.length; offset += 1000) {
+      await env.AUDIO_BUCKET.delete(storageKeys.slice(offset, offset + 1000));
+    }
+  } catch (error) {
+    console.error("deleted work has orphaned R2 objects", {
+      workId,
+      storageKeyCount: storageKeys.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return json({
+    ok: true,
+    deleted_work: {
+      id: workId,
+      title: String(work.title),
+    },
+  });
+}
+
 function referenceAssetPayload(asset: Row) {
   return {
     asset_id: asset.id,
@@ -1572,6 +1662,7 @@ async function api(request: Request, env: Env): Promise<Response | null> {
     const work = await getWorkPayload(env, workMatch[1], url.searchParams.get("published") === "1");
     return work ? json({ work }) : apiError(404, "WORK_NOT_FOUND", "找不到作品。");
   }
+  if (workMatch && request.method === "DELETE") return deleteWork(request, env, workMatch[1]);
   const specMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/control-spec$/);
   if (specMatch && request.method === "PATCH") return saveControlSpec(request, env, specMatch[1]);
   const publishMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/publish$/);

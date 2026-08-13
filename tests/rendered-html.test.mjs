@@ -79,6 +79,9 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(studio, /beforeunload/);
   assert.match(studio, /当前修改还没有保存/);
   assert.match(studio, /保存并打开/);
+  assert.match(studio, /删除作品/);
+  assert.match(studio, /永久删除/);
+  assert.match(studio, /method: "DELETE"/);
   assert.match(studio, /WORK_VERSION_CONFLICT|expected_updated_at/);
   assert.match(studio, /mode === "studio" \? \(\s*<WorkLibrary/);
   assert.match(studio, /\/reference-audio/);

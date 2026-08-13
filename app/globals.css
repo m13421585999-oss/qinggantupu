@@ -2935,6 +2935,14 @@ button.annotation-char:hover {
   text-decoration: none;
 }
 
+.work-list-buttons .work-delete-button {
+  color: var(--red-dark);
+}
+
+.work-list-buttons .work-delete-button:hover:not(:disabled) {
+  background: var(--red-soft);
+}
+
 .switch-work-dialog-backdrop {
   z-index: 230;
   display: grid;
@@ -2988,6 +2996,36 @@ button.annotation-char:hover {
 
 .destructive-save-dialog .switch-work-icon {
   background: var(--red-soft);
+}
+
+.delete-work-dialog .switch-work-icon {
+  background: var(--red-soft);
+}
+
+.danger-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 18px;
+  border: 1px solid #9f3d30;
+  border-radius: 10px;
+  background: #a94435;
+  color: white;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.danger-button:hover:not(:disabled) {
+  background: #923427;
+}
+
+.danger-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .player-controls {

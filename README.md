@@ -4,7 +4,7 @@
 
 正式创作流程：
 
-1. 创作者可从云端作品库新建、搜索或继续编辑作品；填写作品名称、作者/来源和完整正文，上传真实参考朗诵。
+1. 创作者可从云端作品库新建、搜索、继续编辑或永久删除作品；删除前会二次确认，并同步清理该作品的正文、音频、分析结果、控制谱与发布版。
 2. 网站把正文和任务保存在 D1，把音频保存在 R2。
 3. 网站先调用 Eleven Voice Changer，把真人参考朗诵转换并保存为 `standard_ai_audio`。
 4. 独立 Python 服务只下载这条 `standard_ai_audio`，执行 ElevenLabs Forced Alignment、FFmpeg/Praat-Parselmouth 声学分析，并使用内置《朗诵表达分析规则 v1.0》和 DeepSeek 生成当前作品控制谱。
