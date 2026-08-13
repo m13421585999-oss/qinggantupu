@@ -122,6 +122,7 @@ test("viewer keeps the fixed artboard, visual asset dimensions and player safety
   assert.match(wrapper, /designHeight \* scale/);
   assert.match(wrapper, /ResizeObserver/);
   assert.match(studio, /<ViewerScaleWrapper artboardRef=\{exportTargetRef\}>/);
+  assert.match(studio, /className="viewer-paper"/);
   assert.match(studio, /semanticLines=\{isViewerScene\}/);
   assert.match(studio, /VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE = 56/);
   assert.match(studio, /VIEWER_MANUSCRIPT_MIN_FONT_SIZE = 38/);
@@ -134,8 +135,9 @@ test("viewer keeps the fixed artboard, visual asset dimensions and player safety
   assert.match(studio, /position: "relative"/);
   assert.match(studio, /transform: "none"/);
   assert.match(css, /\.viewer-artboard\s*\{[\s\S]*?width:\s*1600px;/);
-  assert.match(css, /\.viewer-artboard \.viewer-hero\s*\{[\s\S]*?width:\s*1500px;[\s\S]*?height:\s*300px;/);
-  assert.match(css, /\.viewer-artboard \.viewer-sentence-wrap \.graph-sentence\s*\{[\s\S]*?width:\s*1500px;[\s\S]*?min-height:\s*320px;/);
+  assert.match(css, /\.viewer-artboard \.viewer-paper\s*\{[\s\S]*?width:\s*1500px;/);
+  assert.match(css, /\.viewer-artboard \.viewer-hero\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*280px;/);
+  assert.match(css, /\.viewer-artboard \.viewer-sentence-wrap \.graph-sentence\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-height:\s*320px;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;/);
   assert.match(css, /\.scene-visual-frame\s*\{[\s\S]*?width:\s*260px;[\s\S]*?height:\s*190px;/);
   assert.match(studio, /标准朗诵 · 整篇/);
   assert.doesNotMatch(studio, /className="viewer-footnote"/);

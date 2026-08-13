@@ -2321,6 +2321,7 @@ function ViewerView({
   return (
     <ViewerScaleWrapper artboardRef={exportTargetRef}>
     <div className="viewer-shell">
+      <div className="viewer-paper">
       <section className={`viewer-hero ${showHeroImage ? "has-generated-hero" : "uses-fallback-hero"}`}>
         {showHeroImage && heroAsset ? (
           // Generated Hero assets are reviewed, persisted and served from the same site.
@@ -2404,6 +2405,7 @@ function ViewerView({
         </div>
 
       </section>
+      </div>
     </div>
     </ViewerScaleWrapper>
   );

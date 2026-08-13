@@ -4214,6 +4214,348 @@ button.annotation-char:hover {
   }
 }
 
+/* Viewer paper edition: one continuous recitation sheet, not a card dashboard. */
+.mode-viewer {
+  --header-height: 64px;
+  background: #ddd6cc;
+}
+
+.mode-viewer .app-header {
+  border-bottom-color: rgba(89, 69, 49, 0.14);
+  background: rgba(250, 246, 239, 0.95);
+  box-shadow: none;
+  backdrop-filter: blur(12px);
+}
+
+.mode-viewer .brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+.mode-viewer .viewer-header-actions {
+  gap: 0;
+}
+
+.mode-viewer .viewer-header-actions a,
+.mode-viewer .viewer-header-actions button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.mode-viewer .viewer-header-actions > * + * {
+  border-left: 1px solid rgba(116, 86, 59, 0.18);
+}
+
+.mode-viewer .viewer-header-actions a:focus-visible {
+  outline: 2px solid rgba(185, 64, 46, 0.5);
+  outline-offset: 2px;
+}
+
+.mode-viewer .viewer-scale-viewport {
+  background:
+    radial-gradient(circle at 14% 8%, rgba(255, 255, 255, 0.28), transparent 32%),
+    linear-gradient(90deg, rgba(120, 96, 69, 0.025) 1px, transparent 1px),
+    #ddd6cc;
+  background-size: auto, 7px 7px, auto;
+}
+
+.viewer-artboard .viewer-shell {
+  padding: 26px 0 46px;
+  background:
+    radial-gradient(circle at 50% -8%, rgba(255, 255, 255, 0.22), transparent 34%),
+    #ddd6cc;
+}
+
+.viewer-artboard .viewer-paper {
+  position: relative;
+  width: 1500px;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(92, 71, 51, 0.15);
+  background:
+    radial-gradient(circle at 9% 16%, rgba(191, 144, 93, 0.045), transparent 24%),
+    radial-gradient(circle at 88% 62%, rgba(121, 105, 81, 0.035), transparent 28%),
+    repeating-linear-gradient(0deg, rgba(91, 72, 52, 0.012) 0, rgba(91, 72, 52, 0.012) 1px, transparent 1px, transparent 5px),
+    #fbf7ef;
+  box-shadow: 0 18px 58px rgba(62, 47, 32, 0.1);
+}
+
+.viewer-artboard .viewer-paper::before {
+  position: absolute;
+  z-index: 0;
+  right: -80px;
+  bottom: -130px;
+  width: 850px;
+  height: 620px;
+  background: url("/recitation-card-shanshui.jpg") right bottom / cover no-repeat;
+  content: "";
+  mix-blend-mode: multiply;
+  opacity: 0.025;
+  pointer-events: none;
+}
+
+.viewer-artboard .viewer-paper > * {
+  position: relative;
+  z-index: 1;
+}
+
+.viewer-artboard .viewer-hero {
+  width: 100%;
+  height: 280px;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(111, 84, 56, 0.18);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.viewer-artboard .viewer-hero-art {
+  background:
+    linear-gradient(90deg, rgba(251, 247, 239, 0.99) 0%, rgba(251, 247, 239, 0.9) 39%, rgba(251, 247, 239, 0.22) 69%),
+    url("/recitation-card-shanshui.jpg") right 42% / cover no-repeat;
+  mix-blend-mode: multiply;
+  opacity: 0.78;
+}
+
+.viewer-artboard .viewer-hero-inner {
+  padding: 30px 52px;
+}
+
+.viewer-artboard .viewer-title-row h1 {
+  font-size: 55px;
+  font-weight: 620;
+  letter-spacing: 0.065em;
+}
+
+.viewer-artboard .viewer-author {
+  display: block;
+  width: fit-content;
+  margin-top: 15px;
+  padding: 1px 0 1px 12px;
+  border-left: 2px solid rgba(185, 64, 46, 0.68);
+  background: transparent;
+  color: #6c5747;
+  font-size: 15px;
+}
+
+.viewer-artboard .export-image-button {
+  min-height: 34px;
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 1px solid rgba(166, 62, 43, 0.34);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.viewer-artboard .export-image-button:hover:not(:disabled) {
+  border-color: var(--red);
+  background: transparent;
+  transform: none;
+}
+
+.viewer-artboard .hero-play {
+  min-width: 205px;
+  min-height: 56px;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.viewer-artboard .hero-play:hover {
+  color: var(--red-dark);
+  box-shadow: none;
+  transform: none;
+}
+
+.viewer-artboard .hero-play > span {
+  width: 44px;
+  height: 44px;
+  box-shadow: none;
+}
+
+.viewer-artboard .hero-play.playing > span {
+  box-shadow: 0 0 0 4px rgba(185, 64, 46, 0.1);
+}
+
+.viewer-artboard .viewer-content {
+  width: 100%;
+  padding: 0 54px 52px;
+}
+
+.viewer-artboard .viewer-legend {
+  min-height: 52px;
+  justify-content: center;
+  gap: 8px 22px;
+  margin: 0;
+  padding: 10px 4px;
+  border: 0;
+  border-bottom: 1px solid rgba(111, 84, 56, 0.16);
+  border-radius: 0;
+  background: transparent;
+  color: #786b5f;
+  font-size: 11px;
+}
+
+.viewer-artboard .viewer-graph-list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.viewer-artboard .viewer-sentence-wrap {
+  min-width: 0;
+}
+
+.viewer-artboard .viewer-sentence-wrap + .viewer-sentence-wrap {
+  border-top: 1px solid rgba(111, 84, 56, 0.15);
+}
+
+.viewer-artboard .viewer-sentence-wrap .graph-sentence {
+  width: 100%;
+  min-height: 320px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.viewer-artboard .viewer-sentence-wrap .graph-sentence:hover {
+  border: 0;
+  background: linear-gradient(90deg, rgba(157, 112, 67, 0.018), rgba(157, 112, 67, 0.006));
+  box-shadow: none;
+}
+
+.viewer-artboard .viewer-sentence-wrap .graph-sentence.active {
+  border: 0;
+  background: linear-gradient(90deg, rgba(185, 64, 46, 0.065), rgba(185, 64, 46, 0.01) 70%, transparent);
+  box-shadow: inset 3px 0 0 rgba(185, 64, 46, 0.72);
+}
+
+.mode-viewer .graph-sentence:focus-visible {
+  outline: 2px solid rgba(185, 64, 46, 0.5);
+  outline-offset: -3px;
+}
+
+.viewer-artboard .viewer-sentence-wrap .scene-visual-rail {
+  flex: 0 0 292px;
+  width: 292px;
+  min-height: 318px;
+  padding: 34px 16px;
+  border-right: 1px solid rgba(111, 84, 56, 0.13);
+  background: transparent;
+}
+
+.viewer-artboard .scene-visual-frame {
+  border-color: rgba(87, 66, 47, 0.2);
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+.viewer-artboard .graph-sentence.active .scene-visual-frame {
+  border-color: rgba(185, 64, 46, 0.52);
+  box-shadow: none;
+  filter: saturate(1.05);
+}
+
+.viewer-artboard .scene-visual-meta .soft-tag {
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-shadow: 0 1px 7px rgba(28, 19, 13, 0.7);
+  backdrop-filter: none;
+}
+
+.viewer-artboard .scene-play-overlay {
+  right: auto;
+  bottom: 13px;
+  left: 14px;
+}
+
+.viewer-artboard .scene-visual-frame .sentence-play {
+  width: auto;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #fffaf2;
+  text-shadow: 0 1px 8px rgba(26, 18, 12, 0.72);
+  backdrop-filter: none;
+}
+
+.viewer-artboard .scene-visual-frame .sentence-play:hover,
+.viewer-artboard .graph-sentence.active .scene-visual-frame .sentence-play {
+  border: 0;
+  background: transparent;
+  color: #ffd8c6;
+  transform: none;
+}
+
+.viewer-artboard .viewer-sentence-wrap .sentence-body {
+  padding: 32px 42px 28px 36px;
+  background: transparent;
+}
+
+.viewer-artboard .curve-line {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.viewer-artboard .semantic-token-line + .semantic-token-line {
+  border-top-color: rgba(111, 84, 56, 0.11);
+}
+
+.viewer-artboard .token-char.playing-token {
+  border-radius: 0;
+  background: linear-gradient(180deg, transparent 48%, rgba(185, 64, 46, 0.16) 48%);
+  box-shadow: none;
+}
+
+.mode-viewer .player-compact {
+  right: 50%;
+  bottom: 0;
+  left: auto;
+  width: min(1500px, calc(100vw - 32px));
+  min-height: 82px;
+  padding: 11px 22px;
+  border: 0;
+  border-top: 1px solid rgba(101, 76, 52, 0.22);
+  border-radius: 0;
+  background:
+    repeating-linear-gradient(0deg, rgba(91, 72, 52, 0.012) 0, rgba(91, 72, 52, 0.012) 1px, transparent 1px, transparent 5px),
+    rgba(251, 247, 239, 0.97);
+  box-shadow: 0 -10px 28px rgba(59, 42, 25, 0.055);
+  transform: translateX(50%);
+  backdrop-filter: blur(14px);
+}
+
+.mode-viewer .player-compact .play-main {
+  width: 42px;
+  height: 42px;
+  box-shadow: none;
+}
+
+.mode-viewer .player-compact .play-main:hover {
+  transform: none;
+}
+
+.mode-viewer .player-compact.playing .play-main {
+  box-shadow: 0 0 0 4px rgba(185, 64, 46, 0.1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
