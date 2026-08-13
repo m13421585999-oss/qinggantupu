@@ -4422,7 +4422,7 @@ button.annotation-char:hover {
 
 .viewer-artboard .viewer-sentence-wrap .graph-sentence {
   width: 100%;
-  min-height: 320px;
+  min-height: 270px;
   overflow: hidden;
   border: 0;
   border-radius: 0;
@@ -4448,10 +4448,13 @@ button.annotation-char:hover {
 }
 
 .viewer-artboard .viewer-sentence-wrap .scene-visual-rail {
+  display: flex;
   flex: 0 0 292px;
   width: 292px;
-  min-height: 318px;
-  padding: 34px 16px;
+  min-height: 270px;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 16px;
   border-right: 1px solid rgba(111, 84, 56, 0.13);
   background: transparent;
 }
@@ -4504,7 +4507,7 @@ button.annotation-char:hover {
 }
 
 .viewer-artboard .viewer-sentence-wrap .sentence-body {
-  padding: 32px 42px 28px 36px;
+  padding: 24px 42px 22px 36px;
   background: transparent;
 }
 
