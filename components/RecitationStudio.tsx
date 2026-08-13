@@ -75,14 +75,6 @@ const prosodyOptions = Object.keys(PROSODY_LABELS) as ProsodyType[];
 const rhythmOptions = Object.keys(RHYTHM_LABELS) as Rhythm[];
 const endingOptions = Object.keys(ENDING_LABELS) as EndingTone[];
 
-const GENRE_LABELS: Record<RecitationWork["genre"], string> = {
-  modern_poetry: "现代诗",
-  classical_poetry: "古典诗词",
-  prose: "散文",
-  speech: "演讲",
-  other: "朗诵作品",
-};
-
 function formatTime(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -1523,10 +1515,6 @@ function EditorStage({
       <div className="editor-layout editor-layout-single">
         <div className="graph-editor">
           <div className="graph-toolbar">
-            <div>
-              <span className="toolbar-title">三层情感图谱</span>
-              <span className="toolbar-subtitle">{spec.sentences.length} 个图谱句 · 控制谱 v{spec.version}</span>
-            </div>
             <div className="legend compact-legend">
               <span><i className="legend-focus" />表达焦点</span>
               <span><b>/</b> 短停</span>
@@ -1596,12 +1584,10 @@ function PublishStage({
             <div className="cover-arc" aria-hidden="true">
               <i /><i /><i />
             </div>
-            <span className="cover-meta">抒情朗诵 · 舒缓 · 克制</span>
           </div>
           <div className="release-details">
             <p className="eyebrow">发布版本</p>
             <h3>{work.title} · v1</h3>
-            <p>包含 {spec.sentences.length} 个图谱句、三层图谱、AI 标准朗诵和字符时间轴。</p>
             <div className="slug-box">
               <span>稳定分享地址</span>
               <code>/works/{work.slug}</code>
@@ -1614,8 +1600,8 @@ function PublishStage({
           <h2>作品包完整</h2>
           {[
             ["正文与控制谱一致", "分析时已逐字校验"],
-            ["控制谱无阻塞错误", `${spec.sentences.length} 个图谱句`],
-            ["标准 AI 朗诵可播放", standardAudio.label],
+            ["控制谱无阻塞错误", "当前版本已确认"],
+            ["示范音频可播放", "播放时间轴已就绪"],
             ["字符时间轴完整", "逐字高亮已就绪"],
             [
               "声音与图谱关系已标明",
@@ -2058,11 +2044,6 @@ function ViewerView({
               <p className="eyebrow">朗诵情感图谱</p>
               <h1>{work.title}</h1>
               {work.author ? <p className="viewer-author">{work.author}</p> : null}
-              <div className="viewer-meta">
-                <span>{GENRE_LABELS[work.genre] ?? "朗诵作品"}</span>
-                <span>{spec.sentences.length} 个图谱句</span>
-                <span>{formatTime(standardAudio.durationMs)} · 标准 AI 朗诵</span>
-              </div>
             </div>
             <button type="button" className={`hero-play ${isPlaying ? "playing" : ""}`} onClick={onPlayAll}>
               <span>{isPlaying ? "Ⅱ" : "▶"}</span>
@@ -2076,13 +2057,6 @@ function ViewerView({
       </section>
 
       <section className="viewer-content">
-        <div className="viewer-section-heading">
-          <div>
-            <p className="eyebrow">三层情感图谱</p>
-            <h2>跟着红字、停顿和声音曲线来听</h2>
-          </div>
-        </div>
-
         <div className="legend viewer-legend" aria-label="图谱符号说明">
           <span><b className="legend-focus-char">春</b> 红字：表达焦点</span>
           <span><b>/</b> 短停</span>

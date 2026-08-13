@@ -82,6 +82,11 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(studio, /删除作品/);
   assert.match(studio, /永久删除/);
   assert.match(studio, /method: "DELETE"/);
+  assert.doesNotMatch(studio, /三层情感图谱/);
+  assert.doesNotMatch(studio, /跟着红字、停顿和声音曲线来听/);
+  assert.doesNotMatch(studio, /个图谱句/);
+  assert.doesNotMatch(studio, /朗诵作品/);
+  assert.doesNotMatch(studio, /抒情朗诵 · 舒缓 · 克制/);
   assert.match(studio, /WORK_VERSION_CONFLICT|expected_updated_at/);
   assert.match(studio, /mode === "studio" \? \(\s*<WorkLibrary/);
   assert.match(studio, /\/reference-audio/);
