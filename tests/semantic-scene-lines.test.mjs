@@ -139,6 +139,7 @@ test("viewer keeps the fixed artboard, visual asset dimensions and player safety
   assert.match(studio, /标准朗诵 · 整篇/);
   assert.doesNotMatch(studio, /className="viewer-footnote"/);
   assert.match(studio, /prepareViewerImagesForExport/);
+  assert.match(studio, /artboard\?\.querySelector<HTMLElement>\("\.viewer-shell"\) \?\? artboard/);
   assert.match(css, /\.mode-viewer \.mode-switch,[\s\S]*?display:\s*none;/);
   assert.match(css, /\.mode-viewer \.player-compact\s*\{[\s\S]*?width:\s*min\(1500px,/);
 });

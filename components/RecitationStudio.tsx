@@ -3115,7 +3115,8 @@ export function RecitationStudio() {
   };
 
   const exportViewerImage = async () => {
-    const target = viewerExportRef.current;
+    const artboard = viewerExportRef.current;
+    const target = artboard?.querySelector<HTMLElement>(".viewer-shell") ?? artboard;
     if (!target || exportingImage) return;
     setExportingImage(true);
     try {
