@@ -10,6 +10,7 @@ import pytest
 
 from app.acoustics.parselmouth_analyzer import resolve_ffmpeg
 from app.config import ConfigurationError, Settings
+from app.config import configured_visual_model
 from app.interpretation.llm_interpreter import (
     InterpretationError,
     _response_format_for_provider,
@@ -31,6 +32,7 @@ def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "VERCEL_OIDC_TOKEN",
         "LLM_BASE_URL",
         "LLM_MODEL",
+        "VISUAL_LLM_MODEL",
         "LLM_REASONING_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -75,6 +77,17 @@ def test_settings_default_to_v4_pro_when_model_is_unset(monkeypatch: pytest.Monk
     settings = Settings.from_environment()
 
     assert settings.llm_model == "deepseek-v4-pro"
+
+
+def test_visual_director_model_defaults_to_llm_and_can_be_overridden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")
+    monkeypatch.delenv("VISUAL_LLM_MODEL", raising=False)
+    assert configured_visual_model() == "deepseek-v4-pro"
+    monkeypatch.setenv("VISUAL_LLM_MODEL", "deepseek-visual-director")
+    assert configured_visual_model() == "deepseek-visual-director"
 
 
 def test_reasoning_effort_can_be_raised_to_max(monkeypatch: pytest.MonkeyPatch) -> None:

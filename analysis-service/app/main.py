@@ -17,9 +17,12 @@ from app.config import (
     ConfigurationError,
     Settings,
     configured_model,
+    configured_visual_model,
 )
+from app.interpretation.visual_director import direct_work_visuals
 from app.pipeline import PIPELINE_VERSION, analyze_job
 from app.schemas.control_spec import JobRequest
+from app.schemas.visual import VisualDirectorRequest
 
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -180,7 +183,44 @@ async def health() -> dict[str, Any]:
         "thinking": DEEPSEEK_THINKING,
         "reasoning_effort": reasoning_effort,
     }
-    return {"ok": all(configured.values()), "configured": configured, "llm": llm}
+    return {
+        "ok": all(configured.values()),
+        "configured": configured,
+        "llm": llm,
+        "visual_director": {
+            "provider": DEEPSEEK_PROVIDER,
+            "model": configured_visual_model(),
+            "thinking": DEEPSEEK_THINKING,
+            "reasoning_effort": reasoning_effort,
+        },
+    }
+
+
+@app.post("/v1/visual-director", status_code=status.HTTP_200_OK)
+async def create_visual_plan(
+    request: VisualDirectorRequest,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    # Deliberately independent from analyze_job/control_spec. A failure here
+    # only fails the caller's visual operation and cannot mutate analysis data.
+    result = await direct_work_visuals(
+        request=request,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        model=configured_visual_model(),
+        thinking=settings.llm_thinking,
+        reasoning_effort=settings.llm_reasoning_effort,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    return {
+        **result,
+        "_meta": {
+            "provider": DEEPSEEK_PROVIDER,
+            "model": configured_visual_model(),
+            "thinking": settings.llm_thinking,
+            "reasoning_effort": settings.llm_reasoning_effort,
+        },
+    }
 
 
 @app.post("/v1/jobs", status_code=status.HTTP_200_OK)

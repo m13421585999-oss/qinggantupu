@@ -2214,6 +2214,10 @@ p {
   isolation: isolate;
 }
 
+.semantic-token-line {
+  display: contents;
+}
+
 .graph-token-unit {
   position: relative;
   z-index: 1;
@@ -3407,6 +3411,376 @@ button.annotation-char:hover {
   .avoid-note {
     display: none;
   }
+}
+
+/* Viewer v2: fixed landscape artboard with persisted literary visuals. */
+.mode-viewer .app-header {
+  grid-template-columns: 1fr auto;
+  padding-right: max(24px, calc((100vw - 1500px) / 2));
+  padding-left: max(24px, calc((100vw - 1500px) / 2));
+}
+
+.mode-viewer .mode-switch,
+.mode-viewer .header-status {
+  display: none;
+}
+
+.viewer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.viewer-header-actions a,
+.viewer-header-actions button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid rgba(116, 86, 59, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.72);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.viewer-header-actions button {
+  border-color: rgba(166, 62, 43, 0.24);
+  color: var(--red-dark);
+}
+
+.viewer-scale-viewport {
+  position: relative;
+  width: 100%;
+  min-height: 1px;
+  overflow: hidden;
+  background: #e8e1d8;
+}
+
+.viewer-artboard {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1600px;
+  min-height: 100px;
+  margin-left: -800px;
+  transform: scale(var(--viewer-scale, 1));
+  transform-origin: top center;
+}
+
+.viewer-artboard .viewer-shell {
+  width: 1600px;
+  min-height: 0;
+  padding: 28px 0 36px;
+  background:
+    linear-gradient(180deg, #eee8e0 0, #e8e1d8 520px, #e6ded5 100%),
+    #e8e1d8;
+}
+
+.viewer-artboard .viewer-hero {
+  position: relative;
+  width: 1500px;
+  height: 420px;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(105, 78, 53, 0.16);
+  border-radius: 26px;
+  background: #f7f1e7;
+  box-shadow: 0 20px 54px rgba(64, 46, 29, 0.12);
+}
+
+.viewer-artboard .viewer-hero-image {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.viewer-artboard .viewer-hero-art {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: block;
+  width: 100%;
+  background:
+    linear-gradient(90deg, rgba(255, 252, 246, 0.98) 0%, rgba(255, 252, 246, 0.9) 37%, rgba(255, 252, 246, 0.16) 68%),
+    url("/recitation-card-shanshui.jpg") right center / cover no-repeat;
+  -webkit-mask-image: none;
+  mask-image: none;
+  mix-blend-mode: normal;
+  opacity: 0.92;
+}
+
+.viewer-artboard .viewer-hero-inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 42px 48px;
+}
+
+.viewer-artboard .viewer-breadcrumb {
+  display: none;
+}
+
+.viewer-artboard .viewer-title-row {
+  width: 100%;
+  min-height: 220px;
+  align-items: flex-end;
+  gap: 42px;
+  margin: 0;
+}
+
+.viewer-artboard .viewer-title-block {
+  max-width: 880px;
+}
+
+.viewer-artboard .viewer-title-row h1 {
+  max-width: 920px;
+  margin-top: 16px;
+  font-size: 66px;
+  line-height: 1.08;
+}
+
+.viewer-artboard .viewer-author {
+  margin-top: 18px;
+  font-size: 18px;
+}
+
+.viewer-artboard .generated-hero-title-row {
+  min-height: 0;
+  justify-content: flex-end;
+}
+
+.viewer-artboard .viewer-hero-actions {
+  margin-left: auto;
+}
+
+.viewer-artboard .hero-play {
+  min-width: 244px;
+  min-height: 78px;
+  padding: 12px 22px 12px 14px;
+  border-color: rgba(122, 73, 46, 0.24);
+  background: rgba(255, 253, 248, 0.92);
+  backdrop-filter: blur(14px);
+}
+
+.viewer-artboard .viewer-content {
+  width: 1500px;
+  margin: 0 auto;
+  padding: 28px 0 0;
+}
+
+.viewer-artboard .viewer-legend {
+  min-height: 54px;
+  margin-bottom: 20px;
+  padding: 11px 18px;
+  border-color: rgba(123, 91, 61, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.72);
+  font-size: 12px;
+}
+
+.viewer-artboard .viewer-graph-list {
+  display: grid;
+  gap: 22px;
+}
+
+.viewer-artboard .viewer-sentence-wrap .graph-sentence {
+  width: 1500px;
+  min-height: 320px;
+  flex-direction: row;
+  overflow: hidden;
+  border: 1px solid rgba(105, 78, 53, 0.14);
+  border-radius: 22px;
+  background: #fffdf9;
+  box-shadow: 0 14px 38px rgba(64, 46, 29, 0.08);
+}
+
+.viewer-artboard .viewer-sentence-wrap .graph-sentence::after {
+  content: none;
+}
+
+.viewer-artboard .viewer-sentence-wrap .graph-sentence.active {
+  border-color: rgba(185, 64, 46, 0.58);
+  background: #fffdf8;
+  box-shadow: 0 0 0 3px rgba(185, 64, 46, 0.08), 0 18px 44px rgba(64, 46, 29, 0.1);
+}
+
+.viewer-artboard .viewer-sentence-wrap .scene-visual-rail {
+  position: relative;
+  display: block;
+  flex: 0 0 320px;
+  width: 320px;
+  min-height: 318px;
+  padding: 18px 20px;
+  border-right: 1px solid rgba(108, 80, 55, 0.12);
+  border-bottom: 0;
+  background: #f3ece3;
+}
+
+.scene-visual-frame {
+  position: relative;
+  width: 280px;
+  height: 220px;
+  overflow: hidden;
+  border: 1px solid rgba(109, 81, 56, 0.15);
+  border-radius: 15px;
+  background: #e8ded2;
+  box-shadow: 0 7px 20px rgba(66, 46, 29, 0.12);
+  transition: border-color 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+}
+
+.scene-visual-frame::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 58px;
+  background: linear-gradient(180deg, transparent, rgba(31, 23, 17, 0.42));
+  content: "";
+  pointer-events: none;
+}
+
+.scene-visual-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.graph-sentence.active .scene-visual-frame {
+  border-color: rgba(185, 64, 46, 0.55);
+  box-shadow: 0 0 0 3px rgba(185, 64, 46, 0.1), 0 10px 26px rgba(66, 46, 29, 0.16);
+  filter: saturate(1.04);
+}
+
+.scene-visual-fallback {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  background:
+    radial-gradient(circle at 74% 24%, rgba(202, 136, 85, 0.3), transparent 25%),
+    linear-gradient(145deg, #efe5d8, #dcd1c4);
+  color: rgba(127, 80, 50, 0.62);
+  font-family: "Songti SC", STSong, serif;
+}
+
+.scene-visual-fallback span {
+  font-size: 42px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+.scene-visual-meta {
+  position: absolute;
+  z-index: 2;
+  top: 192px;
+  right: 33px;
+  left: 33px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.scene-visual-meta .sentence-number {
+  color: #fff9ef;
+  font-size: 18px;
+  text-shadow: 0 1px 8px rgba(30, 19, 12, 0.45);
+}
+
+.scene-visual-meta .soft-tag {
+  border-color: rgba(255, 250, 241, 0.42);
+  background: rgba(44, 31, 22, 0.36);
+  color: #fffaf2;
+  backdrop-filter: blur(8px);
+}
+
+.viewer-artboard .scene-visual-rail > [data-export-exclude="true"] {
+  position: absolute;
+  right: 20px;
+  bottom: 17px;
+  left: 20px;
+}
+
+.viewer-artboard .scene-visual-rail .sentence-play {
+  width: 100%;
+  min-height: 46px;
+  background: rgba(255, 253, 248, 0.82);
+}
+
+.viewer-artboard .viewer-sentence-wrap .sentence-body {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 34px 42px 32px;
+  background: rgba(255, 253, 248, 0.96);
+}
+
+.viewer-artboard .viewer-sentence-wrap .graph-track-layout {
+  --pinyin-row-height: 32px;
+  --manuscript-row-height: 60px;
+  --curve-row-height: 78px;
+  --manuscript-font-size: 40px;
+  --token-char-width: 44px;
+  --token-unit-gap: 4px;
+  width: 100%;
+}
+
+.viewer-artboard .semantic-token-flow {
+  display: block;
+  width: 100%;
+}
+
+.viewer-artboard .semantic-token-line {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  column-gap: var(--token-unit-gap);
+}
+
+.viewer-artboard .semantic-token-line + .semantic-token-line {
+  margin-top: 8px;
+}
+
+.viewer-artboard .semantic-token-line .graph-token-unit {
+  flex: 0 0 auto;
+}
+
+.viewer-artboard .curve-line {
+  background: linear-gradient(180deg, rgba(249, 242, 232, 0.44), rgba(247, 235, 216, 0.12));
+}
+
+.viewer-artboard .viewer-footnote {
+  margin: 22px 0 0;
+  border-color: rgba(123, 91, 61, 0.14);
+  background: rgba(255, 253, 248, 0.66);
+}
+
+.mode-viewer .player-compact {
+  right: 50%;
+  bottom: 18px;
+  left: auto;
+  width: min(1500px, calc(100vw - 48px));
+  min-height: 76px;
+  transform: translateX(50%);
 }
 
 @media (max-width: 620px) and (orientation: portrait) {

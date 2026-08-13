@@ -65,7 +65,7 @@ test("worker exposes a searchable work library with optimistic concurrency", asy
   assert.match(worker, /DELETE FROM processing_jobs WHERE work_id/);
   assert.match(worker, /DELETE FROM control_spec_versions WHERE work_id/);
   assert.match(worker, /DELETE FROM assets WHERE work_id/);
-  assert.match(worker, /AUDIO_BUCKET\.delete\(storageKeys/);
+  assert.match(worker, /AUDIO_BUCKET\.delete\((?:exactStorageKeys|storageKeys)/);
 });
 
 test("D1 schema and migrations retain analysis data and legacy audio metadata", async () => {

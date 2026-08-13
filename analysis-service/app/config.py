@@ -19,6 +19,10 @@ def configured_model() -> str:
     return os.getenv("LLM_MODEL", DEEPSEEK_DEFAULT_MODEL).strip() or DEEPSEEK_DEFAULT_MODEL
 
 
+def configured_visual_model() -> str:
+    return os.getenv("VISUAL_LLM_MODEL", configured_model()).strip() or configured_model()
+
+
 def configured_reasoning_effort() -> str:
     effort = os.getenv("LLM_REASONING_EFFORT", "high").strip().lower()
     if effort not in DEEPSEEK_REASONING_EFFORTS:

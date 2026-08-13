@@ -344,6 +344,8 @@ export interface RecitationWork {
   analysisJobStatus?: "queued" | "processing" | "succeeded" | "failed";
   analysisPackage?: RecitationAnalysisPackage;
   controlSpec?: ControlSpec;
+  /** Optional literary visual layer; it never changes control_spec or audio timing. */
+  visuals?: import("./visual-assets").WorkVisualBundle;
   createdAt: string;
   updatedAt: string;
 }

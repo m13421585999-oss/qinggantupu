@@ -159,3 +159,99 @@ export const processingJobs = sqliteTable(
     index("idx_processing_jobs_work_id_status").on(table.workId, table.status),
   ],
 );
+
+export const workVisualProfiles = sqliteTable(
+  "work_visual_profiles",
+  {
+    id: text("id").primaryKey(),
+    workId: text("work_id")
+      .notNull()
+      .references(() => works.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    profileJson: text("profile_json").notNull(),
+    directorProvider: text("director_provider").notNull(),
+    directorModel: text("director_model").notNull(),
+    isLocked: integer("is_locked", { mode: "boolean" }).notNull().default(false),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_work_visual_profiles_work_version").on(table.workId, table.version),
+    index("idx_work_visual_profiles_work_active").on(table.workId, table.isActive),
+  ],
+);
+
+export const visualSpecs = sqliteTable(
+  "visual_specs",
+  {
+    id: text("id").primaryKey(),
+    workId: text("work_id")
+      .notNull()
+      .references(() => works.id, { onDelete: "cascade" }),
+    profileId: text("profile_id").references(() => workVisualProfiles.id, {
+      onDelete: "set null",
+    }),
+    kind: text("kind").notNull(),
+    sceneId: text("scene_id"),
+    sourceSentenceIdsJson: text("source_sentence_ids_json"),
+    sourceText: text("source_text"),
+    specJson: text("spec_json").notNull(),
+    version: integer("version").notNull(),
+    state: text("state").notNull().default("ready"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_visual_specs_work_kind_scene_version").on(
+      table.workId,
+      table.kind,
+      table.sceneId,
+      table.version,
+    ),
+    index("idx_visual_specs_work_active").on(table.workId, table.isActive),
+  ],
+);
+
+export const visualAssets = sqliteTable(
+  "visual_assets",
+  {
+    id: text("id").primaryKey(),
+    workId: text("work_id")
+      .notNull()
+      .references(() => works.id, { onDelete: "cascade" }),
+    specId: text("spec_id").references(() => visualSpecs.id, { onDelete: "set null" }),
+    assetId: text("asset_id").references(() => assets.id, { onDelete: "set null" }),
+    kind: text("kind").notNull(),
+    sceneId: text("scene_id"),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    prompt: text("prompt").notNull(),
+    negativePrompt: text("negative_prompt"),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    seed: text("seed"),
+    generationStatus: text("generation_status").notNull(),
+    textValidationStatus: text("text_validation_status"),
+    textValidationJson: text("text_validation_json"),
+    errorMessage: text("error_message"),
+    isVisible: integer("is_visible", { mode: "boolean" }).notNull().default(false),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(false),
+    version: integer("version").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_visual_assets_work_kind_scene_version").on(
+      table.workId,
+      table.kind,
+      table.sceneId,
+      table.version,
+    ),
+    index("idx_visual_assets_work_active_visible").on(
+      table.workId,
+      table.isActive,
+      table.isVisible,
+    ),
+    index("idx_visual_assets_asset_id").on(table.assetId),
+  ],
+);

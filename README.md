@@ -9,9 +9,10 @@
 3. 网站先调用 Eleven Voice Changer，把真人参考朗诵转换并保存为 `standard_ai_audio`。
 4. 独立 Python 服务只下载这条 `standard_ai_audio`，执行 ElevenLabs Forced Alignment、FFmpeg/Praat-Parselmouth 声学分析，并使用内置《朗诵表达分析规则 v1.0》和 DeepSeek 生成当前作品控制谱。
 5. 分析完成后直接进入图谱编辑器，创作者可一边播放同源标准声音，一边修改重音、停顿、拖音、语势、句尾语调和节奏；修改后 `audio_sync_status` 变为 `modified`。
-6. 编辑后直接进入发布预览；观看端播放被分析的同一条 `standard_ai_audio`，提供整篇/单句播放、跳转、倍速与逐字高亮。
+6. 创作端的“作品视觉”可先由独立 Visual Director 生成统一视觉方案，再生成或上传 Hero 与逐场景意境图；图片存入 R2，版本、审核和显示状态存入 D1，视觉失败不会阻断朗诵谱。
+7. 编辑后直接进入发布预览；观看端播放被分析的同一条 `standard_ai_audio`，提供整篇/单句播放、跳转、倍速与逐字高亮，并只读取已经审核启用的视觉资产。
 
-创作端会明确显示“未保存、保存中、已保存、保存失败”等状态。切换作品或新建作品前，如果当前内容尚未保存，会要求选择保存、放弃或取消；多个窗口编辑同一作品时，旧窗口不会静默覆盖云端新版本。第一版不提供永久删除作品，避免误删正式资产。
+创作端会明确显示“未保存、保存中、已保存、保存失败”等状态。切换作品或新建作品前，如果当前内容尚未保存，会要求选择保存、放弃或取消；多个窗口编辑同一作品时，旧窗口不会静默覆盖云端新版本。作品库支持二次确认后永久删除，并清理对应 D1 记录与 R2 文件。
 
 生产流程没有固定作品、固定控制谱或失败后的 Demo 回退。任一步骤失败都会显示真实错误状态。
 
@@ -44,6 +45,8 @@ cp .dev.vars.example .dev.vars
 - `ANALYSIS_SERVICE_URL` 本地默认可设为 `http://127.0.0.1:8000`；
 - `ANALYSIS_SERVICE_TOKEN` 和 `ANALYSIS_CALLBACK_TOKEN` 必须与分析服务中的值完全一致；
 - `ELEVENLABS_API_KEY` 和 `ELEVENLABS_VOICE_ID` 只用于服务端。
+- `IMAGE_PROVIDER`、`IMAGE_MODEL`、`IMAGE_API_KEY` 和 `IMAGE_BASE_URL` 用于外接生图服务；未配置时仍可生成视觉方案和人工上传图片。
+- `IMAGE_OCR_MODEL` 用于 Hero 标题/作者自动校验；未配置时，模型生成的 Hero 必须在创作端人工确认后才能展示。
 
 然后启动网站：
 
@@ -64,7 +67,7 @@ python3.12 -m venv .venv
 cp .env.example .env
 ```
 
-编辑 `analysis-service/.env`，至少配置 ElevenLabs、DeepSeek 以及两项服务通信 token。加载环境变量并启动 FastAPI：
+编辑 `analysis-service/.env`，至少配置 ElevenLabs、DeepSeek 以及两项服务通信 token。`VISUAL_LLM_MODEL` 可单独指定视觉导演模型；留空时继承 `LLM_MODEL`。加载环境变量并启动 FastAPI：
 
 ```text
 set -a

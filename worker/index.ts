@@ -1,7 +1,23 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import {
+  createImageGenerationProvider,
+  ImageGenerationError,
+  type GeneratedImage,
+  type ImageGenerationProvider,
+} from "@/lib/image-generation-provider";
 import { importControlSpec } from "@/lib/control-spec-import";
+import { validateHeroText, type HeroTextValidationResult } from "@/lib/hero-text-validator";
 import { withDynamicTimingProfile } from "@/lib/timing-profile";
+import { requestVisualDirection, VisualDirectorRequestError } from "@/lib/visual-director";
+import {
+  buildSceneUnits,
+  summarizeControlSpec,
+  type HeroVisualSpec,
+  type SceneVisualSpec,
+  type VisualAssetKind,
+  type WorkVisualProfile,
+} from "@/lib/visual-schema";
 
 interface Env {
   ASSETS: Fetcher;
@@ -12,6 +28,11 @@ interface Env {
   ANALYSIS_CALLBACK_TOKEN?: string;
   ELEVENLABS_API_KEY?: string;
   ELEVENLABS_VOICE_ID?: string;
+  IMAGE_PROVIDER?: string;
+  IMAGE_MODEL?: string;
+  IMAGE_API_KEY?: string;
+  IMAGE_BASE_URL?: string;
+  IMAGE_OCR_MODEL?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -85,6 +106,165 @@ function parseJson<T>(value: string | null | undefined): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function imageProvider(env: Env) {
+  return createImageGenerationProvider({
+    provider: env.IMAGE_PROVIDER,
+    model: env.IMAGE_MODEL,
+    apiKey: env.IMAGE_API_KEY,
+    baseUrl: env.IMAGE_BASE_URL,
+  });
+}
+
+function boolValue(value: unknown) {
+  return Number(value ?? 0) > 0;
+}
+
+function visualSpecPayload(row: Row) {
+  const spec = parseJson<Record<string, unknown>>(row.spec_json as string | null) ?? {};
+  const base = {
+    id: String(row.id),
+    kind: String(row.kind),
+    sceneId: row.scene_id == null ? undefined : String(row.scene_id),
+    sourceSentenceIds: parseJson<string[]>(row.source_sentence_ids_json as string | null) ?? [],
+    sourceText: row.source_text == null ? undefined : String(row.source_text),
+    version: Number(row.version),
+    state: String(row.state),
+    isActive: boolValue(row.is_active),
+    createdAt: String(row.created_at),
+  };
+  if (row.kind === "hero") {
+    return {
+      ...base,
+      type: "hero",
+      size: spec.size,
+      requiredText: spec.required_text ?? [],
+      textLayout: spec.text_layout ?? "",
+      visualSubject: spec.visual_subject ?? "",
+      composition: spec.composition ?? "",
+      lighting: spec.lighting ?? "",
+      palette: spec.palette ?? [],
+      imagePrompt: spec.image_prompt ?? "",
+      negativePrompt: spec.negative_prompt ?? "",
+    };
+  }
+  return {
+    ...base,
+    sceneId: String(spec.scene_id ?? row.scene_id ?? ""),
+    sourceSentenceIds: spec.source_sentence_ids ?? base.sourceSentenceIds,
+    sourceText: spec.source_text ?? base.sourceText ?? "",
+    narrativeFunction: spec.narrative_function ?? "",
+    visualType: spec.visual_type ?? "minimal",
+    sceneSummary: spec.scene_summary ?? "",
+    mainSubject: spec.main_subject ?? "",
+    environment: spec.environment ?? "",
+    emotion: spec.emotion ?? [],
+    symbolism: spec.symbolism ?? [],
+    composition: spec.composition ?? "",
+    cameraDistance: spec.camera_distance ?? "",
+    lighting: spec.lighting ?? "",
+    palette: spec.palette ?? [],
+    imagePrompt: spec.image_prompt ?? "",
+    negativePrompt: spec.negative_prompt ?? "",
+  };
+}
+
+function visualAssetPayload(row: Row) {
+  const validation = parseJson<Record<string, unknown>>(row.text_validation_json as string | null);
+  return {
+    id: String(row.id),
+    workId: String(row.work_id),
+    specId: row.spec_id == null ? undefined : String(row.spec_id),
+    assetId: row.asset_id == null ? undefined : String(row.asset_id),
+    kind: String(row.kind),
+    sceneId: row.scene_id == null ? undefined : String(row.scene_id),
+    url: row.asset_id == null ? undefined : `/api/assets/${row.asset_id}`,
+    provider: String(row.provider),
+    model: String(row.model),
+    prompt: String(row.prompt),
+    negativePrompt: row.negative_prompt == null ? undefined : String(row.negative_prompt),
+    width: Number(row.width),
+    height: Number(row.height),
+    seed: row.seed == null ? undefined : String(row.seed),
+    status: String(row.generation_status),
+    generationStatus: String(row.generation_status),
+    textValidationStatus: row.text_validation_status == null
+      ? undefined
+      : String(row.text_validation_status),
+    textValidation: validation,
+    textValidationMessage: validation?.message == null ? undefined : String(validation.message),
+    errorMessage: row.error_message == null ? undefined : String(row.error_message),
+    isVisible: boolValue(row.is_visible),
+    isActive: boolValue(row.is_active),
+    version: Number(row.version),
+    createdAt: String(row.created_at),
+  };
+}
+
+async function getVisualBundle(env: Env, workId: string, published = false) {
+  const profileRow = await first<Row>(env.DB.prepare(
+    `SELECT * FROM work_visual_profiles
+      WHERE work_id = ? AND is_active = 1
+      ORDER BY version DESC LIMIT 1`,
+  ).bind(workId));
+  const specsResult = await env.DB.prepare(
+    `SELECT * FROM visual_specs
+      WHERE work_id = ? AND is_active = 1
+      ORDER BY CASE WHEN kind = 'hero' THEN 0 ELSE 1 END, scene_id, version DESC`,
+  ).bind(workId).all<Row>();
+  const assetsResult = await env.DB.prepare(
+    `SELECT * FROM visual_assets
+      WHERE work_id = ?${published
+        ? " AND is_active = 1 AND is_visible = 1 AND generation_status = 'ready'"
+        : ""}
+      ORDER BY CASE WHEN kind = 'hero' THEN 0 ELSE 1 END, scene_id, version DESC`,
+  ).bind(workId).all<Row>();
+  const rawProfile = profileRow
+    ? parseJson<WorkVisualProfile>(profileRow.profile_json as string | null)
+    : undefined;
+  const specs = (specsResult.results ?? []).map(visualSpecPayload);
+  const assets = (assetsResult.results ?? []).map(visualAssetPayload);
+  const heroSpec = specs.find((spec) => spec.kind === "hero");
+  const sceneSpecs = specs.filter((spec) => spec.kind === "scene");
+  const heroAsset = assets.find((asset) => asset.kind === "hero" && asset.isActive && asset.isVisible);
+  const sceneAssets = assets.filter((asset) => asset.kind === "scene" && asset.isActive && asset.isVisible);
+  let provider: ImageGenerationProvider;
+  try {
+    provider = imageProvider(env);
+  } catch {
+    provider = imageProvider({ ...env, IMAGE_PROVIDER: "placeholder", IMAGE_API_KEY: undefined });
+  }
+  return {
+    profile: rawProfile ? {
+      visualStyle: rawProfile.visual_style,
+      palette: rawProfile.palette,
+      texture: rawProfile.texture,
+      lighting: rawProfile.lighting,
+      atmosphere: rawProfile.atmosphere,
+      compositionRule: rawProfile.composition_rule,
+      humanPresence: rawProfile.human_presence,
+      symbolicElements: rawProfile.symbolic_elements,
+      avoid: rawProfile.avoid,
+      id: String(profileRow?.id),
+      version: Number(profileRow?.version),
+      isLocked: boolValue(profileRow?.is_locked),
+      directorProvider: String(profileRow?.director_provider ?? "deepseek"),
+      directorModel: String(profileRow?.director_model ?? ""),
+      createdAt: String(profileRow?.created_at),
+      updatedAt: String(profileRow?.updated_at),
+    } : undefined,
+    heroSpec,
+    sceneSpecs,
+    assets,
+    heroAsset,
+    sceneAssets,
+    provider: {
+      configured: provider.configured,
+      provider: provider.provider,
+      model: provider.model,
+    },
+  };
 }
 
 function isAnalysisJobType(value: unknown) {
@@ -324,6 +504,7 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
     aiDemoAudio: legacyDemoTrack,
     standardAiAudio: standardTrack,
     controlSpec,
+    visuals: await getVisualBundle(env, workId, published),
     createdAt: work.created_at,
     updatedAt: work.updated_at,
     analysisError: analysisJob?.status === "failed" ? {
@@ -426,6 +607,9 @@ async function createWork(request: Request, env: Env) {
     }
     const savedAt = nextUpdatedAt(String(existing.updated_at));
     const sourceChanged = String(existing.source_text) !== fullText;
+    const visualSourceChanged = sourceChanged
+      || String(existing.title) !== title
+      || String(existing.author ?? "") !== author;
     if (sourceChanged) {
       const results = await env.DB.batch([
         env.DB.prepare(
@@ -464,6 +648,15 @@ async function createWork(request: Request, env: Env) {
               AND status IN ('queued', 'processing')
               AND EXISTS (SELECT 1 FROM works WHERE id = ? AND updated_at = ?)`,
         ).bind(savedAt, requestedWorkId, requestedWorkId, savedAt),
+        env.DB.prepare(
+          "UPDATE visual_assets SET is_visible = 0, is_active = 0 WHERE work_id = ?",
+        ).bind(requestedWorkId),
+        env.DB.prepare(
+          "UPDATE visual_specs SET is_active = 0 WHERE work_id = ?",
+        ).bind(requestedWorkId),
+        env.DB.prepare(
+          "UPDATE work_visual_profiles SET is_active = 0, updated_at = ? WHERE work_id = ?",
+        ).bind(savedAt, requestedWorkId),
       ]);
       if (expectedUpdatedAt && Number(results[0]?.meta.changes ?? 0) === 0) {
         return apiError(
@@ -473,7 +666,7 @@ async function createWork(request: Request, env: Env) {
         );
       }
     } else {
-      const updated = await env.DB.prepare(
+      const updateWork = env.DB.prepare(
         `UPDATE works SET title = ?, author = ?, updated_at = ?
           WHERE id = ?${expectedUpdatedAt ? " AND updated_at = ?" : ""}`,
       ).bind(
@@ -482,8 +675,16 @@ async function createWork(request: Request, env: Env) {
         savedAt,
         requestedWorkId,
         ...expectedUpdatedAt ? [expectedUpdatedAt] : [],
-      ).run();
-      if (expectedUpdatedAt && Number(updated.meta.changes ?? 0) === 0) {
+      );
+      const results = visualSourceChanged
+        ? await env.DB.batch([
+          updateWork,
+          env.DB.prepare("UPDATE visual_assets SET is_visible = 0, is_active = 0 WHERE work_id = ?").bind(requestedWorkId),
+          env.DB.prepare("UPDATE visual_specs SET is_active = 0 WHERE work_id = ?").bind(requestedWorkId),
+          env.DB.prepare("UPDATE work_visual_profiles SET is_active = 0, updated_at = ? WHERE work_id = ?").bind(savedAt, requestedWorkId),
+        ])
+        : [await updateWork.run()];
+      if (expectedUpdatedAt && Number(results[0]?.meta.changes ?? 0) === 0) {
         return apiError(
           409,
           "WORK_VERSION_CONFLICT",
@@ -542,6 +743,18 @@ async function deleteWork(request: Request, env: Env, workId: string) {
   const storageKeys = (assets.results ?? [])
     .map((asset) => String(asset.storage_key ?? "").trim())
     .filter(Boolean);
+  const visualKeysOutsideAssets = await env.DB.prepare(
+    `SELECT a.storage_key
+       FROM visual_assets va
+       JOIN assets a ON a.id = va.asset_id
+      WHERE va.work_id = ? AND a.work_id = ?`,
+  ).bind(workId, workId).all<Row>();
+  const exactStorageKeys = [...new Set([
+    ...storageKeys,
+    ...(visualKeysOutsideAssets.results ?? [])
+      .map((asset) => String(asset.storage_key ?? "").trim())
+      .filter(Boolean),
+  ])];
   const belongsToConfirmedVersion = `EXISTS (
     SELECT 1 FROM works WHERE id = ? AND updated_at = ?
   )`;
@@ -559,6 +772,15 @@ async function deleteWork(request: Request, env: Env, workId: string) {
       `DELETE FROM control_spec_versions WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
     ).bind(workId, workId, expectedUpdatedAt),
     env.DB.prepare(
+      `DELETE FROM visual_assets WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
+    ).bind(workId, workId, expectedUpdatedAt),
+    env.DB.prepare(
+      `DELETE FROM visual_specs WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
+    ).bind(workId, workId, expectedUpdatedAt),
+    env.DB.prepare(
+      `DELETE FROM work_visual_profiles WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
+    ).bind(workId, workId, expectedUpdatedAt),
+    env.DB.prepare(
       `DELETE FROM assets WHERE work_id = ? AND ${belongsToConfirmedVersion}`,
     ).bind(workId, workId, expectedUpdatedAt),
     env.DB.prepare(
@@ -574,13 +796,13 @@ async function deleteWork(request: Request, env: Env, workId: string) {
   }
 
   try {
-    for (let offset = 0; offset < storageKeys.length; offset += 1000) {
-      await env.AUDIO_BUCKET.delete(storageKeys.slice(offset, offset + 1000));
+    for (let offset = 0; offset < exactStorageKeys.length; offset += 1000) {
+      await env.AUDIO_BUCKET.delete(exactStorageKeys.slice(offset, offset + 1000));
     }
   } catch (error) {
     console.error("deleted work has orphaned R2 objects", {
       workId,
-      storageKeyCount: storageKeys.length,
+      storageKeyCount: exactStorageKeys.length,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -1585,9 +1807,437 @@ async function publishWork(request: Request, env: Env, workId: string, origin: s
   });
 }
 
+function visualDirectorModelFromResult(response: Record<string, unknown>) {
+  const metadata = response._meta;
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? String((metadata as Record<string, unknown>).model ?? "")
+    : "";
+}
+
+async function planWorkVisuals(env: Env, workId: string) {
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  const current = await getVisualBundle(env, workId);
+  const lockedProfile = current.profile?.isLocked ? {
+    visual_style: String(current.profile.visualStyle ?? ""),
+    palette: current.profile.palette as string[],
+    texture: String(current.profile.texture ?? ""),
+    lighting: String(current.profile.lighting ?? ""),
+    atmosphere: String(current.profile.atmosphere ?? ""),
+    composition_rule: String(current.profile.compositionRule ?? ""),
+    human_presence: String(current.profile.humanPresence ?? ""),
+    symbolic_elements: current.profile.symbolicElements as string[],
+    avoid: current.profile.avoid as string[],
+  } satisfies WorkVisualProfile : undefined;
+  const controlSpec = work.current_spec_version_id
+    ? parseJson<Record<string, unknown>>((await first<Row>(env.DB.prepare(
+      "SELECT spec_json FROM control_spec_versions WHERE id = ?",
+    ).bind(work.current_spec_version_id)))?.spec_json as string | null)
+    : undefined;
+  const sceneUnits = buildSceneUnits(String(work.source_text), controlSpec);
+  if (!sceneUnits.length) return apiError(422, "VISUAL_SCENES_REQUIRED", "作品正文无法划分视觉场景。");
+  let direction;
+  try {
+    direction = await requestVisualDirection({
+      title: String(work.title),
+      author: String(work.author ?? ""),
+      full_text: String(work.source_text),
+      genre: String(work.genre),
+      control_spec_summary: summarizeControlSpec(controlSpec),
+      scene_units: sceneUnits,
+      locked_profile: lockedProfile,
+    }, {
+      serviceUrl: env.ANALYSIS_SERVICE_URL,
+      serviceToken: env.ANALYSIS_SERVICE_TOKEN,
+    });
+  } catch (error) {
+    const status = error instanceof VisualDirectorRequestError ? error.status ?? 502 : 502;
+    return apiError(
+      status,
+      "VISUAL_DIRECTOR_FAILED",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const createdAt = now();
+  const latestProfile = await first<Row>(env.DB.prepare(
+    "SELECT COALESCE(MAX(version), 0) AS version FROM work_visual_profiles WHERE work_id = ?",
+  ).bind(workId));
+  const profileVersion = Number(latestProfile?.version ?? 0) + 1;
+  const profileId = id("visual_profile");
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare("UPDATE work_visual_profiles SET is_active = 0 WHERE work_id = ?").bind(workId),
+    env.DB.prepare("UPDATE visual_specs SET is_active = 0 WHERE work_id = ?").bind(workId),
+    env.DB.prepare(
+      `INSERT INTO work_visual_profiles
+        (id, work_id, version, profile_json, director_provider, director_model,
+         is_locked, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'deepseek', ?, ?, 1, ?, ?)`,
+    ).bind(
+      profileId,
+      workId,
+      profileVersion,
+      JSON.stringify(direction.work_visual_profile),
+      visualDirectorModelFromResult(direction as unknown as Record<string, unknown>),
+      lockedProfile ? 1 : 0,
+      createdAt,
+      createdAt,
+    ),
+  ];
+  const specs: Array<{ kind: VisualAssetKind; sceneId?: string; spec: HeroVisualSpec | SceneVisualSpec }> = [
+    { kind: "hero", spec: direction.hero_visual_spec },
+    ...direction.scene_visual_specs.map((spec) => ({ kind: "scene" as const, sceneId: spec.scene_id, spec })),
+  ];
+  for (const entry of specs) {
+    const latest = await first<Row>(env.DB.prepare(
+      `SELECT COALESCE(MAX(version), 0) AS version FROM visual_specs
+        WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?`,
+    ).bind(workId, entry.kind, entry.sceneId ?? ""));
+    const specId = id("visual_spec");
+    const sourceSentenceIds = entry.kind === "scene"
+      ? (entry.spec as SceneVisualSpec).source_sentence_ids
+      : [];
+    const sourceText = entry.kind === "scene" ? (entry.spec as SceneVisualSpec).source_text : null;
+    statements.push(env.DB.prepare(
+      `INSERT INTO visual_specs
+        (id, work_id, profile_id, kind, scene_id, source_sentence_ids_json,
+         source_text, spec_json, version, state, is_active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', 1, ?)`,
+    ).bind(
+      specId,
+      workId,
+      profileId,
+      entry.kind,
+      entry.sceneId ?? null,
+      JSON.stringify(sourceSentenceIds),
+      sourceText,
+      JSON.stringify(entry.spec),
+      Number(latest?.version ?? 0) + 1,
+      createdAt,
+    ));
+  }
+  statements.push(env.DB.prepare("UPDATE works SET updated_at = ? WHERE id = ?").bind(
+    nextUpdatedAt(String(work.updated_at)),
+    workId,
+  ));
+  await env.DB.batch(statements);
+  return json({ visuals: await getVisualBundle(env, workId) });
+}
+
+async function patchWorkVisuals(request: Request, env: Env, workId: string) {
+  const work = await first<Row>(env.DB.prepare("SELECT id, updated_at FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return apiError(400, "INVALID_JSON", "作品视觉更新必须是有效 JSON。");
+  }
+  const action = String(body.action ?? "");
+  if (action === "lock_style" || action === "unlock_style") {
+    const result = await env.DB.prepare(
+      "UPDATE work_visual_profiles SET is_locked = ?, updated_at = ? WHERE work_id = ? AND is_active = 1",
+    ).bind(action === "lock_style" ? 1 : 0, now(), workId).run();
+    if (!Number(result.meta.changes ?? 0)) {
+      return apiError(409, "VISUAL_PROFILE_REQUIRED", "请先生成作品视觉方案。");
+    }
+    return json({ visuals: await getVisualBundle(env, workId) });
+  }
+  if (action !== "update_spec") return apiError(400, "INVALID_VISUAL_ACTION", "不支持的作品视觉操作。");
+  const kind = String(body.kind ?? "") as VisualAssetKind;
+  const sceneId = String(body.sceneId ?? body.scene_id ?? "").trim();
+  if (!(["hero", "scene"] as string[]).includes(kind) || (kind === "scene" && !sceneId)) {
+    return apiError(400, "INVALID_VISUAL_SPEC_TARGET", "请指定 Hero 或具体 Scene。");
+  }
+  const current = await first<Row>(env.DB.prepare(
+    `SELECT * FROM visual_specs WHERE work_id = ? AND kind = ?
+      AND COALESCE(scene_id, '') = ? AND is_active = 1 ORDER BY version DESC LIMIT 1`,
+  ).bind(workId, kind, sceneId));
+  if (!current) return apiError(404, "VISUAL_SPEC_NOT_FOUND", "找不到当前视觉方案。");
+  const spec = parseJson<Record<string, unknown>>(current.spec_json as string | null) ?? {};
+  const imagePrompt = typeof body.imagePrompt === "string" ? body.imagePrompt.trim() : String(spec.image_prompt ?? "");
+  const negativePrompt = typeof body.negativePrompt === "string"
+    ? body.negativePrompt.trim()
+    : String(spec.negative_prompt ?? "");
+  if (!imagePrompt) return apiError(400, "IMAGE_PROMPT_REQUIRED", "图片 Prompt 不能为空。");
+  const createdAt = now();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE visual_specs SET is_active = 0 WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?")
+      .bind(workId, kind, sceneId),
+    env.DB.prepare(
+      `INSERT INTO visual_specs
+        (id, work_id, profile_id, kind, scene_id, source_sentence_ids_json, source_text,
+         spec_json, version, state, is_active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', 1, ?)`,
+    ).bind(
+      id("visual_spec"), workId, current.profile_id, kind, sceneId || null,
+      current.source_sentence_ids_json, current.source_text,
+      JSON.stringify({ ...spec, image_prompt: imagePrompt, negative_prompt: negativePrompt }),
+      Number(current.version) + 1, createdAt,
+    ),
+  ]);
+  return json({ visuals: await getVisualBundle(env, workId) });
+}
+
+async function storeGeneratedVisual(
+  env: Env,
+  workId: string,
+  specRow: Row,
+  generated: GeneratedImage,
+  version: number,
+  textValidation?: HeroTextValidationResult,
+) {
+  const kind = String(specRow.kind) as VisualAssetKind;
+  const sceneId = specRow.scene_id == null ? undefined : String(specRow.scene_id);
+  const spec = parseJson<Record<string, unknown>>(specRow.spec_json as string | null) ?? {};
+  const visualId = id("visual_asset");
+  const assetId = id("asset");
+  const extension = generated.mimeType === "image/svg+xml" ? "svg" : generated.mimeType.includes("jpeg") ? "jpg" : "png";
+  const storageKey = `visual/${workId}/${kind}/${sceneId ?? "hero"}/v${version}-${visualId}.${extension}`;
+  const checksum = await sha256Hex(generated.bytes);
+  const createdAt = now();
+  const isHero = kind === "hero";
+  const heroMatched = isHero && textValidation?.status === "matched";
+  const needsReview = isHero && !generated.isPlaceholder && !heroMatched;
+  const ready = !generated.isPlaceholder && !needsReview;
+  const generationStatus = generated.isPlaceholder ? "pending_generation" : needsReview ? "needs_review" : "ready";
+  const textValidationStatus = isHero
+    ? generated.isPlaceholder ? "not_required" : textValidation?.status ?? "pending"
+    : null;
+  await env.AUDIO_BUCKET.put(storageKey, generated.bytes, {
+    httpMetadata: { contentType: generated.mimeType },
+    customMetadata: { workId, assetId, kind: `visual_${kind}`, sceneId: sceneId ?? "" },
+  });
+  try {
+    const statements: D1PreparedStatement[] = [
+      env.DB.prepare(
+        `INSERT INTO assets
+          (id, work_id, kind, storage_key, filename, mime_type, byte_size, checksum,
+           provider, metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        assetId, workId, `visual_${kind}`, storageKey, `${kind}-${sceneId ?? "hero"}-v${version}.${extension}`,
+        generated.mimeType, generated.bytes.byteLength, checksum, generated.provider,
+        JSON.stringify({ model: generated.model, scene_id: sceneId, version }), createdAt,
+      ),
+      env.DB.prepare(
+        `INSERT INTO visual_assets
+          (id, work_id, spec_id, asset_id, kind, scene_id, provider, model, prompt,
+           negative_prompt, width, height, seed, generation_status, text_validation_status, text_validation_json,
+           is_visible, is_active, version, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        visualId, workId, specRow.id, assetId, kind, sceneId ?? null, generated.provider,
+        generated.model, String(spec.image_prompt ?? ""), String(spec.negative_prompt ?? "") || null,
+        kind === "hero" ? 1500 : 768, kind === "hero" ? 420 : 576, generated.seed ?? null,
+        generationStatus, textValidationStatus, textValidation ? JSON.stringify(textValidation) : null,
+        ready ? 1 : 0, ready ? 1 : 0, version, createdAt,
+      ),
+    ];
+    if (ready) {
+      statements.unshift(env.DB.prepare(
+        `UPDATE visual_assets SET is_active = 0
+          WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?`,
+      ).bind(workId, kind, sceneId ?? ""));
+    }
+    await env.DB.batch(statements);
+  } catch (error) {
+    await env.AUDIO_BUCKET.delete(storageKey).catch(() => undefined);
+    throw error;
+  }
+  return visualId;
+}
+
+async function generateOneVisual(env: Env, work: Row, specRow: Row) {
+  const provider = imageProvider(env);
+  const spec = parseJson<Record<string, unknown>>(specRow.spec_json as string | null) ?? {};
+  const kind = String(specRow.kind) as VisualAssetKind;
+  const sceneId = specRow.scene_id == null ? undefined : String(specRow.scene_id);
+  const latest = await first<Row>(env.DB.prepare(
+    `SELECT COALESCE(MAX(version), 0) AS version FROM visual_assets
+      WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?`,
+  ).bind(work.id, kind, sceneId ?? ""));
+  const version = Number(latest?.version ?? 0) + 1;
+  try {
+    let generated: GeneratedImage | undefined;
+    let textValidation: HeroTextValidationResult | undefined;
+    const attempts = kind === "hero" && env.IMAGE_OCR_MODEL?.trim() && provider.configured ? 3 : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      generated = await provider.generate({
+        kind,
+        prompt: String(spec.image_prompt ?? ""),
+        negativePrompt: String(spec.negative_prompt ?? "") || undefined,
+        width: kind === "hero" ? 1500 : 768,
+        height: kind === "hero" ? 420 : 576,
+        title: String(work.title),
+        author: String(work.author ?? ""),
+        sceneId,
+      });
+      if (kind !== "hero" || generated.isPlaceholder) break;
+      textValidation = await validateHeroText(
+        generated.bytes,
+        generated.mimeType,
+        String(work.title),
+        String(work.author ?? ""),
+        { model: env.IMAGE_OCR_MODEL, apiKey: env.IMAGE_API_KEY, baseUrl: env.IMAGE_BASE_URL },
+      );
+      if (textValidation.status === "matched") break;
+    }
+    if (!generated) throw new ImageGenerationError("图片生成服务没有返回图片。");
+    return await storeGeneratedVisual(env, String(work.id), specRow, generated, version, textValidation);
+  } catch (error) {
+    const visualId = id("visual_asset");
+    await env.DB.prepare(
+      `INSERT INTO visual_assets
+        (id, work_id, spec_id, kind, scene_id, provider, model, prompt, negative_prompt,
+         width, height, generation_status, error_message, is_visible, is_active, version, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, 0, 0, ?, ?)`,
+    ).bind(
+      visualId, work.id, specRow.id, kind, sceneId ?? null,
+      provider.provider, provider.model, String(spec.image_prompt ?? ""),
+      String(spec.negative_prompt ?? "") || null, kind === "hero" ? 1500 : 768,
+      kind === "hero" ? 420 : 576, error instanceof Error ? error.message : String(error), version, now(),
+    ).run();
+    throw error;
+  }
+}
+
+async function generateWorkVisuals(request: Request, env: Env, workId: string) {
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  let body: Record<string, unknown> = {};
+  try { body = await request.json() as Record<string, unknown>; } catch { /* optional body */ }
+  const type = String(body.type ?? "all");
+  const sceneId = String(body.sceneId ?? body.scene_id ?? "").trim();
+  if (!['all', 'hero', 'scene'].includes(type) || (type === "scene" && !sceneId)) {
+    return apiError(400, "INVALID_VISUAL_TARGET", "请指定 all、hero 或具体 scene。");
+  }
+  const result = await env.DB.prepare(
+    `SELECT * FROM visual_specs WHERE work_id = ? AND is_active = 1
+      AND (? = 'all' OR kind = ?)
+      AND (? != 'scene' OR scene_id = ?)
+      ORDER BY CASE WHEN kind = 'hero' THEN 0 ELSE 1 END, scene_id`,
+  ).bind(workId, type, type, type, sceneId).all<Row>();
+  const specs = result.results ?? [];
+  if (!specs.length) return apiError(409, "VISUAL_PLAN_REQUIRED", "请先生成作品视觉方案。");
+  const generated: string[] = [];
+  const failures: Array<{ specId: string; message: string }> = [];
+  for (const spec of specs) {
+    try {
+      generated.push(await generateOneVisual(env, work, spec));
+    } catch (error) {
+      failures.push({ specId: String(spec.id), message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return json({
+    ok: failures.length === 0,
+    generatedAssetIds: generated,
+    failures,
+    visuals: await getVisualBundle(env, workId),
+  }, generated.length || !failures.length ? 200 : 502);
+}
+
+async function uploadVisualReplacement(request: Request, env: Env, workId: string) {
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  let form: FormData;
+  try { form = await request.formData(); } catch { return apiError(400, "INVALID_MULTIPART", "图片必须使用文件上传表单。"); }
+  const file = form.get("file");
+  const kind = String(form.get("kind") ?? "") as VisualAssetKind;
+  const sceneId = String(form.get("scene_id") ?? form.get("sceneId") ?? "").trim();
+  if (!(file instanceof File) || file.size <= 0) return apiError(400, "VISUAL_FILE_REQUIRED", "请选择图片文件。");
+  if (!file.type.startsWith("image/")) return apiError(415, "UNSUPPORTED_IMAGE_TYPE", "仅支持图片文件。");
+  if (file.size > 20 * 1024 * 1024) return apiError(413, "VISUAL_FILE_TOO_LARGE", "图片不能超过 20 MB。");
+  if (!['hero', 'scene'].includes(kind) || (kind === 'scene' && !sceneId)) {
+    return apiError(400, "INVALID_VISUAL_TARGET", "请指定 Hero 或具体 Scene。");
+  }
+  const spec = await first<Row>(env.DB.prepare(
+    `SELECT * FROM visual_specs WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?
+      AND is_active = 1 ORDER BY version DESC LIMIT 1`,
+  ).bind(workId, kind, sceneId));
+  if (!spec) return apiError(409, "VISUAL_PLAN_REQUIRED", "请先生成对应视觉方案。");
+  const latest = await first<Row>(env.DB.prepare(
+    `SELECT COALESCE(MAX(version), 0) AS version FROM visual_assets
+      WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?`,
+  ).bind(workId, kind, sceneId));
+  const generated: GeneratedImage = {
+    bytes: await file.arrayBuffer(), mimeType: file.type, provider: "upload", model: "human-upload",
+    isPlaceholder: false,
+  };
+  const visualId = await storeGeneratedVisual(env, workId, spec, generated, Number(latest?.version ?? 0) + 1, {
+    status: "matched",
+    message: "human uploaded and approved",
+  });
+  // Human upload is explicitly trusted as reviewed. Activate it immediately.
+  await env.DB.batch([
+    env.DB.prepare("UPDATE visual_assets SET is_active = 0 WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?").bind(workId, kind, sceneId),
+    env.DB.prepare(
+      `UPDATE visual_assets SET generation_status = 'ready', text_validation_status = ?,
+       is_visible = 1, is_active = 1 WHERE id = ?`,
+    ).bind(kind === "hero" ? "matched" : null, visualId),
+  ]);
+  return json({ visuals: await getVisualBundle(env, workId) }, 201);
+}
+
+async function patchVisualAsset(request: Request, env: Env, visualId: string) {
+  const asset = await first<Row>(env.DB.prepare("SELECT * FROM visual_assets WHERE id = ?").bind(visualId));
+  if (!asset) return apiError(404, "VISUAL_ASSET_NOT_FOUND", "找不到视觉资产。");
+  let body: Record<string, unknown>;
+  try { body = await request.json() as Record<string, unknown>; } catch { return apiError(400, "INVALID_JSON", "视觉资产操作必须是有效 JSON。"); }
+  const action = String(body.action ?? "");
+  if (action === "hide" || action === "show") {
+    if (action === "show" && String(asset.generation_status) !== "ready") {
+      return apiError(409, "VISUAL_ASSET_NOT_REVIEWED", "该视觉资产尚未通过审核，不能展示。");
+    }
+    await env.DB.prepare("UPDATE visual_assets SET is_visible = ? WHERE id = ?").bind(action === "show" ? 1 : 0, visualId).run();
+  } else if (action === "activate") {
+    const approveHero = asset.kind === "hero" && String(asset.generation_status) === "needs_review";
+    if (asset.asset_id == null) return apiError(409, "VISUAL_ASSET_FILE_REQUIRED", "失败记录没有可启用的图片。");
+    if (String(asset.generation_status) !== "ready" && !approveHero) {
+      return apiError(409, "VISUAL_ASSET_NOT_READY", "该视觉资产尚未生成完成，不能设为使用版本。");
+    }
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE visual_assets SET is_active = 0 WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?",
+      ).bind(asset.work_id, asset.kind, asset.scene_id ?? ""),
+      env.DB.prepare(
+        `UPDATE visual_assets SET is_active = 1, is_visible = 1,
+          generation_status = ?, text_validation_status = ? WHERE id = ?`,
+      ).bind(
+        approveHero ? "ready" : asset.generation_status,
+        approveHero ? "matched" : asset.text_validation_status,
+        visualId,
+      ),
+    ]);
+  } else {
+    return apiError(400, "INVALID_VISUAL_ACTION", "不支持的视觉资产操作。");
+  }
+  return json({ visuals: await getVisualBundle(env, String(asset.work_id)) });
+}
+
+async function regenerateVisualAsset(request: Request, env: Env, visualId: string) {
+  const asset = await first<Row>(env.DB.prepare("SELECT * FROM visual_assets WHERE id = ?").bind(visualId));
+  if (!asset) return apiError(404, "VISUAL_ASSET_NOT_FOUND", "找不到视觉资产。");
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(asset.work_id));
+  const spec = await first<Row>(env.DB.prepare(
+    `SELECT * FROM visual_specs
+      WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ? AND is_active = 1
+      ORDER BY version DESC LIMIT 1`,
+  ).bind(asset.work_id, asset.kind, asset.scene_id ?? ""));
+  if (!work || !spec) return apiError(409, "VISUAL_SPEC_REQUIRED", "该图片缺少可重生成的视觉方案。");
+  try {
+    await generateOneVisual(env, work, spec);
+  } catch (error) {
+    const status = error instanceof ImageGenerationError ? error.status : 502;
+    return apiError(status, "IMAGE_GENERATION_FAILED", error instanceof Error ? error.message : String(error), {
+      visuals: await getVisualBundle(env, String(asset.work_id)),
+    });
+  }
+  return json({ visuals: await getVisualBundle(env, String(asset.work_id)) });
+}
+
 async function serveAsset(request: Request, env: Env, assetId: string) {
   const asset = await first<Row>(env.DB.prepare("SELECT * FROM assets WHERE id = ?").bind(assetId));
-  if (!asset) return apiError(404, "ASSET_NOT_FOUND", "找不到音频素材。");
+  if (!asset) return apiError(404, "ASSET_NOT_FOUND", "找不到素材。");
   const total = Number(asset.byte_size);
   const rangeHeader = request.headers.get("range");
   let object: R2ObjectBody | null;
@@ -1611,7 +2261,7 @@ async function serveAsset(request: Request, env: Env, assetId: string) {
     object = await env.AUDIO_BUCKET.get(String(asset.storage_key));
     headers.set("content-length", String(total));
   }
-  if (!object) return apiError(404, "ASSET_OBJECT_NOT_FOUND", "音频记录存在，但 R2 文件缺失。");
+  if (!object) return apiError(404, "ASSET_OBJECT_NOT_FOUND", "素材记录存在，但 R2 文件缺失。");
   return new Response(object.body, { status, headers });
 }
 
@@ -1619,6 +2269,14 @@ async function api(request: Request, env: Env): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return null;
   if (url.pathname === "/api/health" && request.method === "GET") {
+    let configuredImageProvider: ImageGenerationProvider;
+    let imageProviderError: string | undefined;
+    try {
+      configuredImageProvider = imageProvider(env);
+    } catch (error) {
+      configuredImageProvider = imageProvider({ ...env, IMAGE_PROVIDER: "placeholder", IMAGE_API_KEY: undefined });
+      imageProviderError = error instanceof Error ? error.message : String(error);
+    }
     return json({
       ok: true,
       storage: { d1: Boolean(env.DB), r2: Boolean(env.AUDIO_BUCKET) },
@@ -1632,6 +2290,16 @@ async function api(request: Request, env: Env): Promise<Response | null> {
         configured: Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID),
         model_id: VOICE_CHANGER_MODEL_ID,
         voice_id_configured: Boolean(env.ELEVENLABS_VOICE_ID),
+      },
+      visual_director: {
+        configured: Boolean(env.ANALYSIS_SERVICE_URL && env.ANALYSIS_SERVICE_TOKEN),
+        endpoint: "/v1/visual-director",
+      },
+      image_generation: {
+        configured: configuredImageProvider.configured,
+        provider: configuredImageProvider.provider,
+        model: configuredImageProvider.model,
+        error: imageProviderError,
       },
     });
   }
@@ -1657,6 +2325,24 @@ async function api(request: Request, env: Env): Promise<Response | null> {
   if (callbackMatch && request.method === "POST") return analysisCallback(request, env, callbackMatch[1]);
   const assetMatch = url.pathname.match(/^\/api\/assets\/([^/]+)$/);
   if (assetMatch && request.method === "GET") return serveAsset(request, env, assetMatch[1]);
+  const visualBundleMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visuals$/);
+  if (visualBundleMatch && request.method === "GET") {
+    const work = await first<Row>(env.DB.prepare("SELECT id FROM works WHERE id = ?").bind(visualBundleMatch[1]));
+    return work
+      ? json({ visuals: await getVisualBundle(env, visualBundleMatch[1], url.searchParams.get("published") === "1") })
+      : apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  }
+  if (visualBundleMatch && request.method === "PATCH") return patchWorkVisuals(request, env, visualBundleMatch[1]);
+  const visualPlanMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visuals\/plan$/);
+  if (visualPlanMatch && request.method === "POST") return planWorkVisuals(env, visualPlanMatch[1]);
+  const visualGenerateMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visuals\/generate$/);
+  if (visualGenerateMatch && request.method === "POST") return generateWorkVisuals(request, env, visualGenerateMatch[1]);
+  const visualUploadMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visual-assets\/upload$/);
+  if (visualUploadMatch && request.method === "POST") return uploadVisualReplacement(request, env, visualUploadMatch[1]);
+  const visualAssetMatch = url.pathname.match(/^\/api\/visual-assets\/([^/]+)$/);
+  if (visualAssetMatch && request.method === "PATCH") return patchVisualAsset(request, env, visualAssetMatch[1]);
+  const visualRegenerateMatch = url.pathname.match(/^\/api\/visual-assets\/([^/]+)\/regenerate$/);
+  if (visualRegenerateMatch && request.method === "POST") return regenerateVisualAsset(request, env, visualRegenerateMatch[1]);
   const workMatch = url.pathname.match(/^\/api\/works\/([^/]+)$/);
   if (workMatch && request.method === "GET") {
     const work = await getWorkPayload(env, workMatch[1], url.searchParams.get("published") === "1");

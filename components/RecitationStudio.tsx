@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -24,6 +25,12 @@ import {
   type TeachingProsodyPoint,
 } from "@/lib/prosody-visual";
 import {
+  graphUnitVisualWeight,
+  splitGraphUnitsIntoSemanticLines,
+} from "@/lib/semantic-scene-lines";
+import { ViewerScaleWrapper } from "@/components/ViewerScaleWrapper";
+import { WorkVisualPanel } from "@/components/WorkVisualPanel";
+import {
   ENDING_LABELS,
   PROSODY_LABELS,
   RHYTHM_LABELS,
@@ -38,6 +45,7 @@ import {
   type Rhythm,
   type TimedToken,
 } from "@/lib/recitation-schema";
+import type { VisualAsset } from "@/lib/visual-assets";
 
 type ProductMode = "studio" | "viewer";
 type WorkflowStep = 1 | 2 | 3;
@@ -397,10 +405,12 @@ function IndexedGraphTrack({
   sentence,
   activeTokenId,
   editing = false,
+  semanticLines = false,
 }: {
   sentence: RecitationSentence;
   activeTokenId?: string;
   editing?: boolean;
+  semanticLines?: boolean;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const tokenRefs = useRef(new Map<number, HTMLSpanElement>());
@@ -420,6 +430,28 @@ function IndexedGraphTrack({
     ),
     [sentence.macroProsodyPath, tokenUnits],
   );
+  const readingLines = useMemo(() => (
+    semanticLines
+      ? splitGraphUnitsIntoSemanticLines(tokenUnits, {
+          singleLineCapacity: 20.5,
+          preferredBoundaryIndexes: sentence.prosody.map((event) => event.activeSpan.end),
+        })
+      : [tokenUnits]
+  ), [semanticLines, sentence.prosody, tokenUnits]);
+  const readingLineStyle = useCallback((line: typeof tokenUnits) => {
+    if (!semanticLines) return undefined;
+    const visualWeight = Math.max(1, line.reduce(
+      (sum, unit) => sum + graphUnitVisualWeight(unit),
+      0,
+    ));
+    const tokenWidth = Math.min(44, Math.max(18, Math.floor(1030 / visualWeight)));
+    const fontSize = Math.min(40, Math.max(21, Math.round(tokenWidth * 0.92)));
+    return {
+      "--token-char-width": `${tokenWidth}px`,
+      "--manuscript-font-size": `${fontSize}px`,
+      "--token-unit-gap": `${tokenWidth < 30 ? 1 : tokenWidth < 38 ? 2 : 4}px`,
+    } as CSSProperties;
+  }, [semanticLines]);
 
   const measure = useCallback(() => {
     const track = trackRef.current;
@@ -514,8 +546,19 @@ function IndexedGraphTrack({
     <div className="graph-track-layout">
       <div className="graph-track-viewport">
         <div className="attached-token-track">
-          <div className="token-unit-flow" ref={trackRef} aria-label={sentence.text}>
-            {tokenUnits.map((unit) => {
+          <div
+            className={`token-unit-flow ${semanticLines ? "semantic-token-flow" : ""}`}
+            ref={trackRef}
+            aria-label={sentence.text}
+          >
+            {readingLines.map((line, lineIndex) => (
+              <div
+                className="semantic-token-line"
+                data-semantic-line={lineIndex + 1}
+                key={`${sentence.id}-line-${lineIndex}`}
+                style={readingLineStyle(line)}
+              >
+                {line.map((unit) => {
               const unitIsPlaying = activeTokenIndex !== undefined
                 && unit.sourceTokenIndexes.includes(activeTokenIndex);
               return (
@@ -611,7 +654,9 @@ function IndexedGraphTrack({
                   />
                 </span>
               );
-            })}
+                })}
+              </div>
+            ))}
             <div className="wrapped-curve-layer">
               {curveRows.map((row) => (
                 <div
@@ -646,6 +691,8 @@ function GraphSentence({
   editing,
   onSelect,
   onPlay,
+  viewerSceneImageUrl,
+  viewerSceneAlt,
 }: {
   sentence: RecitationSentence;
   selected?: boolean;
@@ -654,7 +701,10 @@ function GraphSentence({
   editing?: boolean;
   onSelect?: () => void;
   onPlay?: () => void;
+  viewerSceneImageUrl?: string;
+  viewerSceneAlt?: string;
 }) {
+  const isViewerScene = viewerSceneAlt !== undefined;
   return (
     <div
       className={`graph-sentence ${selected ? "selected" : ""} ${active ? "active" : ""}`}
@@ -669,9 +719,24 @@ function GraphSentence({
       tabIndex={onSelect ? 0 : undefined}
       aria-label={onSelect ? `选择第 ${sentence.order} 句：${sentence.text}` : undefined}
     >
-      <div className="sentence-rail">
-        <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
-        <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
+      <div className={`sentence-rail ${isViewerScene ? "scene-visual-rail" : ""}`}>
+        {isViewerScene ? (
+          <div className={`scene-visual-frame ${active ? "active" : ""}`}>
+            {viewerSceneImageUrl ? (
+              // Generated scene assets are same-origin persisted R2 objects.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={viewerSceneImageUrl} alt={viewerSceneAlt} loading="lazy" />
+            ) : (
+              <div className="scene-visual-fallback" role="img" aria-label={`${viewerSceneAlt}，意境图待生成`}>
+                <span aria-hidden="true">{String(sentence.order).padStart(2, "0")}</span>
+              </div>
+            )}
+          </div>
+        ) : null}
+        <div className={isViewerScene ? "scene-visual-meta" : undefined}>
+          <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
+          <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
+        </div>
         {onPlay ? (
           <span data-export-exclude="true">
             <button
@@ -695,6 +760,7 @@ function GraphSentence({
           sentence={sentence}
           activeTokenId={activeTokenId}
           editing={Boolean(editing)}
+          semanticLines={isViewerScene}
         />
       </div>
     </div>
@@ -1569,6 +1635,11 @@ function EditorStage({
           </div>
         </div>
       </div>
+      <WorkVisualPanel
+        workId={work.id}
+        title={work.title}
+        author={work.author}
+      />
       <SentenceEditDrawer
         key={editingSentence?.id ?? "closed"}
         sentence={editingSentence}
@@ -2067,17 +2138,36 @@ function ViewerView({
     );
   }
   const active = activeSentenceAt(spec.sentences, standardAudio.timeline, currentMs);
+  const visuals = work.visuals;
+  const heroAsset = visuals?.heroAsset?.url ? visuals.heroAsset : undefined;
+  const sceneSpecs = visuals?.sceneSpecs ?? [];
+  const sceneAssets = visuals?.sceneAssets ?? [];
+  const sceneAssetForSentence = (sentenceId: string): VisualAsset | undefined => sceneAssets.find((asset) => {
+    if (!asset.url || asset.status && asset.status !== "ready") return false;
+    if (asset.isVisible === false || asset.isActive === false) return false;
+    const sceneSpec = sceneSpecs.find((candidate) => candidate.sceneId === asset.sceneId);
+    return asset.sceneId === sentenceId || sceneSpec?.sourceSentenceIds.includes(sentenceId);
+  });
 
   return (
-    <div className="viewer-shell" ref={exportTargetRef}>
-      <section className="viewer-hero">
-        <div className="viewer-hero-art" aria-hidden="true" />
+    <ViewerScaleWrapper artboardRef={exportTargetRef}>
+    <div className="viewer-shell">
+      <section className={`viewer-hero ${heroAsset ? "has-generated-hero" : "uses-fallback-hero"}`}>
+        {heroAsset ? (
+          // Generated Hero assets are reviewed, persisted and served from the same site.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="viewer-hero-image"
+            src={heroAsset.url}
+            alt={`${work.title}${work.author ? `，${work.author}` : ""}，朗诵情感图谱主视觉`}
+          />
+        ) : <div className="viewer-hero-art" aria-hidden="true" />}
         <div className="viewer-hero-inner">
           <div className="viewer-breadcrumb">
             <span>作品库</span><b>›</b><strong>{work.title}</strong>
           </div>
-          <div className="viewer-title-row">
-            <div className="viewer-title-block">
+          <div className={`viewer-title-row ${heroAsset ? "generated-hero-title-row" : ""}`}>
+            <div className={heroAsset ? "visually-hidden" : "viewer-title-block"}>
               <p className="eyebrow">朗诵情感图谱</p>
               <h1>{work.title}</h1>
               {work.author ? <p className="viewer-author">{work.author}</p> : null}
@@ -2123,6 +2213,7 @@ function ViewerView({
         <div className="viewer-graph-list">
           {spec.sentences.map((sentence) => {
             const isActive = active?.id === sentence.id && currentMs > 0;
+            const sceneAsset = sceneAssetForSentence(sentence.id);
             return (
               <div className="viewer-sentence-wrap" key={sentence.id}>
                 <GraphSentence
@@ -2131,6 +2222,8 @@ function ViewerView({
                   activeTokenId={isActive ? activeTokenId : undefined}
                   onSelect={() => onSeekSentence(sentence)}
                   onPlay={() => onPlaySentence(sentence)}
+                  viewerSceneImageUrl={sceneAsset?.url}
+                  viewerSceneAlt={`${sentence.text}的意境图`}
                 />
               </div>
             );
@@ -2146,6 +2239,7 @@ function ViewerView({
         </div>
       </section>
     </div>
+    </ViewerScaleWrapper>
   );
 }
 
@@ -2886,6 +2980,9 @@ export function RecitationStudio() {
         style: {
           minHeight: "0",
           paddingBottom: "28px",
+          transform: "none",
+          transformOrigin: "top left",
+          width: "1600px",
         },
       });
       if (!blob) throw new Error("浏览器未能生成图片文件。");
@@ -2906,6 +3003,25 @@ export function RecitationStudio() {
       showToast("图片导出失败，请刷新页面后重试");
     } finally {
       setExportingImage(false);
+    }
+  };
+
+  const shareViewer = async () => {
+    const shareData = {
+      title: `${work.title} · 朗诵情感图谱`,
+      text: `${work.title}${work.author ? ` · ${work.author}` : ""}的可播放朗诵情感图谱`,
+      url: window.location.href,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        return;
+      }
+      await navigator.clipboard.writeText(shareData.url);
+      showToast("观看链接已复制");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      showToast("暂时无法分享，请复制浏览器地址");
     }
   };
 
@@ -3036,15 +3152,22 @@ export function RecitationStudio() {
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <audio ref={audioRef} src={activeTrack?.url} preload="metadata" />
       <header className="app-header">
-        <button
-          type="button"
-          className="brand"
-          onClick={() => { setMode("studio"); setAudioSource("reference"); setWorkflowStep(1); }}
-          aria-label="声图首页"
-        >
-          <span className="brand-mark">声</span>
-          <span className="brand-copy"><strong>声图</strong><small>朗诵情感图谱</small></span>
-        </button>
+        {mode === "viewer" ? (
+          <Link className="brand" href="/" aria-label="返回声图作品库">
+            <span className="brand-mark">声</span>
+            <span className="brand-copy"><strong>声图</strong><small>朗诵情感图谱</small></span>
+          </Link>
+        ) : (
+          <button
+            type="button"
+            className="brand"
+            onClick={() => { setMode("studio"); setAudioSource("reference"); setWorkflowStep(1); }}
+            aria-label="声图首页"
+          >
+            <span className="brand-mark">声</span>
+            <span className="brand-copy"><strong>声图</strong><small>朗诵情感图谱</small></span>
+          </button>
+        )}
 
         <nav className="mode-switch" aria-label="产品端切换">
           <button
@@ -3068,6 +3191,13 @@ export function RecitationStudio() {
           <span>{work.status === "published" ? "已发布" : "正式创作 · 单人版"}</span>
           <button type="button" className="avatar-button" aria-label="创作者账户">创</button>
         </div>
+
+        {mode === "viewer" ? (
+          <nav className="viewer-header-actions" aria-label="观看页操作">
+            <Link href="/">返回作品库</Link>
+            <button type="button" onClick={() => void shareViewer()}>分享</button>
+          </nav>
+        ) : null}
       </header>
 
       {mode === "studio" ? (
