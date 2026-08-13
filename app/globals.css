@@ -270,6 +270,15 @@ p {
   border: 1px solid rgba(125, 99, 70, 0.13);
   border-radius: 14px;
   background: rgba(255, 253, 248, 0.66);
+  color: var(--ink);
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.work-summary:hover {
+  border-color: rgba(160, 61, 42, 0.28);
+  background: rgba(255, 253, 248, 0.92);
+  transform: translateY(-1px);
 }
 
 .work-monogram {
@@ -306,10 +315,11 @@ p {
   font-size: 14px;
 }
 
-.work-summary button {
-  background: transparent;
+.work-library-chevron {
   color: var(--ink-faint);
-  letter-spacing: 2px;
+  font-size: 25px;
+  line-height: 1;
+  text-align: center;
 }
 
 .workflow-rail {
@@ -443,17 +453,64 @@ p {
 
 .sidebar-footer {
   display: flex;
-  justify-content: space-between;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 9px;
   margin-top: auto;
-  padding: 15px 22px;
+  padding: 14px 16px 16px;
   border-top: 1px solid var(--line);
   color: var(--ink-faint);
   font-size: 10px;
 }
 
-.sidebar-footer b {
-  color: var(--green);
+.save-status {
+  display: flex;
+  min-height: 16px;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-faint);
   font-weight: 700;
+}
+
+.save-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #aa9985;
+}
+
+.save-status.save-dirty,
+.save-status.save-unsaved { color: #9a5b34; }
+.save-status.save-dirty i,
+.save-status.save-unsaved i { background: #d48a4b; }
+.save-status.save-saved { color: var(--green); }
+.save-status.save-saved i { background: #58a178; }
+.save-status.save-saving i { background: var(--orange); animation: save-pulse 1s ease-in-out infinite; }
+.save-status.save-failed { color: var(--red-dark); }
+.save-status.save-failed i { background: var(--red); }
+
+@keyframes save-pulse {
+  50% { opacity: 0.35; transform: scale(0.72); }
+}
+
+.save-button {
+  min-height: 36px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.save-button:not(:disabled):hover {
+  border-color: #bd8f78;
+  color: var(--red-dark);
+}
+
+.save-button:disabled {
+  cursor: default;
+  opacity: 0.58;
 }
 
 .studio-main {
@@ -2639,6 +2696,300 @@ button.annotation-char:hover {
   background: rgba(255, 253, 248, 0.96);
 }
 
+.work-library-backdrop,
+.switch-work-dialog-backdrop {
+  position: fixed;
+  z-index: 190;
+  inset: 0;
+  background: rgba(37, 31, 27, 0.42);
+  backdrop-filter: blur(5px);
+}
+
+.work-library-scrim {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
+
+.work-library {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  display: flex;
+  width: min(720px, 92vw);
+  height: 100%;
+  flex-direction: column;
+  border-left: 1px solid rgba(114, 91, 67, 0.2);
+  background: #f8f4ed;
+  box-shadow: -24px 0 72px rgba(43, 33, 24, 0.2);
+  animation: work-library-enter 180ms ease-out;
+}
+
+@keyframes work-library-enter {
+  from { opacity: 0; transform: translateX(24px); }
+}
+
+.work-library-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 28px 30px 23px;
+  border-bottom: 1px solid var(--line);
+}
+
+.work-library-heading h2 {
+  margin-top: 5px;
+  font-family: "Songti SC", STSong, serif;
+  font-size: 28px;
+}
+
+.work-library-heading p:last-child {
+  margin-top: 7px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.work-library-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 18px 30px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 253, 248, 0.66);
+}
+
+.work-library-search {
+  display: flex;
+  min-width: 0;
+  height: 42px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: white;
+  color: var(--ink-faint);
+}
+
+.work-library-search:focus-within {
+  border-color: rgba(174, 65, 45, 0.55);
+  box-shadow: 0 0 0 3px rgba(174, 65, 45, 0.08);
+}
+
+.work-library-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.work-new-button { min-height: 42px; }
+
+.work-list {
+  flex: 1;
+  padding: 10px 30px 32px;
+  overflow-y: auto;
+}
+
+.work-list-message,
+.work-list-empty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.work-list-empty {
+  align-content: center;
+  gap: 7px;
+  text-align: center;
+}
+
+.work-list-empty > span {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 6px;
+  place-items: center;
+  border-radius: 14px;
+  background: #eadfd1;
+  color: var(--red-dark);
+  font-family: "Songti SC", STSong, serif;
+  font-size: 19px;
+}
+
+.work-list-empty strong { color: var(--ink); font-size: 14px; }
+
+.work-list-item {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.82);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.work-list-item:hover {
+  border-color: rgba(169, 91, 73, 0.32);
+  box-shadow: var(--shadow-sm);
+}
+
+.work-list-item.current {
+  border-color: rgba(169, 91, 73, 0.34);
+  background: #fffaf2;
+}
+
+.work-list-monogram {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 11px;
+  background: linear-gradient(145deg, #334c5f, #182b3a);
+  color: #fff7ea;
+  font-family: "Songti SC", STSong, serif;
+  font-size: 20px;
+}
+
+.work-list-copy { min-width: 0; }
+
+.work-list-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.work-list-title-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.current-work-badge,
+.work-state-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 99px;
+  background: #eee6dc;
+  color: var(--ink-soft);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.current-work-badge {
+  background: var(--red-soft);
+  color: var(--red-dark);
+}
+
+.work-list-copy > p {
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.work-list-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 8px;
+  color: var(--ink-faint);
+  font-size: 9px;
+}
+
+.work-state-badge.state-published {
+  background: #e1eee5;
+  color: #397255;
+}
+
+.work-list-buttons {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.work-list-buttons .secondary-button {
+  min-width: 88px;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.work-list-buttons .text-button {
+  min-height: 28px;
+  padding: 0 7px;
+  font-size: 9px;
+  text-decoration: none;
+}
+
+.switch-work-dialog-backdrop {
+  z-index: 230;
+  display: grid;
+  padding: 26px;
+  place-items: center;
+}
+
+.switch-work-dialog {
+  width: min(480px, 100%);
+  padding: 30px;
+  border: 1px solid rgba(128, 98, 68, 0.2);
+  border-radius: 20px;
+  background: var(--paper);
+  box-shadow: 0 28px 80px rgba(43, 33, 24, 0.24);
+  text-align: center;
+}
+
+.switch-work-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 18px;
+  place-items: center;
+  border-radius: 15px;
+  background: #f0dfcd;
+  color: var(--red-dark);
+  font-family: "Songti SC", STSong, serif;
+  font-size: 18px;
+}
+
+.switch-work-dialog h2 {
+  margin-top: 7px;
+  font-family: "Songti SC", STSong, serif;
+  font-size: 24px;
+}
+
+.switch-work-dialog > p:not(.eyebrow) {
+  max-width: 380px;
+  margin: 12px auto 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.75;
+}
+
+.switch-work-actions {
+  display: flex;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 24px;
+}
+
+.destructive-save-dialog .switch-work-icon {
+  background: var(--red-soft);
+}
+
 .player-controls {
   display: flex;
   align-items: center;
@@ -2870,6 +3221,26 @@ button.annotation-char:hover {
 
   .sentence-drawer {
     width: min(560px, 100%);
+  }
+
+  .work-library {
+    width: min(680px, 94vw);
+  }
+
+  .work-library-heading {
+    padding: 20px 24px 17px;
+  }
+
+  .work-library-actions {
+    padding: 13px 24px;
+  }
+
+  .work-list {
+    padding: 8px 24px 24px;
+  }
+
+  .work-list-item {
+    padding: 12px;
   }
 }
 

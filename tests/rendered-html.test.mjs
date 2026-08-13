@@ -37,6 +37,8 @@ test("server-renders the recitation product", async () => {
   assert.match(html, /完整正文/);
   assert.match(html, /声音与图谱同源/);
   assert.match(html, /用户观看端/);
+  assert.match(html, /作品库/);
+  assert.match(html, /保存作品/);
   assert.match(html, /og\.png/);
   assert.doesNotMatch(html, /月光下的中国|demo-recitation|createDemoControlSpec/);
   assert.doesNotMatch(html, /上传完整文稿/);
@@ -74,6 +76,11 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.doesNotMatch(studio, /导入控制谱|JSON 兜底|核对示范|ControlImportStage|AudioStage/);
   assert.match(studio, /fetch\("\/api\/works"/);
   assert.match(studio, /reference_audio_file/);
+  assert.match(studio, /beforeunload/);
+  assert.match(studio, /当前修改还没有保存/);
+  assert.match(studio, /保存并打开/);
+  assert.match(studio, /WORK_VERSION_CONFLICT|expected_updated_at/);
+  assert.match(studio, /mode === "studio" \? \(\s*<WorkLibrary/);
   assert.match(studio, /\/reference-audio/);
   assert.match(studio, /\/api\/analysis-jobs/);
   assert.match(studio, /type="file"/);

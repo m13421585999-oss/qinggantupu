@@ -341,6 +341,7 @@ export interface RecitationWork {
   aiDemoAudio?: AudioTrack;
   standardAiAudio?: AudioTrack;
   analysisJobId?: string;
+  analysisJobStatus?: "queued" | "processing" | "succeeded" | "failed";
   analysisPackage?: RecitationAnalysisPackage;
   controlSpec?: ControlSpec;
   createdAt: string;

@@ -42,6 +42,24 @@ type ProductMode = "studio" | "viewer";
 type WorkflowStep = 1 | 2 | 3;
 type AudioSource = "reference" | "standard";
 type AnalysisJobStatus = "idle" | "queued" | "processing" | "succeeded" | "failed";
+type SaveState = "unsaved" | "dirty" | "saving" | "saved" | "failed";
+type PendingWorkAction = { kind: "open"; workId: string } | { kind: "new" };
+type DestructiveChangeKind = "source" | "reference" | "remove_reference";
+
+interface WorkSummary {
+  id: string;
+  slug: string;
+  title: string;
+  author?: string;
+  status: RecitationWork["status"];
+  audioSyncStatus: RecitationWork["audioSyncStatus"];
+  hasReferenceAudio: boolean;
+  hasStandardAudio: boolean;
+  hasControlSpec: boolean;
+  hasPublishedVersion: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 const workflowSteps: Array<{
   id: WorkflowStep;
@@ -70,6 +88,34 @@ function formatTime(ms: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function formatSavedTime(value?: string) {
+  if (!value) return "尚未保存";
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
+}
+
+function formatUpdatedTime(value: string) {
+  const updated = new Date(value);
+  const today = new Date();
+  const sameDay = updated.getFullYear() === today.getFullYear()
+    && updated.getMonth() === today.getMonth()
+    && updated.getDate() === today.getDate();
+  return new Intl.DateTimeFormat("zh-CN", sameDay
+    ? { hour: "2-digit", minute: "2-digit", hour12: false }
+    : { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
+  ).format(updated);
+}
+
+function workStatusLabel(work: WorkSummary) {
+  if (work.status === "published") return "已发布";
+  if (work.hasControlSpec) return "待确认";
+  if (work.hasReferenceAudio) return "素材已保存";
+  return "草稿";
 }
 
 function punctuationOnly(char: string) {
@@ -1596,6 +1642,197 @@ function PublishStage({
   );
 }
 
+function WorkLibrary({
+  open,
+  loading,
+  query,
+  items,
+  currentWorkId,
+  onClose,
+  onQuery,
+  onNew,
+  onOpen,
+}: {
+  open: boolean;
+  loading: boolean;
+  query: string;
+  items: WorkSummary[];
+  currentWorkId: string;
+  onClose: () => void;
+  onQuery: (value: string) => void;
+  onNew: () => void;
+  onOpen: (workId: string) => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="work-library-backdrop">
+      <button
+        type="button"
+        className="work-library-scrim"
+        onClick={onClose}
+        aria-label="关闭作品库"
+      />
+      <aside className="work-library" role="dialog" aria-modal="true" aria-labelledby="work-library-title">
+        <div className="work-library-heading">
+          <div>
+            <p className="eyebrow">创作端 · 云端作品</p>
+            <h2 id="work-library-title">作品库</h2>
+            <p>打开任何已保存作品，正文、音频、图谱与分析结果会一起恢复。</p>
+          </div>
+          <button type="button" className="drawer-close" onClick={onClose} aria-label="关闭作品库">×</button>
+        </div>
+        <div className="work-library-actions">
+          <label className="work-library-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+              placeholder="搜索作品名称或作者"
+            />
+          </label>
+          <button type="button" className="primary-button work-new-button" onClick={onNew}>＋ 新建作品</button>
+        </div>
+        <div className="work-list" aria-busy={loading}>
+          {loading ? <div className="work-list-message">正在读取作品库…</div> : null}
+          {!loading && !items.length ? (
+            <div className="work-list-empty">
+              <span>卷</span>
+              <strong>{query ? "没有找到匹配的作品" : "还没有已保存作品"}</strong>
+              <p>{query ? "换一个名称或作者试试。" : "新建作品并保存后，会出现在这里。"}</p>
+            </div>
+          ) : null}
+          {items.map((item) => {
+            const current = item.id === currentWorkId;
+            return (
+              <article className={`work-list-item ${current ? "current" : ""}`} key={item.id}>
+                <span className="work-list-monogram">{Array.from(item.title.trim())[0] ?? "声"}</span>
+                <div className="work-list-copy">
+                  <div className="work-list-title-row">
+                    <strong>{item.title}</strong>
+                    {current ? <span className="current-work-badge">当前</span> : null}
+                  </div>
+                  <p>{item.author || "未填写作者"}</p>
+                  <div className="work-list-meta">
+                    <span className={`work-state-badge state-${item.status}`}>{workStatusLabel(item)}</span>
+                    {item.hasStandardAudio ? <span>标准声音</span> : item.hasReferenceAudio ? <span>真人音频</span> : null}
+                    <span>{formatUpdatedTime(item.updatedAt)} 更新</span>
+                  </div>
+                </div>
+                <div className="work-list-buttons">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => onOpen(item.id)}
+                    disabled={current}
+                  >
+                    {current ? "正在编辑" : "打开编辑"}
+                  </button>
+                  {item.hasPublishedVersion ? (
+                    <a
+                      className="text-button"
+                      href={`/?work=${encodeURIComponent(item.id)}&view=1`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >查看发布版 ↗</a>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function SwitchWorkDialog({
+  open,
+  saving,
+  onCancel,
+  onDiscard,
+  onSave,
+}: {
+  open: boolean;
+  saving: boolean;
+  onCancel: () => void;
+  onDiscard: () => void;
+  onSave: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="switch-work-dialog-backdrop">
+      <section className="switch-work-dialog" role="alertdialog" aria-modal="true" aria-labelledby="switch-work-title">
+        <span className="switch-work-icon" aria-hidden="true">未</span>
+        <p className="eyebrow">切换作品</p>
+        <h2 id="switch-work-title">当前修改还没有保存</h2>
+        <p>现在切换会丢失本次修改。你可以先把整份作品保存到云端，再继续打开目标作品。</p>
+        <div className="switch-work-actions">
+          <button type="button" className="text-button" onClick={onCancel} disabled={saving}>取消</button>
+          <button type="button" className="secondary-button" onClick={onDiscard} disabled={saving}>放弃修改并打开</button>
+          <button type="button" className="primary-button" onClick={onSave} disabled={saving}>
+            {saving ? <span className="button-spinner" aria-hidden="true" /> : null}
+            {saving ? "正在保存" : "保存并打开"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SourceChangeDialog({
+  open,
+  saving,
+  kind,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  saving: boolean;
+  kind: DestructiveChangeKind;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+  const copy = kind === "source"
+    ? {
+      eyebrow: "保存正文变更",
+      title: "这会让现有声音与图谱失效",
+      detail: "正文已经改变。保存后，旧参考音频、标准 AI 音频、分析结果和发布状态会归档，需要上传匹配的新朗诵并重新解析。",
+      confirm: "确认保存并重置图音",
+    }
+    : kind === "reference"
+      ? {
+        eyebrow: "替换参考朗诵",
+        title: "新音频需要重新生成整套图谱",
+        detail: "保存新参考朗诵后，当前标准 AI 音频、分析结果、控制谱和发布状态会归档，并以新音频重新生成。",
+        confirm: "确认替换参考朗诵",
+      }
+      : {
+        eyebrow: "移除参考朗诵",
+        title: "这会清除当前图音关联",
+        detail: "保存后，当前参考音频、标准 AI 音频、分析结果、控制谱和发布状态会归档；重新上传参考朗诵后才能再次分析。",
+        confirm: "确认移除参考朗诵",
+      };
+  return (
+    <div className="switch-work-dialog-backdrop">
+      <section className="switch-work-dialog destructive-save-dialog" role="alertdialog" aria-modal="true" aria-labelledby="source-change-title">
+        <span className="switch-work-icon" aria-hidden="true">变</span>
+        <p className="eyebrow">{copy.eyebrow}</p>
+        <h2 id="source-change-title">{copy.title}</h2>
+        <p>{copy.detail}</p>
+        <div className="switch-work-actions">
+          <button type="button" className="secondary-button" onClick={onCancel} disabled={saving}>取消</button>
+          <button type="button" className="primary-button" onClick={onConfirm} disabled={saving}>
+            {saving ? <span className="button-spinner" aria-hidden="true" /> : null}
+            {saving ? "正在保存" : copy.confirm}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function StudioView({
   work,
   step,
@@ -1619,6 +1856,10 @@ function StudioView({
   onPublishStage,
   onPreview,
   onPublish,
+  saveState,
+  lastSavedAt,
+  onOpenLibrary,
+  onSaveWork,
 }: {
   work: RecitationWork;
   step: WorkflowStep;
@@ -1642,22 +1883,44 @@ function StudioView({
   onPublishStage: () => void;
   onPreview: () => void;
   onPublish: () => void;
+  saveState: SaveState;
+  lastSavedAt?: string;
+  onOpenLibrary: () => void;
+  onSaveWork: () => void;
 }) {
+  const saveLabel = saveState === "saving"
+    ? "保存中"
+    : saveState === "failed"
+      ? "保存失败，点击重试"
+      : saveState === "dirty"
+        ? "有未保存修改"
+        : saveState === "saved"
+          ? `已保存 ${formatSavedTime(lastSavedAt)}`
+          : "未保存";
   return (
     <div className="studio-shell">
       <aside className="studio-sidebar">
-        <div className="work-summary">
+        <button type="button" className="work-summary" onClick={onOpenLibrary} aria-label="打开作品库">
           <span className="work-monogram">{Array.from(work.title.trim())[0] ?? "声"}</span>
           <div>
-            <small>正在创作</small>
-            <strong>{work.title}</strong>
+            <small>作品库 · 正在创作</small>
+            <strong>{work.title || "未命名作品"}</strong>
           </div>
-          <button type="button" aria-label="更多作品选项">•••</button>
-        </div>
+          <span className="work-library-chevron" aria-hidden="true">›</span>
+        </button>
         <WorkflowRail step={step} highestStep={highestStep} onStep={onStep} />
         <div className="sidebar-footer">
-          <span>自动保存</span>
-          <b>刚刚</b>
+          <span className={`save-status save-${saveState}`}>
+            <i aria-hidden="true" />{saveLabel}
+          </span>
+          <button
+            type="button"
+            className="save-button"
+            onClick={onSaveWork}
+            disabled={saveState === "saving" || saveState === "saved"}
+          >
+            {saveState === "saving" ? "保存中…" : "保存作品"}
+          </button>
         </div>
       </aside>
 
@@ -1820,6 +2083,23 @@ export function RecitationStudio() {
   const [work, setWork] = useState<RecitationWork>(() => createEmptyWork());
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [isWorkDirty, setIsWorkDirty] = useState(true);
+  const [controlSpecDirty, setControlSpecDirty] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>("unsaved");
+  const [lastSavedAt, setLastSavedAt] = useState<string>();
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryItems, setLibraryItems] = useState<WorkSummary[]>([]);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [pendingWorkAction, setPendingWorkAction] = useState<PendingWorkAction | null>(null);
+  const [sourceChangeConfirmOpen, setSourceChangeConfirmOpen] = useState(false);
+  const [destructiveChangeKind, setDestructiveChangeKind] = useState<DestructiveChangeKind>("source");
+  const savedSourceTextRef = useRef("");
+  const savedUpdatedAtRef = useRef<string | undefined>(undefined);
+  const savedReferenceIdRef = useRef<string | undefined>(undefined);
+  const savedHasDerivedAssetsRef = useRef(false);
+  const removeSavedReferenceRef = useRef(false);
+  const localReferenceUrlRef = useRef<string | undefined>(undefined);
+  const pendingSaveRef = useRef<((saved?: RecitationWork) => void) | null>(null);
   const [step, setStep] = useState<WorkflowStep>(1);
   const [editingSentenceId, setEditingSentenceId] = useState<string | null>(null);
   const [audioSource, setAudioSource] = useState<AudioSource>("reference");
@@ -1835,43 +2115,120 @@ export function RecitationStudio() {
   const activeTrack = audioSource === "reference" ? work.referenceAudio : standardPlayback;
   const analysisInFlight = analysisJobStatus === "queued" || analysisJobStatus === "processing";
   const highestStep = isWorkDirty || analysisInFlight ? 1 : highestAvailableStep(work);
+  const hasDraftContent = Boolean(
+    work.title.trim() || work.author?.trim() || work.sourceText.trim() || work.referenceAudio,
+  );
+  const hasUnsavedChanges = Boolean(referenceFile)
+    || controlSpecDirty
+    || (isWorkDirty && (!work.id.startsWith("draft-") || hasDraftContent));
 
   const showToast = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 4200);
   }, []);
 
+  const resetPlaybackAndEditorState = useCallback(() => {
+    audioRef.current?.pause();
+    setCurrentMs(0);
+    setIsPlaying(false);
+    setSegmentEndMs(null);
+    setPlaybackRate(1);
+    setEditingSentenceId(null);
+  }, []);
+
+  const applyStoredWork = useCallback((stored: RecitationWork, published = false) => {
+    if (localReferenceUrlRef.current) URL.revokeObjectURL(localReferenceUrlRef.current);
+    localReferenceUrlRef.current = undefined;
+    resetPlaybackAndEditorState();
+    setWork(stored);
+    setReferenceFile(null);
+    setIsWorkDirty(false);
+    setControlSpecDirty(false);
+    setSaveState("saved");
+    setLastSavedAt(stored.updatedAt);
+    savedSourceTextRef.current = stored.sourceText;
+    savedUpdatedAtRef.current = stored.updatedAt;
+    savedReferenceIdRef.current = stored.referenceAudioOriginal?.id ?? stored.referenceAudio?.id;
+    savedHasDerivedAssetsRef.current = Boolean(
+      stored.standardAiAudio || stored.aiDemoAudio || stored.controlSpec || stored.publishedRevisionId,
+    );
+    removeSavedReferenceRef.current = false;
+    setAnalysisJobStatus(stored.analysisJobStatus ?? "idle");
+    if (published) {
+      setMode("viewer");
+      setAudioSource("standard");
+      return;
+    }
+    setMode("studio");
+    if (stored.controlSpec) {
+      setStep(2);
+      setAudioSource((stored.standardAiAudio ?? stored.aiDemoAudio)?.timeline ? "standard" : "reference");
+      setAnalysisStatus("标准 AI 朗诵解析完成，声音与图谱同源");
+    } else {
+      setStep(1);
+      setAudioSource("reference");
+      setAnalysisStatus(
+        stored.standardAiAudio
+          ? "标准 AI 声音已生成，等待完成分析"
+          : stored.referenceAudio ? "真人参考朗诵已保存，可以开始生成与解析" : "等待参考朗诵",
+      );
+    }
+  }, [resetPlaybackAndEditorState]);
+
+  const loadStoredWork = useCallback(async (workId: string, published = false) => {
+    const publishedQuery = published ? "?published=1" : "";
+    const result = await apiJson<{ work: RecitationWork }>(
+      await fetch(`/api/works/${encodeURIComponent(workId)}${publishedQuery}`),
+    );
+    applyStoredWork(result.work, published);
+    const url = new URL(window.location.href);
+    url.searchParams.set("work", result.work.id);
+    if (published) url.searchParams.set("view", "1");
+    else url.searchParams.delete("view");
+    window.history.replaceState({}, "", url);
+    return result.work;
+  }, [applyStoredWork]);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- URL loading is the external route synchronization boundary. */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const workId = params.get("work");
     if (!workId) return;
+    void loadStoredWork(workId, params.get("view") === "1")
+      .catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+  // The URL-backed work is intentionally loaded only once on mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (!libraryOpen) return;
     let cancelled = false;
-    const publishedQuery = params.get("view") === "1" ? "?published=1" : "";
-    void fetch(`/api/works/${encodeURIComponent(workId)}${publishedQuery}`)
-      .then((response) => apiJson<{ work: RecitationWork }>(response))
-      .then(({ work: stored }) => {
-        if (cancelled) return;
-        setWork(stored);
-        setIsWorkDirty(false);
-        if (params.get("view") === "1") {
-          setMode("viewer");
-          setAudioSource("standard");
-        } else if (stored.controlSpec) {
-          setStep(2);
-          setAudioSource((stored.standardAiAudio ?? stored.aiDemoAudio)?.timeline ? "standard" : "reference");
-        } else {
-          setStep(1);
-          setAudioSource("reference");
-          setAnalysisStatus(
-            stored.standardAiAudio
-              ? "标准 AI 声音已生成，等待完成分析"
-              : stored.referenceAudio ? "真人参考朗诵已保存，可以开始生成与解析" : "等待参考朗诵",
-          );
-        }
-      })
-      .catch((error) => !cancelled && showToast(error instanceof Error ? error.message : String(error)));
-    return () => { cancelled = true; };
-  }, [showToast]);
+    const timeout = window.setTimeout(() => {
+      setLibraryLoading(true);
+      const params = new URLSearchParams({ limit: "60" });
+      if (libraryQuery.trim()) params.set("q", libraryQuery.trim());
+      void fetch(`/api/works?${params}`)
+        .then((response) => apiJson<{ items: WorkSummary[] }>(response))
+        .then((result) => { if (!cancelled) setLibraryItems(result.items); })
+        .catch((error) => !cancelled && showToast(error instanceof Error ? error.message : String(error)))
+        .finally(() => { if (!cancelled) setLibraryLoading(false); });
+    }, libraryQuery ? 220 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [libraryOpen, libraryQuery, showToast]);
+
+  useEffect(() => {
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1959,7 +2316,9 @@ export function RecitationStudio() {
     const sourceChanged = field === "sourceText" && value !== work.sourceText;
     const keepsLocalReference = Boolean(work.referenceAudio?.url.startsWith("blob:"));
     setIsWorkDirty(true);
+    setSaveState(work.id.startsWith("draft-") ? "unsaved" : "dirty");
     setAnalysisJobStatus("idle");
+    setControlSpecDirty(false);
     setAnalysisStatus(
       sourceChanged && !keepsLocalReference
         ? "正文已修改，请重新上传匹配的参考朗诵"
@@ -1983,7 +2342,6 @@ export function RecitationStudio() {
         standardAiAudio: undefined,
         analysisPackage: undefined,
       } : {}),
-      updatedAt: new Date().toISOString(),
     }));
     if (sourceChanged) {
       setStep(1);
@@ -1996,10 +2354,14 @@ export function RecitationStudio() {
     const url = URL.createObjectURL(file);
     try {
       const durationMs = await readAudioDuration(url);
-      if (work.referenceAudio?.url.startsWith("blob:")) URL.revokeObjectURL(work.referenceAudio.url);
+      if (localReferenceUrlRef.current) URL.revokeObjectURL(localReferenceUrlRef.current);
+      localReferenceUrlRef.current = url;
       setReferenceFile(file);
+      removeSavedReferenceRef.current = false;
       setIsWorkDirty(true);
+      setSaveState(work.id.startsWith("draft-") ? "unsaved" : "dirty");
       setAnalysisJobStatus("idle");
+      setControlSpecDirty(false);
       setAnalysisStatus("参考朗诵已就绪");
       setWork((current) => ({
         ...current,
@@ -2021,7 +2383,6 @@ export function RecitationStudio() {
         aiDemoAudio: undefined,
         standardAiAudio: undefined,
         analysisPackage: undefined,
-        updatedAt: new Date().toISOString(),
       }));
       setStep(1);
       setAudioSource("reference");
@@ -2033,11 +2394,15 @@ export function RecitationStudio() {
   };
 
   const handleDeleteReference = () => {
-    if (work.referenceAudio?.url.startsWith("blob:")) URL.revokeObjectURL(work.referenceAudio.url);
+    if (localReferenceUrlRef.current) URL.revokeObjectURL(localReferenceUrlRef.current);
+    localReferenceUrlRef.current = undefined;
     audioRef.current?.pause();
     setReferenceFile(null);
+    removeSavedReferenceRef.current = Boolean(savedReferenceIdRef.current);
     setIsWorkDirty(true);
+    setSaveState(work.id.startsWith("draft-") ? "unsaved" : "dirty");
     setAnalysisJobStatus("idle");
+    setControlSpecDirty(false);
     setAnalysisStatus("等待参考朗诵");
     setWork((current) => ({
       ...current,
@@ -2050,21 +2415,44 @@ export function RecitationStudio() {
       aiDemoAudio: undefined,
       standardAiAudio: undefined,
       analysisPackage: undefined,
-      updatedAt: new Date().toISOString(),
     }));
     setStep(1);
     setAudioSource("reference");
     showToast("参考朗诵已从当前草稿移除");
   };
 
+  const persistReferenceFile = async (savedWork: RecitationWork) => {
+    if (!referenceFile || !work.referenceAudio) return savedWork;
+    const form = new FormData();
+    form.set("reference_audio_file", referenceFile);
+    form.set("duration_ms", String(work.referenceAudio.durationMs));
+    form.set("expected_updated_at", savedWork.updatedAt);
+    const result = await apiJson<{ work: RecitationWork }>(
+      await fetch(`/api/works/${encodeURIComponent(savedWork.id)}/reference-audio`, {
+        method: "POST",
+        body: form,
+      }),
+    );
+    if (localReferenceUrlRef.current) URL.revokeObjectURL(localReferenceUrlRef.current);
+    localReferenceUrlRef.current = undefined;
+    setReferenceFile(null);
+    return result.work;
+  };
+
   const persistWorkRecord = async () => {
-    if (!work.title.trim() || !work.sourceText.trim()) { showToast("请先填写作品名称和完整正文"); return; }
+    if (!work.title.trim() || !work.sourceText.trim()) {
+      showToast("请先填写作品名称和完整正文");
+      throw new Error("作品名称和完整正文不能为空。");
+    }
     const result = await apiJson<{ work: RecitationWork }>(
       await fetch("/api/works", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          ...(!work.id.startsWith("draft-") ? { work_id: work.id } : {}),
+          ...(!work.id.startsWith("draft-") ? {
+            work_id: work.id,
+            expected_updated_at: savedUpdatedAtRef.current ?? work.updatedAt,
+          } : {}),
           title: work.title.trim(),
           author: work.author?.trim() ?? "",
           full_text: work.sourceText,
@@ -2083,11 +2471,87 @@ export function RecitationStudio() {
       standardAiAudio: result.work.standardAiAudio,
     }));
     setIsWorkDirty(false);
+    savedUpdatedAtRef.current = result.work.updatedAt;
+    savedSourceTextRef.current = result.work.sourceText;
     const url = new URL(window.location.href);
     url.searchParams.set("work", result.work.id);
     url.searchParams.delete("view");
     window.history.replaceState({}, "", url);
     return result.work;
+  };
+
+  const performSaveCurrentWork = async (confirmSourceChange = false) => {
+    const sourceInvalidatesAssets = !work.id.startsWith("draft-")
+      && savedSourceTextRef.current !== work.sourceText
+      && Boolean(savedReferenceIdRef.current || savedHasDerivedAssetsRef.current);
+    const referenceInvalidatesAssets = Boolean(
+      referenceFile
+      && savedReferenceIdRef.current
+    );
+    const removalInvalidatesAssets = Boolean(removeSavedReferenceRef.current && savedReferenceIdRef.current);
+    if ((sourceInvalidatesAssets || referenceInvalidatesAssets || removalInvalidatesAssets) && !confirmSourceChange) {
+      setDestructiveChangeKind(
+        sourceInvalidatesAssets ? "source" : referenceInvalidatesAssets ? "reference" : "remove_reference",
+      );
+      setSourceChangeConfirmOpen(true);
+      return;
+    }
+    setSaveState("saving");
+    try {
+      const metadataDirty = work.id.startsWith("draft-")
+        || work.title.trim() !== work.title
+        || savedSourceTextRef.current !== work.sourceText
+        || isWorkDirty && !controlSpecDirty;
+      let saved = metadataDirty
+        ? await persistWorkRecord()
+        : work;
+      if (referenceFile) saved = await persistReferenceFile(saved);
+      else if (removeSavedReferenceRef.current) {
+        saved = (await apiJson<{ work: RecitationWork }>(
+          await fetch(`/api/works/${encodeURIComponent(saved.id)}/reference-audio`, {
+            method: "DELETE",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ expected_updated_at: saved.updatedAt }),
+          }),
+        )).work;
+      }
+      if (controlSpecDirty && work.controlSpec) {
+        saved = (await apiJson<{ work: RecitationWork }>(
+          await fetch(`/api/works/${encodeURIComponent(saved.id)}/control-spec`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              control_spec: work.controlSpec,
+              source: "human",
+              expected_updated_at: saved.updatedAt,
+            }),
+          }),
+        )).work;
+      }
+      setWork(saved);
+      setIsWorkDirty(false);
+      setSaveState("saved");
+      setLastSavedAt(saved.updatedAt);
+      savedSourceTextRef.current = saved.sourceText;
+      savedUpdatedAtRef.current = saved.updatedAt;
+      savedReferenceIdRef.current = saved.referenceAudioOriginal?.id ?? saved.referenceAudio?.id;
+      savedHasDerivedAssetsRef.current = Boolean(
+        saved.standardAiAudio || saved.aiDemoAudio || saved.controlSpec || saved.publishedRevisionId,
+      );
+      removeSavedReferenceRef.current = false;
+      setControlSpecDirty(false);
+      setSourceChangeConfirmOpen(false);
+      setLibraryItems((items) => items.filter((item) => item.id !== saved.id));
+      showToast("作品已完整保存到云端");
+      const continuation = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      continuation?.(saved);
+      return saved;
+    } catch (error) {
+      setSaveState("failed");
+      pendingSaveRef.current = null;
+      showToast(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const handleAnalyze = async () => {
@@ -2097,28 +2561,14 @@ export function RecitationStudio() {
     setAnalysisJobStatus("queued");
     setAnalysisStatus("正在保存作品与真人参考音频");
     try {
+      setSaveState("saving");
       let saved = await persistWorkRecord();
-      if (!saved) throw new Error("作品正文保存失败。");
 
       if (referenceFile) {
-        const form = new FormData();
-        form.set("reference_audio_file", referenceFile);
-        form.set("duration_ms", String(work.referenceAudio.durationMs));
-        await apiJson<Record<string, unknown>>(
-          await fetch(`/api/works/${encodeURIComponent(saved.id)}/reference-audio`, {
-            method: "POST",
-            body: form,
-          }),
-        );
-        const refreshed = await apiJson<{ work: RecitationWork }>(
-          await fetch(`/api/works/${encodeURIComponent(saved.id)}`),
-        );
-        if (!refreshed.work.referenceAudio) {
+        saved = await persistReferenceFile(saved);
+        if (!saved.referenceAudio) {
           throw new Error("参考朗诵上传后未能读取，请重新上传。");
         }
-        if (work.referenceAudio.url.startsWith("blob:")) URL.revokeObjectURL(work.referenceAudio.url);
-        saved = refreshed.work;
-        setReferenceFile(null);
         setWork(saved);
       } else if (!saved.referenceAudio) {
         const refreshed = await apiJson<{ work: RecitationWork }>(
@@ -2128,6 +2578,12 @@ export function RecitationStudio() {
         if (!saved.referenceAudio) throw new Error("当前作品没有已保存的参考朗诵，请重新选择音频。");
         setWork(saved);
       }
+      setSaveState("saved");
+      setLastSavedAt(saved.updatedAt);
+      savedSourceTextRef.current = saved.sourceText;
+      savedUpdatedAtRef.current = saved.updatedAt;
+      savedReferenceIdRef.current = saved.referenceAudioOriginal?.id ?? saved.referenceAudio?.id;
+      savedHasDerivedAssetsRef.current = Boolean(saved.standardAiAudio || saved.aiDemoAudio || saved.controlSpec);
 
       const created = await apiJson<AnalysisJobPayload>(
         await fetch(`/api/works/${encodeURIComponent(saved.id)}/analysis-jobs`, {
@@ -2137,6 +2593,11 @@ export function RecitationStudio() {
         }),
       );
       if (!created.analysis_job_id) throw new Error("分析任务创建失败：服务端没有返回任务编号。");
+      const analyzingWork = (await apiJson<{ work: RecitationWork }>(
+        await fetch(`/api/works/${encodeURIComponent(saved.id)}`),
+      )).work;
+      savedUpdatedAtRef.current = analyzingWork.updatedAt;
+      setLastSavedAt(analyzingWork.updatedAt);
       setWork((current) => ({ ...current, analysisJobId: created.analysis_job_id, status: "analyzing" }));
       setAnalysisStatus("标准 AI 声音已生成，已进入分析队列");
 
@@ -2184,6 +2645,15 @@ export function RecitationStudio() {
           }
           setWork(completedWork);
           setIsWorkDirty(false);
+          setSaveState("saved");
+          setLastSavedAt(completedWork.updatedAt);
+          savedSourceTextRef.current = completedWork.sourceText;
+          savedUpdatedAtRef.current = completedWork.updatedAt;
+          savedReferenceIdRef.current = completedWork.referenceAudioOriginal?.id ?? completedWork.referenceAudio?.id;
+          savedHasDerivedAssetsRef.current = Boolean(
+            completedWork.standardAiAudio || completedWork.aiDemoAudio || completedWork.controlSpec,
+          );
+          setControlSpecDirty(false);
           setAnalysisJobStatus("succeeded");
           setAnalysisStatus("标准 AI 朗诵解析完成，声音与图谱同源");
           setAudioSource("standard");
@@ -2200,6 +2670,7 @@ export function RecitationStudio() {
       setAnalysisJobStatus("failed");
       setAnalysisStatus(`分析失败：${message}`);
       setWork((current) => ({ ...current, status: "draft" }));
+      setSaveState(hasUnsavedChanges ? "dirty" : "saved");
       showToast(message);
     }
   };
@@ -2209,10 +2680,23 @@ export function RecitationStudio() {
       await fetch(`/api/works/${encodeURIComponent(work.id)}/control-spec`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ control_spec: controlSpec, source: "human" }),
+        body: JSON.stringify({
+          control_spec: controlSpec,
+          source: "human",
+          expected_updated_at: savedUpdatedAtRef.current ?? work.updatedAt,
+        }),
       }),
     );
     setWork(result.work);
+    setIsWorkDirty(false);
+    setSaveState("saved");
+    setLastSavedAt(result.work.updatedAt);
+    savedUpdatedAtRef.current = result.work.updatedAt;
+    savedSourceTextRef.current = result.work.sourceText;
+    savedHasDerivedAssetsRef.current = Boolean(
+      result.work.standardAiAudio || result.work.aiDemoAudio || result.work.controlSpec || result.work.publishedRevisionId,
+    );
+    setControlSpecDirty(false);
     if (message) showToast(message);
   };
 
@@ -2229,11 +2713,16 @@ export function RecitationStudio() {
       audioSyncStatus: current.standardAiAudio ? "modified" : "pending",
       controlSpec: nextSpec,
     }));
+    setIsWorkDirty(true);
+    setControlSpecDirty(true);
+    setSaveState("dirty");
     setEditingSentenceId(null);
     setAudioSource(work.standardAiAudio?.timeline ? "standard" : "reference");
     try {
       await persistControlSpec(nextSpec, `第 ${nextSentence.order} 句图谱已保存`);
     } catch (error) {
+      setIsWorkDirty(true);
+      setSaveState("failed");
       showToast(error instanceof Error ? error.message : String(error));
     }
   };
@@ -2293,12 +2782,89 @@ export function RecitationStudio() {
     if (nextTrack) setAudioSource(source);
   };
 
+  const createNewWork = () => {
+    if (localReferenceUrlRef.current) URL.revokeObjectURL(localReferenceUrlRef.current);
+    localReferenceUrlRef.current = undefined;
+    resetPlaybackAndEditorState();
+    const empty = createEmptyWork();
+    setWork(empty);
+    setReferenceFile(null);
+    setIsWorkDirty(true);
+    setSaveState("unsaved");
+    setLastSavedAt(undefined);
+    savedSourceTextRef.current = "";
+    savedUpdatedAtRef.current = undefined;
+    savedReferenceIdRef.current = undefined;
+    savedHasDerivedAssetsRef.current = false;
+    removeSavedReferenceRef.current = false;
+    setAnalysisJobStatus("idle");
+    setAnalysisStatus("等待参考朗诵");
+    setStep(1);
+    setAudioSource("reference");
+    setMode("studio");
+    setLibraryOpen(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("work");
+    url.searchParams.delete("view");
+    window.history.replaceState({}, "", url);
+  };
+
+  const performPendingWorkAction = async (action: PendingWorkAction) => {
+    setPendingWorkAction(null);
+    setLibraryOpen(false);
+    if (action.kind === "new") {
+      createNewWork();
+      return;
+    }
+    try {
+      await loadStoredWork(action.workId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const requestWorkAction = (action: PendingWorkAction) => {
+    if (hasUnsavedChanges) {
+      setPendingWorkAction(action);
+      return;
+    }
+    void performPendingWorkAction(action);
+  };
+
+  const saveThenContinue = () => {
+    const action = pendingWorkAction;
+    if (!action) return;
+    pendingSaveRef.current = (saved) => {
+      if (!saved) return;
+      void performPendingWorkAction(action);
+    };
+    void performSaveCurrentWork();
+  };
+
+  const discardAndContinue = () => {
+    const action = pendingWorkAction;
+    if (!action) return;
+    setPendingWorkAction(null);
+    void performPendingWorkAction(action);
+  };
+
   const handlePublish = async () => {
     try {
       const result = await apiJson<{ work: RecitationWork; public_url: string }>(
-        await fetch(`/api/works/${encodeURIComponent(work.id)}/publish`, { method: "POST" }),
+        await fetch(`/api/works/${encodeURIComponent(work.id)}/publish`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ expected_updated_at: savedUpdatedAtRef.current ?? work.updatedAt }),
+        }),
       );
       setWork(result.work);
+      setIsWorkDirty(false);
+      setSaveState("saved");
+      setLastSavedAt(result.work.updatedAt);
+      savedSourceTextRef.current = result.work.sourceText;
+      savedUpdatedAtRef.current = result.work.updatedAt;
+      savedReferenceIdRef.current = result.work.referenceAudioOriginal?.id ?? result.work.referenceAudio?.id;
+      savedHasDerivedAssetsRef.current = true;
       window.history.replaceState({}, "", result.public_url);
       setAudioSource("standard");
       setMode("viewer");
@@ -2377,6 +2943,10 @@ export function RecitationStudio() {
           onPublishStage={() => setWorkflowStep(3)}
           onPreview={() => { setAudioSource("standard"); setMode("viewer"); }}
           onPublish={handlePublish}
+          saveState={saveState}
+          lastSavedAt={lastSavedAt}
+          onOpenLibrary={() => setLibraryOpen(true)}
+          onSaveWork={() => void performSaveCurrentWork()}
         />
       ) : (
         <ViewerView
@@ -2408,6 +2978,39 @@ export function RecitationStudio() {
           compact={mode === "viewer"}
         />
       ) : null}
+
+      {mode === "studio" ? (
+        <WorkLibrary
+          open={libraryOpen}
+          loading={libraryLoading}
+          query={libraryQuery}
+          items={libraryItems}
+          currentWorkId={work.id}
+          onClose={() => setLibraryOpen(false)}
+          onQuery={setLibraryQuery}
+          onNew={() => requestWorkAction({ kind: "new" })}
+          onOpen={(workId) => requestWorkAction({ kind: "open", workId })}
+        />
+      ) : null}
+
+      <SwitchWorkDialog
+        open={Boolean(pendingWorkAction)}
+        saving={saveState === "saving"}
+        onCancel={() => setPendingWorkAction(null)}
+        onDiscard={discardAndContinue}
+        onSave={saveThenContinue}
+      />
+
+      <SourceChangeDialog
+        open={sourceChangeConfirmOpen}
+        saving={saveState === "saving"}
+        kind={destructiveChangeKind}
+        onCancel={() => {
+          setSourceChangeConfirmOpen(false);
+          pendingSaveRef.current = null;
+        }}
+        onConfirm={() => void performSaveCurrentWork(true)}
+      />
 
       <div className={`toast ${toast ? "visible" : ""}`} role="status" aria-live="polite">
         <span>{toast?.includes("失败") || toast?.includes("错误") ? "!" : "✓"}</span>{toast}
