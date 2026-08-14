@@ -3130,23 +3130,16 @@ export function RecitationStudio() {
     setAnalysisJobStatus("queued");
     setAnalysisStatus("正在保存作品并创建 AI 参考朗诵任务");
     try {
-      setSaveState("saving");
-      const saved = await persistWorkRecord();
+      const canReuseSavedWork = !work.id.startsWith("draft-")
+        && !isWorkDirty
+        && savedSourceTextRef.current === work.sourceText;
+      setSaveState(canReuseSavedWork ? "saved" : "saving");
+      const saved = canReuseSavedWork ? work : await persistWorkRecord();
       setWork(saved);
       setSaveState("saved");
       setLastSavedAt(saved.updatedAt);
       savedSourceTextRef.current = saved.sourceText;
       savedUpdatedAtRef.current = saved.updatedAt;
-
-      void generateWorkVisualAssets(saved.id, { type: "all" })
-        .then((visuals) => {
-          setWork((current) => current.id === saved.id ? { ...current, visuals } : current);
-          showToast("作品视觉已同步生成");
-        })
-        .catch((visualError) => {
-          const message = visualError instanceof Error ? visualError.message : String(visualError);
-          showToast(`AI 朗诵继续；作品视觉生成未完成：${message}`);
-        });
 
       const existing = saved.aiTts;
       let createResponse: Response;
@@ -3171,6 +3164,17 @@ export function RecitationStudio() {
       const created = await apiJson<AiTtsJobPayload>(createResponse);
       if (!created.ai_tts_job_id) throw new Error("AI 参考朗诵任务创建失败：服务端没有返回任务编号。");
       const jobId = created.ai_tts_job_id;
+
+      void generateWorkVisualAssets(saved.id, { type: "all" })
+        .then((visuals) => {
+          setWork((current) => current.id === saved.id ? { ...current, visuals } : current);
+          showToast("作品视觉已同步生成");
+        })
+        .catch((visualError) => {
+          const message = visualError instanceof Error ? visualError.message : String(visualError);
+          showToast(`AI 朗诵继续；作品视觉生成未完成：${message}`);
+        });
+
       setAnalysisJobStatus("processing");
       setAnalysisStatus(aiTtsStatusText(created.status));
 
