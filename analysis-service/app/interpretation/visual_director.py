@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import Any
 
 from pydantic import ValidationError
@@ -14,6 +15,45 @@ from app.schemas.visual import VisualDirectorRequest, VisualDirectorResult
 
 class VisualDirectorError(RuntimeError):
     """A visual-only planning failure. It must never affect recitation analysis."""
+
+
+def _canonicalize_immutable_fields(
+    payload: dict[str, Any],
+    request: VisualDirectorRequest,
+) -> dict[str, Any]:
+    """Restore source-owned fields before validating the model response.
+
+    The model directs the visual treatment; it is not the source of truth for
+    title text, author text, scene identity, or a locked visual profile. Some
+    compatible gateways can return otherwise valid structured output while
+    adding book-title marks or lightly rewriting those fields. Replacing them
+    with the request values keeps the strict contract without turning a usable
+    visual plan into a production 500.
+    """
+
+    canonical = deepcopy(payload)
+    hero = canonical.get("hero_visual_spec")
+    if isinstance(hero, dict):
+        required_text = [request.title]
+        if request.author:
+            required_text.append(request.author)
+        required_text.append("朗诵情感图谱")
+        hero["type"] = "hero"
+        hero["size"] = {"width": 1500, "height": 280}
+        hero["required_text"] = required_text
+
+    scenes = canonical.get("scene_visual_specs")
+    if isinstance(scenes, list):
+        for scene, source in zip(scenes, request.scene_units):
+            if not isinstance(scene, dict):
+                continue
+            scene["scene_id"] = source.scene_id
+            scene["source_sentence_ids"] = list(source.source_sentence_ids)
+            scene["source_text"] = source.source_text
+
+    if request.locked_profile is not None:
+        canonical["work_visual_profile"] = deepcopy(request.locked_profile)
+    return canonical
 
 
 def _validate_source_contract(
@@ -92,8 +132,9 @@ async def direct_work_visuals(
         )
     except StructuredLlmError as exc:
         raise VisualDirectorError(f"Visual director failed: {exc}") from exc
+    canonical_data = _canonicalize_immutable_fields(generation.data, request)
     try:
-        result = VisualDirectorResult.model_validate(generation.data)
+        result = VisualDirectorResult.model_validate(canonical_data)
     except (ValueError, ValidationError) as exc:
         raise VisualDirectorError(f"Visual director returned invalid JSON: {exc}") from exc
     _validate_source_contract(result, request)

@@ -10,6 +10,8 @@ import pytest
 from app.providers.openai_compatible import (
     StructuredLlmError,
     _openai_endpoint,
+    _parse_json_object,
+    _responses_content,
     generate_structured_result,
     generate_structured_json,
 )
@@ -91,6 +93,46 @@ def test_openai_compatible_prefers_responses_with_strict_schema() -> None:
     assert body["text"]["format"]["schema"]["required"] == ["ok"]
     assert body["text"]["format"]["schema"]["additionalProperties"] is False
     assert body["reasoning"] == {"effort": "high"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"parsed": {"ok": True}},
+        {
+            "output": [
+                {
+                    "type": "message",
+                    "content": "```json\n{\"ok\":true}\n```",
+                }
+            ]
+        },
+        {
+            "output": [
+                {
+                    "type": "reasoning",
+                    "content": [
+                        {"type": "reasoning_text", "text": "not JSON"}
+                    ],
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": {"value": "Result: {\"ok\":true}"},
+                        }
+                    ],
+                },
+            ]
+        },
+        {"choices": [{"message": {"content": "{\"ok\":true}"}}]},
+    ],
+)
+def test_responses_content_accepts_common_gateway_envelopes(
+    payload: dict[str, object],
+) -> None:
+    assert _parse_json_object(_responses_content(payload)) == {"ok": True}
 
 
 def test_openai_compatible_falls_back_when_responses_endpoint_is_absent() -> None:
@@ -188,8 +230,6 @@ def test_chat_json_mode_repairs_after_responses_is_absent() -> None:
         if request.url.path.endswith("/responses"):
             return httpx.Response(404, text="unknown endpoint")
         if body["response_format"]["type"] == "json_schema":
-            return httpx.Response(400, text="response_format json_schema unsupported")
-        if len(body["messages"]) == 2:
             return httpx.Response(
                 200, json={"choices": [{"message": {"content": '{"wrong":true}'}}]}
             )
@@ -227,9 +267,89 @@ def test_chat_json_mode_repairs_after_responses_is_absent() -> None:
     assert result.data == {"ok": True}
     assert result.endpoint == "chat/completions"
     assert result.output_mode == "json_object_repair"
-    assert result.request_count == 4
+    assert result.request_count == 3
     assert requests[-1][1]["reasoning_effort"] == "high"
     assert len(requests[-1][1]["messages"]) == 4
+
+
+def test_openai_compatible_never_exceeds_three_slow_attempts() -> None:
+    requests: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path.endswith("/responses"):
+            return httpx.Response(404, text="unknown endpoint")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"wrong":true}'}}]},
+        )
+
+    def validator(value: dict[str, object]) -> None:
+        if value.get("ok") is not True:
+            raise ValueError("ok must be true")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch(
+        "app.providers.openai_compatible.httpx.AsyncClient",
+        side_effect=client_factory,
+    ), pytest.raises(StructuredLlmError, match="3-request limit"):
+        asyncio.run(generate_structured_result(
+            provider="openai_compatible",
+            api_key="provider-test-key",
+            base_url="https://gateway.example/v1",
+            model="provider/model",
+            system_prompt="system prompt",
+            user_prompt="user prompt",
+            schema_name="independent_schema",
+            schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            thinking="enabled",
+            reasoning_effort="high",
+            temperature=0.1,
+            timeout_seconds=30,
+            validator=validator,
+        ))
+
+    assert requests == [
+        "/v1/responses",
+        "/v1/chat/completions",
+        "/v1/chat/completions",
+    ]
+
+
+def test_structured_generation_uses_one_total_timeout_budget() -> None:
+    calls = 0
+
+    async def slow_post(**_: object) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return httpx.Response(404, text="unknown endpoint")
+
+    with patch("app.providers.openai_compatible._post", side_effect=slow_post), pytest.raises(
+        StructuredLlmError,
+        match="total timeout",
+    ):
+        asyncio.run(generate_structured_result(
+            provider="openai_compatible",
+            api_key="provider-test-key",
+            base_url="https://gateway.example/v1",
+            model="provider/model",
+            system_prompt="system prompt",
+            user_prompt="user prompt",
+            schema_name="independent_schema",
+            schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            thinking="enabled",
+            reasoning_effort="high",
+            temperature=0.1,
+            timeout_seconds=0.01,
+        ))
+
+    assert calls == 1
 
 
 def test_deepseek_rollback_keeps_existing_chat_request_fields() -> None:

@@ -6,8 +6,11 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
+from app.config import Settings
 from app.interpretation.visual_director import VisualDirectorError, direct_work_visuals
+from app.main import create_visual_plan
 from app.schemas.visual import SceneUnit, VisualDirectorRequest
 
 
@@ -131,7 +134,7 @@ def test_visual_director_is_a_separate_structured_llm_request() -> None:
     assert "scene_units" in prompt
 
 
-def test_visual_director_rejects_changed_source_scene() -> None:
+def test_visual_director_restores_changed_source_scene() -> None:
     result = _result()
     scenes = result["scene_visual_specs"]
     assert isinstance(scenes, list)
@@ -149,11 +152,8 @@ def test_visual_director_rejects_changed_source_scene() -> None:
     def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
         return real_client(*args, transport=transport, **kwargs)
 
-    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
-        VisualDirectorError,
-        match="changed the source identity or text",
-    ):
-        asyncio.run(direct_work_visuals(
+    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory):
+        actual = asyncio.run(direct_work_visuals(
             request=_request(),
             provider="deepseek",
             api_key="test",
@@ -164,8 +164,13 @@ def test_visual_director_rejects_changed_source_scene() -> None:
             timeout_seconds=30,
         ))
 
+    scenes = actual["scene_visual_specs"]
+    assert scenes[0]["source_text"] == _request().scene_units[0].source_text
+    assert scenes[0]["scene_id"] == _request().scene_units[0].scene_id
+    assert scenes[0]["source_sentence_ids"] == ["sentence-1"]
 
-def test_visual_director_rejects_changed_hero_required_text() -> None:
+
+def test_visual_director_restores_changed_hero_required_text() -> None:
     result = _result()
     hero = result["hero_visual_spec"]
     assert isinstance(hero, dict)
@@ -183,11 +188,8 @@ def test_visual_director_rejects_changed_hero_required_text() -> None:
     def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
         return real_client(*args, transport=transport, **kwargs)
 
-    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
-        VisualDirectorError,
-        match="changed required Hero title or author text",
-    ):
-        asyncio.run(direct_work_visuals(
+    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory):
+        actual = asyncio.run(direct_work_visuals(
             request=_request(),
             provider="deepseek",
             api_key="test",
@@ -198,8 +200,48 @@ def test_visual_director_rejects_changed_hero_required_text() -> None:
             timeout_seconds=30,
         ))
 
+    assert actual["hero_visual_spec"]["required_text"] == [
+        "面朝大海，春暖花开",
+        "海子",
+        "朗诵情感图谱",
+    ]
 
-def test_visual_director_rejects_changed_locked_profile() -> None:
+
+def test_visual_director_omits_empty_author_from_required_text() -> None:
+    request = _request().model_copy(update={"author": ""})
+    result = _result()
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(result, ensure_ascii=False)}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory):
+        actual = asyncio.run(direct_work_visuals(
+            request=request,
+            provider="deepseek",
+            api_key="test",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            thinking="enabled",
+            reasoning_effort="high",
+            timeout_seconds=30,
+        ))
+
+    assert actual["hero_visual_spec"]["required_text"] == [
+        "面朝大海，春暖花开",
+        "朗诵情感图谱",
+    ]
+
+
+def test_visual_director_restores_changed_locked_profile() -> None:
     result = _result()
     profile = result["work_visual_profile"]
     assert isinstance(profile, dict)
@@ -218,11 +260,8 @@ def test_visual_director_rejects_changed_locked_profile() -> None:
     def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
         return real_client(*args, transport=transport, **kwargs)
 
-    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
-        VisualDirectorError,
-        match="changed a locked work visual profile",
-    ):
-        asyncio.run(direct_work_visuals(
+    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory):
+        actual = asyncio.run(direct_work_visuals(
             request=locked_request,
             provider="deepseek",
             api_key="test",
@@ -232,3 +271,30 @@ def test_visual_director_rejects_changed_locked_profile() -> None:
             reasoning_effort="high",
             timeout_seconds=30,
         ))
+
+    assert actual["work_visual_profile"] == profile
+
+
+def test_visual_director_route_maps_domain_failure_to_502() -> None:
+    settings = Settings(
+        elevenlabs_api_key="eleven",
+        llm_api_key="gateway",
+        llm_auth_source="ai_api_key",
+        llm_provider="openai_compatible",
+        analysis_service_token="service",
+        analysis_callback_token="callback",
+        sites_bypass_token="sites",
+        llm_base_url="https://gateway.example",
+        llm_model="gpt-5.6-sol",
+        llm_thinking="enabled",
+        llm_reasoning_effort="high",
+        request_timeout_seconds=30,
+    )
+    with patch(
+        "app.main.direct_work_visuals",
+        side_effect=VisualDirectorError("invalid visual plan"),
+    ), pytest.raises(HTTPException) as captured:
+        asyncio.run(create_visual_plan(request=_request(), settings=settings))
+
+    assert captured.value.status_code == 502
+    assert captured.value.detail == "invalid visual plan"

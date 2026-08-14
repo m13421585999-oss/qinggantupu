@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from copy import deepcopy
@@ -98,51 +99,245 @@ def _chat_content(payload: dict[str, Any]) -> str:
         message = payload["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
         raise StructuredPayloadError("LLM response did not contain a message") from exc
+    if not isinstance(message, dict):
+        raise StructuredPayloadError("LLM response message was not an object")
     if message.get("refusal"):
         raise StructuredLlmError("LLM refused the structured request")
+    parsed = message.get("parsed")
+    if isinstance(parsed, dict):
+        return json.dumps(parsed, ensure_ascii=False)
     content = message.get("content")
     if isinstance(content, str) and content.strip():
         return content
+    if isinstance(content, dict):
+        content = [content]
     if isinstance(content, list):
-        texts = [
-            str(item.get("text") or "")
-            for item in content
-            if isinstance(item, dict)
-        ]
+        texts: list[str] = []
+        for item in content:
+            if isinstance(item, str) and item.strip():
+                texts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "refusal" or item.get("refusal"):
+                raise StructuredLlmError("LLM refused the structured request")
+            structured = item.get("parsed")
+            if structured is None:
+                structured = item.get("json")
+            if structured is None:
+                structured = item.get("arguments")
+            if isinstance(structured, dict):
+                texts.append(json.dumps(structured, ensure_ascii=False))
+                continue
+            if isinstance(structured, str) and structured.strip():
+                texts.append(structured)
+                continue
+            text = item.get("text")
+            if isinstance(text, dict):
+                text = text.get("value") or text.get("content")
+            if isinstance(text, str) and text.strip():
+                texts.append(text)
         if any(texts):
             return "".join(texts)
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function")
+            if isinstance(function, dict):
+                arguments = function.get("arguments")
+                if isinstance(arguments, str) and arguments.strip():
+                    return arguments
     raise StructuredPayloadError("LLM response did not contain JSON content")
 
 
 def _responses_content(payload: dict[str, Any]) -> str:
-    output_text = payload.get("output_text")
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text
+    """Extract structured text from common raw Responses API envelopes.
 
-    texts: list[str] = []
-    for item in payload.get("output", []):
+    OpenAI-compatible gateways are not fully consistent here: some expose the
+    canonical ``output[].content[].text`` shape, some synthesize top-level
+    ``output_text``, and a few return Chat-shaped ``choices`` even on the
+    Responses endpoint.  Keep the accepted shapes explicit so we do not
+    recursively mistake reasoning summaries or request metadata for output.
+    """
+
+    error = payload.get("error")
+    if error:
+        raise StructuredLlmError("Responses API returned an error payload")
+    if payload.get("refusal"):
+        raise StructuredLlmError("LLM refused the structured request")
+
+    candidates: list[str] = []
+
+    def append_candidate(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                append_candidate(item)
+            return
+        if isinstance(value, str):
+            if value.strip():
+                candidates.append(value)
+            return
+        if isinstance(value, dict):
+            # Structured-output proxies sometimes return the parsed object
+            # directly rather than serializing it into a text content part.
+            candidates.append(json.dumps(value, ensure_ascii=False))
+
+    append_candidate(payload.get("output_text"))
+    append_candidate(payload.get("parsed"))
+
+    output = payload.get("output", [])
+    if isinstance(output, dict):
+        output = [output]
+    elif isinstance(output, str):
+        append_candidate(output)
+        output = []
+    if not isinstance(output, list):
+        output = []
+
+    for item in output:
         if not isinstance(item, dict):
             continue
-        if item.get("type") == "refusal":
+        if item.get("type") == "refusal" or item.get("refusal"):
             raise StructuredLlmError("LLM refused the structured request")
-        for content in item.get("content", []):
-            if not isinstance(content, dict):
+        item_type = str(item.get("type") or "").lower()
+        if "reasoning" in item_type or "summary" in item_type:
+            continue
+        append_candidate(item.get("output_text"))
+        append_candidate(item.get("parsed"))
+        append_candidate(item.get("arguments"))
+
+        content = item.get("content", [])
+        if isinstance(content, (str, dict)):
+            content = [content]
+        if not isinstance(content, list):
+            continue
+        content_parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                if part.strip():
+                    content_parts.append(part)
                 continue
-            if content.get("type") == "refusal":
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "refusal" or part.get("refusal"):
                 raise StructuredLlmError("LLM refused the structured request")
-            text = content.get("text")
-            if isinstance(text, str) and text:
-                texts.append(text)
-    if texts:
-        return "".join(texts)
+            structured = part.get("parsed")
+            if structured is None:
+                structured = part.get("json")
+            if structured is None:
+                structured = part.get("arguments")
+            if isinstance(structured, dict):
+                content_parts.append(json.dumps(structured, ensure_ascii=False))
+                continue
+            if isinstance(structured, str) and structured.strip():
+                content_parts.append(structured)
+                continue
+            text = part.get("text")
+            if isinstance(text, dict):
+                text = text.get("value") or text.get("content")
+            if isinstance(text, str) and text.strip():
+                # Do not consume explicit reasoning/summary parts as the JSON
+                # result. Unknown text types remain accepted for proxy
+                # compatibility, provided they are not marked as reasoning.
+                part_type = str(part.get("type") or "").lower()
+                if "reasoning" not in part_type and "summary" not in part_type:
+                    content_parts.append(text)
+        if content_parts:
+            candidates.append("".join(content_parts))
+
+    if not candidates and isinstance(payload.get("choices"), list):
+        # A minority of compatible gateways return a Chat Completions envelope
+        # from /responses. Reuse the deliberately narrow Chat extractor.
+        candidates.append(_chat_content(payload))
+
+    for nested_key in ("response", "data"):
+        nested = payload.get(nested_key)
+        if not candidates and isinstance(nested, dict) and nested is not payload:
+            try:
+                candidates.append(_responses_content(nested))
+            except StructuredPayloadError:
+                pass
+
+    if not candidates:
+        status = str(payload.get("status") or "").lower()
+        if status in {"failed", "cancelled", "incomplete"}:
+            raise StructuredPayloadError(
+                f"Responses API ended with status {status} and no JSON output text"
+            )
+        raise StructuredPayloadError("Responses API did not contain JSON output text")
+
+    # Prefer a candidate that is already a complete JSON object. If a proxy
+    # splits output_text across adjacent parts, try their concatenation next.
+    for candidate in candidates:
+        try:
+            _parse_json_object(candidate)
+        except StructuredPayloadError:
+            continue
+        return candidate
+    combined = "".join(candidates)
+    if combined.strip():
+        return combined
     raise StructuredPayloadError("Responses API did not contain JSON output text")
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
+    if not isinstance(content, str):
+        raise StructuredPayloadError("LLM returned non-text structured output")
+
+    normalized = content.lstrip("\ufeff").strip()
+    fenced = re.fullmatch(
+        r"```(?:json)?\s*(.*?)\s*```",
+        normalized,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if fenced:
+        normalized = fenced.group(1).strip()
+
+    def load(candidate: str) -> Any:
+        value = json.loads(candidate)
+        # Some proxies JSON-encode the model's JSON text one extra time.
+        if isinstance(value, str):
+            value = json.loads(value)
+        return value
+
     try:
-        value = json.loads(content)
-    except ValueError as exc:
-        raise StructuredPayloadError("LLM returned invalid JSON") from exc
+        value = load(normalized)
+    except ValueError as direct_error:
+        # JSON mode providers occasionally add one short explanatory prefix or
+        # suffix despite the prompt. Extract exactly one balanced top-level
+        # object; never use a greedy regex that can merge unrelated objects.
+        start = normalized.find("{")
+        value = None
+        if start >= 0:
+            depth = 0
+            in_string = False
+            escaped = False
+            for index in range(start, len(normalized)):
+                char = normalized[index]
+                if in_string:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == '"':
+                        in_string = False
+                    continue
+                if char == '"':
+                    in_string = True
+                elif char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            value = load(normalized[start : index + 1])
+                        except ValueError:
+                            value = None
+                        break
+        if value is None:
+            raise StructuredPayloadError("LLM returned invalid JSON") from direct_error
     if not isinstance(value, dict):
         raise StructuredPayloadError("LLM structured output must be a JSON object")
     return value
@@ -386,20 +581,42 @@ async def generate_structured_result(
         raise StructuredLlmError(f"Unsupported LLM provider: {provider}")
 
     request_count = 0
+    request_limit = 3 if provider == OPENAI_COMPATIBLE_PROVIDER else 2
+
+    async def post_with_budget(
+        client: httpx.AsyncClient,
+        url: str,
+        body: dict[str, Any],
+    ) -> httpx.Response:
+        nonlocal request_count
+        if request_count >= request_limit:
+            raise StructuredLlmError(
+                f"LLM structured request exhausted its {request_limit}-request limit"
+            )
+        request_count += 1
+        return await _post(
+            client=client,
+            url=url,
+            api_key=api_key,
+            body=body,
+        )
+
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout_seconds, connect=30)
+        # ``timeout_seconds`` is a total provider budget, not a fresh timeout
+        # for every fallback. This prevents multiple individually slow repair
+        # calls from outliving the serverless request that owns them.
+        async with asyncio.timeout(timeout_seconds), httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_seconds, connect=min(30, timeout_seconds))
         ) as client:
             if provider == OPENAI_COMPATIBLE_PROVIDER:
                 responses_available = True
+                responses_json_unavailable = False
                 responses_repair_content: str | None = None
                 responses_repair_error: str | None = None
-                request_count += 1
-                response = await _post(
-                    client=client,
-                    url=_openai_endpoint(base_url, "responses"),
-                    api_key=api_key,
-                    body=_responses_body(
+                response = await post_with_budget(
+                    client,
+                    _openai_endpoint(base_url, "responses"),
+                    _responses_body(
                         model=model,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
@@ -434,16 +651,20 @@ async def generate_structured_result(
                     )
 
                 # A gateway can expose /responses but only implement JSON
-                # mode. Keep Responses as the preferred API and perform one
-                # validation-guided repair there before trying Chat.
+                # mode. Use the remaining bounded attempts for JSON mode and
+                # at most one validation-guided repair. Once /responses has
+                # returned a usable 2xx envelope, do not replay the same long
+                # prompt through Chat Completions as a third strategy.
                 if responses_available:
-                    for json_attempt in range(2):
-                        request_count += 1
-                        response = await _post(
-                            client=client,
-                            url=_openai_endpoint(base_url, "responses"),
-                            api_key=api_key,
-                            body=_responses_body(
+                    while request_count < request_limit:
+                        was_repair = (
+                            responses_repair_content is not None
+                            or responses_repair_error is not None
+                        )
+                        response = await post_with_budget(
+                            client,
+                            _openai_endpoint(base_url, "responses"),
+                            _responses_body(
                                 model=model,
                                 system_prompt=system_prompt,
                                 user_prompt=user_prompt,
@@ -459,6 +680,7 @@ async def generate_structured_result(
                             if _responses_is_unavailable(
                                 response
                             ) or _json_mode_is_unavailable(response):
+                                responses_json_unavailable = True
                                 break
                             raise StructuredLlmError(
                                 "Responses JSON request failed "
@@ -474,26 +696,28 @@ async def generate_structured_result(
                             )
                         except StructuredPayloadError as exc:
                             responses_repair_error = str(exc)
-                            if json_attempt == 0:
-                                continue
-                            break
+                            continue
                         return StructuredGenerationResult(
                             data=value,
                             endpoint="responses",
                             output_mode=(
-                                "json_object_repair"
-                                if json_attempt or responses_repair_error is not None
-                                else "json_object"
+                                "json_object_repair" if was_repair else "json_object"
                             ),
                             request_count=request_count,
                         )
+                    if not responses_json_unavailable:
+                        raise StructuredLlmError(
+                            "Responses API did not return valid schema data within "
+                            f"the {request_limit}-request limit: "
+                            f"{responses_repair_error or 'missing JSON output'}"
+                        )
 
-                request_count += 1
-                response = await _post(
-                    client=client,
-                    url=_openai_endpoint(base_url, "chat/completions"),
-                    api_key=api_key,
-                    body=_chat_body(
+                chat_repair_content: str | None = None
+                chat_repair_error: str | None = None
+                response = await post_with_budget(
+                    client,
+                    _openai_endpoint(base_url, "chat/completions"),
+                    _chat_body(
                         provider=provider,
                         model=model,
                         system_prompt=system_prompt,
@@ -508,11 +732,12 @@ async def generate_structured_result(
                 )
                 if 200 <= response.status_code < 300:
                     try:
+                        chat_repair_content = _chat_content(_response_json(response))
                         value = _validated_json_object(
-                            _chat_content(_response_json(response)), validator
+                            chat_repair_content, validator
                         )
-                    except StructuredPayloadError:
-                        pass
+                    except StructuredPayloadError as exc:
+                        chat_repair_error = str(exc)
                     else:
                         return StructuredGenerationResult(
                             data=value,
@@ -531,15 +756,22 @@ async def generate_structured_result(
                 if provider == DEEPSEEK_PROVIDER
                 else _openai_endpoint(base_url, "chat/completions")
             )
-            repair_content: str | None = None
-            repair_error: str | None = None
-            for repair_attempt in range(2):
-                request_count += 1
-                response = await _post(
-                    client=client,
-                    url=chat_url,
-                    api_key=api_key,
-                    body=_chat_body(
+            repair_content = (
+                chat_repair_content
+                if provider == OPENAI_COMPATIBLE_PROVIDER
+                else None
+            )
+            repair_error = (
+                chat_repair_error
+                if provider == OPENAI_COMPATIBLE_PROVIDER
+                else None
+            )
+            while request_count < request_limit:
+                was_repair = repair_content is not None
+                response = await post_with_budget(
+                    client,
+                    chat_url,
+                    _chat_body(
                         provider=provider,
                         model=model,
                         system_prompt=system_prompt,
@@ -564,21 +796,24 @@ async def generate_structured_result(
                     value = _validated_json_object(repair_content, validator)
                 except StructuredPayloadError as exc:
                     repair_error = str(exc)
-                    if repair_attempt == 0:
-                        continue
-                    raise StructuredLlmError(
-                        f"LLM JSON repair failed validation: {repair_error}"
-                    ) from exc
+                    continue
                 return StructuredGenerationResult(
                     data=value,
                     endpoint="chat/completions",
                     output_mode=(
-                        "json_object_repair" if repair_attempt else "json_object"
+                        "json_object_repair" if was_repair else "json_object"
                     ),
                     request_count=request_count,
                 )
-    except httpx.TimeoutException as exc:
-        raise StructuredLlmError("LLM structured request timed out") from exc
+            raise StructuredLlmError(
+                "LLM JSON output did not validate within "
+                f"the {request_limit}-request limit: "
+                f"{repair_error or 'missing JSON output'}"
+            )
+    except (TimeoutError, httpx.TimeoutException) as exc:
+        raise StructuredLlmError(
+            f"LLM structured request exceeded its {timeout_seconds:g}s total timeout"
+        ) from exc
     except httpx.HTTPError as exc:
         raise StructuredLlmError("Unable to call the LLM service") from exc
     raise StructuredLlmError("LLM structured request did not produce a result")

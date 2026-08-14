@@ -2477,7 +2477,6 @@ async function createVisualGenerationJob(
   env: Env,
   workId: string,
   target: Omit<VisualGenerationTarget, "includePlan"> & { includePlan?: boolean },
-  ctx: ExecutionContext,
 ) {
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
   if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
@@ -2517,7 +2516,6 @@ async function createVisualGenerationJob(
     return input && visualTargetKey(input) === visualTargetKey(normalizedTarget);
   });
   if (active) {
-    ctx.waitUntil(runVisualGenerationJob(env, String(active.id)));
     return json({
       visual_job_id: active.id,
       work_id: workId,
@@ -2549,7 +2547,6 @@ async function createVisualGenerationJob(
     createdAt,
     createdAt,
   ).run();
-  ctx.waitUntil(runVisualGenerationJob(env, jobId));
   return json({
     visual_job_id: jobId,
     work_id: workId,
@@ -2563,7 +2560,6 @@ async function generateWorkVisuals(
   request: Request,
   env: Env,
   workId: string,
-  ctx: ExecutionContext,
 ) {
   let body: Record<string, unknown> = {};
   try { body = await request.json() as Record<string, unknown>; } catch { /* optional body */ }
@@ -2573,16 +2569,23 @@ async function generateWorkVisuals(
     type,
     sceneId,
     includePlan: body.includePlan === true || body.include_plan === true,
-  }, ctx);
+  });
 }
 
-async function getVisualGenerationJob(env: Env, jobId: string, ctx: ExecutionContext) {
-  const job = await first<Row>(env.DB.prepare(
+async function getVisualGenerationJob(env: Env, jobId: string) {
+  let job = await first<Row>(env.DB.prepare(
     "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
   ).bind(jobId, VISUAL_GENERATION_JOB_TYPE));
   if (!job) return apiError(404, "VISUAL_JOB_NOT_FOUND", "找不到视觉生成任务。");
   if (!VISUAL_TERMINAL_STATUSES.has(String(job.status))) {
-    ctx.waitUntil(runVisualGenerationJob(env, jobId));
+    // Keep the generation promise attached to this polling request. Sites may
+    // cancel waitUntil work after the response is returned, while a pending
+    // request remains alive for the upstream LLM/image calls and R2 writes.
+    await runVisualGenerationJob(env, jobId);
+    job = await first<Row>(env.DB.prepare(
+      "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+    ).bind(jobId, VISUAL_GENERATION_JOB_TYPE));
+    if (!job) return apiError(404, "VISUAL_JOB_NOT_FOUND", "找不到视觉生成任务。");
   }
   const output = parseJson<Record<string, unknown>>(job.output_json as string | null);
   return json({
@@ -2681,7 +2684,6 @@ async function patchVisualAsset(request: Request, env: Env, visualId: string) {
 async function regenerateVisualAsset(
   env: Env,
   visualId: string,
-  ctx: ExecutionContext,
 ) {
   const asset = await first<Row>(env.DB.prepare("SELECT * FROM visual_assets WHERE id = ?").bind(visualId));
   if (!asset) return apiError(404, "VISUAL_ASSET_NOT_FOUND", "找不到视觉资产。");
@@ -2695,7 +2697,7 @@ async function regenerateVisualAsset(
     type: String(asset.kind) as "hero" | "scene",
     sceneId: asset.scene_id == null ? undefined : String(asset.scene_id),
     includePlan: false,
-  }, ctx);
+  });
 }
 
 async function serveAsset(request: Request, env: Env, assetId: string) {
@@ -2782,7 +2784,7 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
   if (jobMatch && request.method === "GET") return getAnalysisJob(env, jobMatch[1]);
   const visualJobMatch = url.pathname.match(/^\/api\/visual-jobs\/([^/]+)$/);
   if (visualJobMatch && request.method === "GET") {
-    return getVisualGenerationJob(env, visualJobMatch[1], ctx);
+    return getVisualGenerationJob(env, visualJobMatch[1]);
   }
   const inputMatch = url.pathname.match(/^\/api\/internal\/analysis-jobs\/([^/]+)\/input$/);
   if (inputMatch && request.method === "GET") return getAnalysisInput(request, env, inputMatch[1]);
@@ -2804,7 +2806,7 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
   if (visualPlanMatch && request.method === "POST") return planWorkVisuals(env, visualPlanMatch[1]);
   const visualGenerateMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visuals\/generate$/);
   if (visualGenerateMatch && request.method === "POST") {
-    return generateWorkVisuals(request, env, visualGenerateMatch[1], ctx);
+    return generateWorkVisuals(request, env, visualGenerateMatch[1]);
   }
   const visualUploadMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visual-assets\/upload$/);
   if (visualUploadMatch && request.method === "POST") return uploadVisualReplacement(request, env, visualUploadMatch[1]);
@@ -2812,7 +2814,7 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
   if (visualAssetMatch && request.method === "PATCH") return patchVisualAsset(request, env, visualAssetMatch[1]);
   const visualRegenerateMatch = url.pathname.match(/^\/api\/visual-assets\/([^/]+)\/regenerate$/);
   if (visualRegenerateMatch && request.method === "POST") {
-    return regenerateVisualAsset(env, visualRegenerateMatch[1], ctx);
+    return regenerateVisualAsset(env, visualRegenerateMatch[1]);
   }
   const workMatch = url.pathname.match(/^\/api\/works\/([^/]+)$/);
   if (workMatch && request.method === "GET") {

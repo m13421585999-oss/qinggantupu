@@ -22,7 +22,7 @@ from app.config import (
     configured_model,
     configured_provider,
 )
-from app.interpretation.visual_director import direct_work_visuals
+from app.interpretation.visual_director import VisualDirectorError, direct_work_visuals
 from app.pipeline import PIPELINE_VERSION, analyze_job
 from app.providers.image_generation import ImageGenerationError, generate_image
 from app.providers.hero_text_validation import (
@@ -285,16 +285,19 @@ async def create_visual_plan(
 ) -> dict[str, Any]:
     # Deliberately independent from analyze_job/control_spec. A failure here
     # only fails the caller's visual operation and cannot mutate analysis data.
-    result = await direct_work_visuals(
-        request=request,
-        provider=settings.llm_provider,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        model=settings.llm_model,
-        thinking=settings.llm_thinking,
-        reasoning_effort=settings.llm_reasoning_effort,
-        timeout_seconds=settings.request_timeout_seconds,
-    )
+    try:
+        result = await direct_work_visuals(
+            request=request,
+            provider=settings.llm_provider,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            thinking=settings.llm_thinking,
+            reasoning_effort=settings.llm_reasoning_effort,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except VisualDirectorError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     generation_meta = result.pop("_meta", {})
     generation_meta = generation_meta if isinstance(generation_meta, dict) else {}
     return {

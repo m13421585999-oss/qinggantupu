@@ -75,6 +75,15 @@ test("image provider is configurable and never exposes an API key in payload", (
 });
 
 test("visual generation is resumable, bounded and reports partial failure", () => {
+  const createJob = worker.slice(
+    worker.indexOf("async function createVisualGenerationJob"),
+    worker.indexOf("async function generateWorkVisuals"),
+  );
+  const getJob = worker.slice(
+    worker.indexOf("async function getVisualGenerationJob"),
+    worker.indexOf("async function uploadVisualReplacement"),
+  );
+
   assert.match(worker, /VISUAL_GENERATION_JOB_TYPE = "visual_generation"/);
   assert.match(worker, /VISUAL_SCENE_CONCURRENCY = 3/);
   assert.match(worker, /VISUAL_GENERATION_RETRY_LIMIT = 1/);
@@ -85,7 +94,12 @@ test("visual generation is resumable, bounded and reports partial failure", () =
   assert.match(worker, /"completed"/);
   assert.match(worker, /"partial_failed"/);
   assert.match(worker, /visualResultSince/);
-  assert.match(worker, /ctx\.waitUntil\(runVisualGenerationJob/);
+  assert.doesNotMatch(worker, /waitUntil\(runVisualGenerationJob/);
+  assert.doesNotMatch(createJob, /runVisualGenerationJob/);
+  assert.match(createJob, /VALUES \(\?, \?, \?, 'queued', 0/);
+  assert.match(createJob, /status: "queued"[\s\S]*?\}, 202\)/);
+  assert.match(getJob, /if \(!VISUAL_TERMINAL_STATUSES\.has\(String\(job\.status\)\)\) \{[\s\S]*?await runVisualGenerationJob\(env, jobId\)/);
+  assert.match(getJob, /await runVisualGenerationJob\(env, jobId\);[\s\S]*?job = await first<Row>/);
   assert.match(worker, /visual-jobs/);
   assert.match(worker, /createVisualGenerationJob\(env, String\(asset\.work_id\)/);
   assert.match(worker, /generated\.width \?\?/);
