@@ -103,6 +103,15 @@ def configured_image_model() -> str:
     return os.getenv("IMAGE_MODEL", DEFAULT_IMAGE_MODEL).strip() or DEFAULT_IMAGE_MODEL
 
 
+def configured_image_base_url() -> str:
+    configured = (
+        os.getenv("IMAGE_BASE_URL", "").strip()
+        or os.getenv("AI_BASE_URL", "").strip()
+        or os.getenv("LLM_BASE_URL", "").strip()
+    )
+    return (configured or OPENAI_COMPATIBLE_BASE_URL).rstrip("/")
+
+
 def configured_image_ocr_model(provider: str | None = None) -> str:
     return os.getenv("IMAGE_OCR_MODEL", "").strip() or configured_model(provider)
 
@@ -121,6 +130,8 @@ class Settings:
     llm_thinking: str
     llm_reasoning_effort: str
     request_timeout_seconds: float
+    image_api_key: str = ""
+    image_base_url: str = OPENAI_COMPATIBLE_BASE_URL
     image_provider: str = DEFAULT_IMAGE_PROVIDER
     image_model: str = DEFAULT_IMAGE_MODEL
     image_ocr_model: str = ""
@@ -130,6 +141,7 @@ class Settings:
         ai_api_key = os.getenv("AI_API_KEY", "").strip()
         legacy_llm_api_key = os.getenv("LLM_API_KEY", "").strip()
         llm_api_key = ai_api_key or legacy_llm_api_key
+        image_api_key = os.getenv("IMAGE_API_KEY", "").strip() or llm_api_key
         required = {
             "ELEVENLABS_API_KEY": os.getenv("ELEVENLABS_API_KEY", "").strip(),
             "ANALYSIS_SERVICE_TOKEN": os.getenv("ANALYSIS_SERVICE_TOKEN", "").strip(),
@@ -155,6 +167,8 @@ class Settings:
             llm_thinking=DEEPSEEK_THINKING,
             llm_reasoning_effort=configured_reasoning_effort(),
             request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "270")),
+            image_api_key=image_api_key,
+            image_base_url=configured_image_base_url(),
             image_provider=configured_image_provider(),
             image_model=configured_image_model(),
             image_ocr_model=configured_image_ocr_model(provider),

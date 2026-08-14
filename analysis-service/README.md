@@ -34,6 +34,8 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 - `LLM_MODEL`：朗诵解释和 Visual Director 共用的模型名；
 - `LLM_REASONING_EFFORT`：可选，默认 `high`，复杂作品可临时改为 `max` 后重新分析。
 - `IMAGE_PROVIDER`：当前固定为 `openai_compatible`；
+- `IMAGE_BASE_URL`：可选的图片生成专用网关根地址；未设置时依次回退到 `AI_BASE_URL`、旧 `LLM_BASE_URL`；
+- `IMAGE_API_KEY`：可选的图片生成专用服务端 Key；未设置时依次回退到 `AI_API_KEY`、旧 `LLM_API_KEY`；
 - `IMAGE_MODEL`：图片生成模型，当前默认 `image2.0`；
 - `IMAGE_OCR_MODEL`：可选的 Hero 文字核对模型；未设置时自动使用 `LLM_MODEL`。
 
@@ -59,11 +61,11 @@ thinking=enabled
 reasoning_effort=high
 ```
 
-`AI_API_KEY` 是正式变量；旧 `LLM_API_KEY` 仅作为迁移期兼容回滚读取。`GET /health` 只返回 Provider、Base URL、模型等非敏感配置，不返回 Key。
+`AI_API_KEY` 是正式 LLM 变量；旧 `LLM_API_KEY` 仅作为迁移期兼容回滚读取。`IMAGE_API_KEY` 可将图片生成权限与 LLM 权限分开。`GET /health` 的 `configured.LLM_AUTH` 与 `configured.IMAGE_AUTH` 只返回是否已配置的布尔值，不返回 Key。
 
 OpenAI 兼容结构化输出按 `Responses json_schema` → `Chat Completions json_schema` → `Chat Completions json_object` 顺序降级。只有上游明确不支持相应端点/Schema，或返回内容未通过本地 Pydantic 校验时才降级；JSON Object 模式解析或校验失败会进行一次定向修复重试。成功使用的真实 endpoint 和输出模式会写入视觉响应 `_meta`，并写入分析包的非业务 `_meta.llm`，不会改变 control_spec Schema 或组装规则。
 
-图片生成和 Hero OCR 与结构化 LLM 共用服务端 `AI_BASE_URL` / `AI_API_KEY`，浏览器端不接触 Key。`/v1/image-generation` 只调用规范化后的 `/v1/images/generations`；Base URL 无论是否已经包含 `/v1` 都不会重复拼接版本路径。
+图片生成优先使用服务端 `IMAGE_BASE_URL` / `IMAGE_API_KEY`，未设置的单项才分别回退到 `AI_BASE_URL` / `AI_API_KEY`（再兼容旧 `LLM_*` 变量）；Hero OCR 继续使用结构化 LLM 的 `llm_base_url` / `llm_api_key`。浏览器端不会接触任何 Key。`/v1/image-generation` 只使用解析后的图片专用配置调用规范化的 `/v1/images/generations`；Base URL 无论是否已经包含 `/v1` 都不会重复拼接版本路径。
 
 部署完成后，把服务 HTTPS 根地址配置到网站端 `ANALYSIS_SERVICE_URL`。网站端与分析服务端的 `ANALYSIS_SERVICE_TOKEN`、`ANALYSIS_CALLBACK_TOKEN` 必须完全一致。
 
@@ -78,7 +80,7 @@ PYTHONPATH=. .venv/bin/python -m pytest tests
 PYTHONPATH=. .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-本地验证时只在本机环境文件中设置 `AI_API_KEY`。不要提交 `.env`、`.env.local`、API Key 或 token，也不要把它们放进浏览器代码。
+本地验证时只在本机环境文件中设置 `AI_API_KEY`，需要分离图片权限时再设置 `IMAGE_API_KEY`。不要提交 `.env`、`.env.local`、API Key 或 token，也不要把它们放进浏览器代码。
 
 ## 部署体积与限制
 

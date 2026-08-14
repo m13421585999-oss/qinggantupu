@@ -16,6 +16,7 @@ from app.config import (
     ConfigurationError,
     Settings,
     configured_base_url,
+    configured_image_base_url,
     configured_image_model,
     configured_image_ocr_model,
     configured_image_provider,
@@ -210,6 +211,11 @@ async def health() -> dict[str, Any]:
         os.getenv("AI_API_KEY", "").strip()
         or os.getenv("LLM_API_KEY", "").strip()
     )
+    configured["IMAGE_AUTH"] = bool(
+        os.getenv("IMAGE_API_KEY", "").strip()
+        or os.getenv("AI_API_KEY", "").strip()
+        or os.getenv("LLM_API_KEY", "").strip()
+    )
     reasoning_effort = os.getenv("LLM_REASONING_EFFORT", "high").strip().lower()
     configured["LLM_REASONING_EFFORT"] = reasoning_effort in LLM_REASONING_EFFORTS
     try:
@@ -217,12 +223,14 @@ async def health() -> dict[str, Any]:
         base_url = configured_base_url(provider)
         model = configured_model(provider)
         image_provider = configured_image_provider()
+        image_base_url = configured_image_base_url()
         image_model = configured_image_model()
         image_ocr_model = configured_image_ocr_model(provider)
         configured["LLM_PROVIDER"] = True
         configured["AI_BASE_URL"] = bool(base_url)
         configured["LLM_MODEL"] = bool(model)
         configured["IMAGE_PROVIDER"] = True
+        configured["IMAGE_BASE_URL"] = bool(image_base_url)
         configured["IMAGE_MODEL"] = bool(image_model)
         configured["IMAGE_OCR_MODEL"] = bool(image_ocr_model)
     except ConfigurationError:
@@ -230,12 +238,14 @@ async def health() -> dict[str, Any]:
         base_url = os.getenv("AI_BASE_URL", "").strip()
         model = os.getenv("LLM_MODEL", "").strip()
         image_provider = os.getenv("IMAGE_PROVIDER", "").strip() or "invalid"
+        image_base_url = configured_image_base_url()
         image_model = os.getenv("IMAGE_MODEL", "").strip()
         image_ocr_model = os.getenv("IMAGE_OCR_MODEL", "").strip()
         configured["LLM_PROVIDER"] = False
         configured["AI_BASE_URL"] = False
         configured["LLM_MODEL"] = False
         configured["IMAGE_PROVIDER"] = False
+        configured["IMAGE_BASE_URL"] = False
         configured["IMAGE_MODEL"] = False
         configured["IMAGE_OCR_MODEL"] = False
     llm = {
@@ -326,8 +336,8 @@ async def create_image_generation(
     try:
         result = await generate_image(
             provider=settings.image_provider,
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
+            api_key=settings.image_api_key,
+            base_url=settings.image_base_url,
             model=model,
             prompt=request.prompt,
             negative_prompt=request.negative_prompt,

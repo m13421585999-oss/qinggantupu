@@ -35,6 +35,11 @@ def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "LLM_PROVIDER",
         "LLM_BASE_URL",
         "LLM_MODEL",
+        "IMAGE_API_KEY",
+        "IMAGE_BASE_URL",
+        "IMAGE_PROVIDER",
+        "IMAGE_MODEL",
+        "IMAGE_OCR_MODEL",
         "VISUAL_LLM_MODEL",
         "LLM_REASONING_EFFORT",
         "REQUEST_TIMEOUT_SECONDS",
@@ -74,6 +79,40 @@ def test_settings_read_canonical_openai_compatible_environment(monkeypatch: pyte
     assert settings.llm_model == "provider/model"
     assert settings.llm_thinking == "enabled"
     assert settings.llm_reasoning_effort == "high"
+    assert settings.image_api_key == "gateway-test"
+    assert settings.image_base_url == "https://gateway.example/v1"
+
+
+def test_settings_prefer_dedicated_image_credentials_without_changing_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("AI_API_KEY", "llm-key")
+    monkeypatch.setenv("AI_BASE_URL", "https://llm.example/v1/")
+    monkeypatch.setenv("IMAGE_API_KEY", "image-key")
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://images.example/v1/")
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_api_key == "llm-key"
+    assert settings.llm_base_url == "https://llm.example/v1"
+    assert settings.image_api_key == "image-key"
+    assert settings.image_base_url == "https://images.example/v1"
+
+
+def test_settings_image_credentials_fall_back_to_legacy_llm_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "legacy-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://legacy.example/v1/")
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_api_key == "legacy-key"
+    assert settings.llm_base_url == "https://legacy.example/v1"
+    assert settings.image_api_key == "legacy-key"
+    assert settings.image_base_url == "https://legacy.example/v1"
 
 
 def test_settings_default_to_v4_pro_when_model_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,6 +246,24 @@ def test_health_reports_openai_compatible_gateway_and_shared_visual_model(
         "chat/completions",
     ]
     assert result["visual_director"]["model"] == "provider/model"
+
+
+def test_health_reports_image_configuration_as_booleans_without_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("AI_API_KEY", "llm-secret")
+    monkeypatch.setenv("IMAGE_API_KEY", "image-secret")
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://images.example/v1")
+
+    result = asyncio.run(health())
+
+    assert result["ok"] is True
+    assert result["configured"]["IMAGE_AUTH"] is True
+    assert result["configured"]["IMAGE_BASE_URL"] is True
+    serialized = json.dumps(result)
+    assert "llm-secret" not in serialized
+    assert "image-secret" not in serialized
 
 
 def test_deepseek_request_enables_thinking_with_configured_effort() -> None:

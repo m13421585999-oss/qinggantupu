@@ -19,6 +19,8 @@ from app.providers.image_generation import (
 
 
 def _environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("IMAGE_API_KEY", raising=False)
+    monkeypatch.delenv("IMAGE_BASE_URL", raising=False)
     monkeypatch.setenv("ELEVENLABS_API_KEY", "eleven-test")
     monkeypatch.setenv("ANALYSIS_SERVICE_TOKEN", "service-test")
     monkeypatch.setenv("ANALYSIS_CALLBACK_TOKEN", "callback-test")
@@ -100,6 +102,46 @@ def test_image_proxy_forwards_configured_model_size_and_b64(
         "prompt": "海面晨光\n\n必须避免：文字，水印",
         "size": "768x576",
         "n": 1,
+    }
+
+
+def test_image_proxy_uses_only_dedicated_image_key_and_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _environment(monkeypatch)
+    monkeypatch.setenv("IMAGE_API_KEY", "image-only-key")
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://images.example/v1/")
+    captured: dict[str, str] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["host"] = request.url.host
+        captured["path"] = request.url.path
+        captured["authorization"] = request.headers.get("authorization", "")
+        return httpx.Response(200, json={"data": [{"b64_json": "aGVsbG8="}]})
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch("app.providers.image_generation.httpx.AsyncClient", side_effect=factory):
+        response = TestClient(app).post(
+            "/v1/image-generation",
+            headers={"authorization": "Bearer service-test"},
+            json={
+                "kind": "scene",
+                "prompt": "海面晨光",
+                "width": 768,
+                "height": 576,
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured == {
+        "host": "images.example",
+        "path": "/v1/images/generations",
+        "authorization": "Bearer image-only-key",
     }
 
 
