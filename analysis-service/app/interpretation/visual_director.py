@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from typing import Any
@@ -18,6 +19,8 @@ class VisualDirectorError(RuntimeError):
 
 
 HERO_LAYOUT_CONTRACT_MARKER = "【Hero 成品排版硬约束 v2】"
+VISUAL_SCENE_BATCH_SIZE = 8
+VISUAL_BATCH_TIMEOUT_SECONDS = 42.0
 
 
 def _author_display(author: str) -> str:
@@ -143,7 +146,7 @@ def _validate_source_contract(
         raise VisualDirectorError("Visual director changed required Hero title or author text")
 
 
-async def direct_work_visuals(
+async def _generate_visual_batch(
     *,
     request: VisualDirectorRequest,
     provider: str,
@@ -197,6 +200,7 @@ async def direct_work_visuals(
             temperature=0.2,
             timeout_seconds=timeout_seconds,
             validator=VisualDirectorResult.model_validate,
+            prefer_chat_json=True,
         )
     except StructuredLlmError as exc:
         raise VisualDirectorError(f"Visual director failed: {exc}") from exc
@@ -217,5 +221,223 @@ async def direct_work_visuals(
             "endpoint": generation.endpoint,
             "output_mode": generation.output_mode,
             "request_count": generation.request_count,
+        },
+    }
+
+
+def _batch_request(
+    request: VisualDirectorRequest,
+    start: int,
+    end: int,
+    locked_profile: dict[str, Any] | None,
+) -> VisualDirectorRequest:
+    scene_units = request.scene_units[start:end]
+    sentence_ids = {
+        sentence_id
+        for scene in scene_units
+        for sentence_id in scene.source_sentence_ids
+    }
+    summary = deepcopy(request.control_spec_summary)
+    sentences = summary.get("sentences")
+    if isinstance(sentences, list) and sentence_ids:
+        summary["sentences"] = [
+            sentence
+            for sentence in sentences
+            if isinstance(sentence, dict)
+            and str(sentence.get("id", "")) in sentence_ids
+        ]
+    return request.model_copy(update={
+        "scene_units": scene_units,
+        "control_spec_summary": summary,
+        "locked_profile": locked_profile,
+    })
+
+
+def _fallback_visual_plan(request: VisualDirectorRequest) -> dict[str, Any]:
+    """Create a safe plan when the upstream visual LLM misses its deadline."""
+
+    profile = request.locked_profile or {
+        "visual_style": "当代东方诗意编辑插画",
+        "palette": ["暖白", "雾蓝", "墨灰", "淡金", "朱砂", "低饱和青绿"],
+        "texture": "细腻棉纸与克制水粉颗粒",
+        "lighting": "柔和自然光，随全文情绪由冷到暖变化",
+        "atmosphere": "安静、文学性、留白充足",
+        "composition_language": "主体偏向画面一侧，以大形体和留白保持小尺寸可读性",
+        "human_presence": "弱化具体面孔，以背影、局部或环境意象为主",
+        "symbolic_language": ["光影", "道路", "窗", "植物", "时间痕迹"],
+        "avoid": ["随机文字", "水印", "廉价卡通", "正面人物特写", "通用旅游海报"],
+    }
+    excerpt = "".join(request.full_text.split())[:120]
+    hero_prompt = _hero_production_prompt(
+        (
+            "1500×280当代东方诗意作品封面，细腻棉纸与克制水粉质感，严格左文右景。"
+            f"围绕作品《{request.title}》及全文意象“{excerpt}”提炼一个清楚主视觉；"
+            "左侧保持干净低对比，右侧集中文学意象，不生成按钮、界面或额外文字。"
+        ),
+        request,
+    )
+    hero = {
+        "type": "hero",
+        "size": {"width": 1500, "height": 280},
+        "required_text": _hero_required_text(request),
+        "text_layout": "左侧 x=6%–43% 为文字安全区，右侧 x=55%–96% 集中作品意象",
+        "visual_subject": f"围绕《{request.title}》核心情绪提炼的代表性环境意象",
+        "composition": "左文右景；左侧干净留白，右侧承载画面主体",
+        "lighting": str(profile.get("lighting", "柔和自然光")),
+        "palette": list(profile.get("palette", ["暖白", "雾蓝"])),
+        "image_prompt": hero_prompt,
+        "negative_prompt": "错字，漏字，随机文字，英文，水印，徽标，按钮，UI，正面人物特写，廉价卡通",
+    }
+    last_position = max((scene.position for scene in request.scene_units), default=0)
+    scenes = []
+    for scene in request.scene_units:
+        source = "".join(scene.source_text.split())
+        role = "开篇" if scene.position == 0 else "收束" if scene.position == last_position else "推进"
+        context = "；".join(filter(None, [scene.previous_text, scene.source_text, scene.next_text]))
+        scenes.append({
+            "scene_id": scene.scene_id,
+            "source_sentence_ids": list(scene.source_sentence_ids),
+            "source_text": scene.source_text,
+            "narrative_function": f"承担全文第{scene.position + 1}个场景的{role}作用",
+            "visual_type": "symbolic_scene",
+            "scene_meaning": source,
+            "main_subject": f"围绕“{source[:64]}”提炼的单一清楚文学意象",
+            "environment": "与当前句情绪相符的克制环境空间，保留足够呼吸感",
+            "emotion": ["含蓄", "真实", "有层次"],
+            "symbolism": ["光影", "空间", "时间痕迹"],
+            "composition": "4:3构图，主体位于三分线，小尺寸下轮廓清楚，背景简洁",
+            "camera_distance": "中景或中远景",
+            "lighting": str(profile.get("lighting", "柔和自然光")),
+            "palette": list(profile.get("palette", ["暖白", "雾蓝"])),
+            "image_prompt": (
+                "4:3当代东方诗意编辑插画，细腻棉纸与克制水粉质感。"
+                f"根据当前原文“{scene.source_text}”及相邻语境“{context}”提炼一个具体、清楚、"
+                "具有文学象征性的环境画面；主体适合约280×220小尺寸显示，色彩低饱和，"
+                "不得出现正文、标题、编号、按钮、界面、随机汉字或水印。"
+            ),
+            "negative_prompt": "任何文字，汉字，数字，水印，徽标，UI，按钮，正面人物特写，廉价卡通，旅游海报，杂乱细节",
+        })
+    result = VisualDirectorResult.model_validate({
+        "work_visual_profile": profile,
+        "hero_visual_spec": hero,
+        "scene_visual_specs": scenes,
+    })
+    _validate_source_contract(result, request)
+    return {
+        **result.model_dump(mode="json"),
+        "_meta": {
+            "endpoint": "local/fallback",
+            "output_mode": "deterministic_fallback",
+            "request_count": 0,
+        },
+    }
+
+
+async def _generate_or_fallback(
+    *,
+    request: VisualDirectorRequest,
+    provider: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    thinking: str,
+    reasoning_effort: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    try:
+        return await _generate_visual_batch(
+            request=request,
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            timeout_seconds=min(timeout_seconds, VISUAL_BATCH_TIMEOUT_SECONDS),
+        )
+    except VisualDirectorError:
+        return _fallback_visual_plan(request)
+
+
+async def direct_work_visuals(
+    *,
+    request: VisualDirectorRequest,
+    provider: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    thinking: str,
+    reasoning_effort: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Plan long works in bounded batches so one large response cannot 524."""
+
+    batch_ranges = [
+        (start, min(start + VISUAL_SCENE_BATCH_SIZE, len(request.scene_units)))
+        for start in range(0, len(request.scene_units), VISUAL_SCENE_BATCH_SIZE)
+    ]
+    first_start, first_end = batch_ranges[0]
+    first_request = _batch_request(
+        request,
+        first_start,
+        first_end,
+        request.locked_profile,
+    )
+    first = await _generate_or_fallback(
+        request=first_request,
+        provider=provider,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        thinking=thinking,
+        reasoning_effort=reasoning_effort,
+        timeout_seconds=timeout_seconds,
+    )
+    locked_profile = first["work_visual_profile"]
+
+    async def generate_range(start: int, end: int) -> dict[str, Any]:
+        return await _generate_or_fallback(
+            request=_batch_request(request, start, end, locked_profile),
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            timeout_seconds=timeout_seconds,
+        )
+
+    remaining = await asyncio.gather(*(
+        generate_range(start, end)
+        for start, end in batch_ranges[1:]
+    ))
+    parts = [first, *remaining]
+    combined = {
+        "work_visual_profile": first["work_visual_profile"],
+        "hero_visual_spec": first["hero_visual_spec"],
+        "scene_visual_specs": [
+            scene
+            for part in parts
+            for scene in part["scene_visual_specs"]
+        ],
+    }
+    canonical = _canonicalize_immutable_fields(combined, request)
+    try:
+        result = VisualDirectorResult.model_validate(canonical)
+    except (ValueError, ValidationError) as exc:
+        raise VisualDirectorError(f"Visual director returned invalid batched JSON: {exc}") from exc
+    _validate_source_contract(result, request)
+    metas = [part.get("_meta", {}) for part in parts]
+    endpoints = {str(meta.get("endpoint", "")) for meta in metas}
+    modes = {str(meta.get("output_mode", "")) for meta in metas}
+    return {
+        **result.model_dump(mode="json"),
+        "_meta": {
+            "endpoint": next(iter(endpoints)) if len(endpoints) == 1 else "batched/mixed",
+            "output_mode": next(iter(modes)) if len(modes) == 1 else "batched_mixed",
+            "request_count": sum(int(meta.get("request_count", 0)) for meta in metas),
+            "batch_count": len(parts),
+            "batch_size": VISUAL_SCENE_BATCH_SIZE,
+            "reasoning_effort": reasoning_effort,
         },
     }

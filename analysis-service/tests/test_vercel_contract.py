@@ -42,6 +42,7 @@ def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "IMAGE_OCR_MODEL",
         "VISUAL_LLM_MODEL",
         "LLM_REASONING_EFFORT",
+        "VISUAL_REASONING_EFFORT",
         "RECITATION_LLM_PROVIDER",
         "RECITATION_LLM_BASE_URL",
         "RECITATION_LLM_MODEL",
@@ -84,6 +85,7 @@ def test_settings_read_canonical_openai_compatible_environment(monkeypatch: pyte
     assert settings.llm_model == "provider/model"
     assert settings.llm_thinking == "enabled"
     assert settings.llm_reasoning_effort == "high"
+    assert settings.visual_reasoning_effort == "low"
     assert settings.recitation_llm_provider == "deepseek"
     assert settings.recitation_llm_base_url == "https://api.deepseek.com"
     assert settings.recitation_llm_model == "deepseek-v4-pro"
@@ -269,7 +271,12 @@ def test_health_reports_openai_compatible_gateway_and_shared_visual_model(
         "chat/completions",
     ]
     assert result["visual_director"]["model"] == "provider/model"
-    assert result["visual_director"]["reasoning_effort"] == "high"
+    assert result["visual_director"]["reasoning_effort"] == "low"
+    assert result["visual_director"]["endpoint_preference"] == [
+        "chat/completions"
+    ]
+    assert result["visual_director"]["scene_batch_size"] == 8
+    assert result["visual_director"]["fallback"] == "deterministic_visual_plan"
     assert result["recitation_interpreter"]["provider"] == "deepseek"
     assert result["recitation_interpreter"]["base_url"] == "https://api.deepseek.com"
     assert result["recitation_interpreter"]["model"] == "deepseek-v4-pro"

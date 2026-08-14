@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from app.config import Settings
 from app.interpretation.visual_director import (
     VisualDirectorError,
+    _fallback_visual_plan,
     _hero_production_prompt,
     direct_work_visuals,
 )
@@ -130,6 +131,9 @@ def test_visual_director_is_a_separate_structured_llm_request() -> None:
         "endpoint": "chat/completions",
         "output_mode": "json_object",
         "request_count": 1,
+        "batch_count": 1,
+        "batch_size": 8,
+        "reasoning_effort": "high",
     }
     assert captured["model"] == "deepseek-v4-pro"
     assert captured["thinking"] == {"type": "enabled"}
@@ -316,3 +320,73 @@ def test_visual_director_route_maps_domain_failure_to_502() -> None:
 
     assert captured.value.status_code == 502
     assert captured.value.detail == "invalid visual plan"
+
+
+def test_long_visual_plan_is_split_into_bounded_scene_batches() -> None:
+    units = [
+        SceneUnit(
+            scene_id=f"scene-{index + 1}",
+            source_sentence_ids=[f"sentence-{index + 1}"],
+            source_text=f"第{index + 1}个场景。",
+            position=index,
+        )
+        for index in range(17)
+    ]
+    request = VisualDirectorRequest(
+        title="长作品",
+        author="作者",
+        full_text="".join(unit.source_text for unit in units),
+        scene_units=units,
+    )
+    captured_batches: list[VisualDirectorRequest] = []
+
+    async def generate(**kwargs: object) -> dict[str, object]:
+        batch = kwargs["request"]
+        assert isinstance(batch, VisualDirectorRequest)
+        captured_batches.append(batch)
+        return _fallback_visual_plan(batch)
+
+    with patch(
+        "app.interpretation.visual_director._generate_or_fallback",
+        side_effect=generate,
+    ):
+        actual = asyncio.run(direct_work_visuals(
+            request=request,
+            provider="openai_compatible",
+            api_key="test",
+            base_url="https://gateway.example",
+            model="gpt-5.6-sol",
+            thinking="enabled",
+            reasoning_effort="low",
+            timeout_seconds=270,
+        ))
+
+    assert [len(batch.scene_units) for batch in captured_batches] == [8, 8, 1]
+    assert captured_batches[0].locked_profile is None
+    assert all(batch.locked_profile is not None for batch in captured_batches[1:])
+    assert [scene["scene_id"] for scene in actual["scene_visual_specs"]] == [
+        unit.scene_id for unit in units
+    ]
+    assert actual["_meta"]["batch_count"] == 3
+    assert actual["_meta"]["batch_size"] == 8
+
+
+def test_visual_gateway_failure_returns_safe_local_plan() -> None:
+    with patch(
+        "app.interpretation.visual_director._generate_visual_batch",
+        side_effect=VisualDirectorError("gateway timeout"),
+    ):
+        actual = asyncio.run(direct_work_visuals(
+            request=_request(),
+            provider="openai_compatible",
+            api_key="test",
+            base_url="https://gateway.example",
+            model="gpt-5.6-sol",
+            thinking="enabled",
+            reasoning_effort="low",
+            timeout_seconds=270,
+        ))
+
+    assert actual["_meta"]["endpoint"] == "local/fallback"
+    assert actual["_meta"]["output_mode"] == "deterministic_fallback"
+    assert len(actual["scene_visual_specs"]) == len(_request().scene_units)

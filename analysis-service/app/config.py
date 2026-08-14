@@ -125,6 +125,13 @@ def configured_reasoning_effort() -> str:
     return _configured_reasoning_effort("LLM_REASONING_EFFORT", "high")
 
 
+def configured_visual_reasoning_effort() -> str:
+    # Visual planning benefits more from bounded latency than deep chain-of-
+    # thought. Keep it independently configurable without changing the
+    # recitation interpreter's high-effort setting.
+    return _configured_reasoning_effort("VISUAL_REASONING_EFFORT", "low")
+
+
 def configured_recitation_reasoning_effort() -> str:
     return _configured_reasoning_effort("RECITATION_REASONING_EFFORT", "high")
 
@@ -169,6 +176,7 @@ class Settings:
     llm_thinking: str
     llm_reasoning_effort: str
     request_timeout_seconds: float
+    visual_reasoning_effort: str = "low"
     recitation_llm_api_key: str = ""
     recitation_llm_auth_source: str = ""
     recitation_llm_provider: str = DEEPSEEK_PROVIDER
@@ -229,6 +237,7 @@ class Settings:
             llm_thinking=DEEPSEEK_THINKING,
             llm_reasoning_effort=configured_reasoning_effort(),
             request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "270")),
+            visual_reasoning_effort=configured_visual_reasoning_effort(),
             recitation_llm_api_key=recitation_llm_api_key,
             recitation_llm_auth_source=(
                 "recitation_llm_api_key"

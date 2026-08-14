@@ -26,6 +26,7 @@ from app.config import (
     configured_recitation_model,
     configured_recitation_provider,
     configured_recitation_reasoning_effort,
+    configured_visual_reasoning_effort,
 )
 from app.interpretation.visual_director import VisualDirectorError, direct_work_visuals
 from app.pipeline import PIPELINE_VERSION, analyze_job
@@ -227,6 +228,12 @@ async def health() -> dict[str, Any]:
     )
     reasoning_effort = os.getenv("LLM_REASONING_EFFORT", "high").strip().lower()
     configured["LLM_REASONING_EFFORT"] = reasoning_effort in LLM_REASONING_EFFORTS
+    visual_reasoning_effort = os.getenv(
+        "VISUAL_REASONING_EFFORT", "low"
+    ).strip().lower()
+    configured["VISUAL_REASONING_EFFORT"] = (
+        visual_reasoning_effort in LLM_REASONING_EFFORTS
+    )
     recitation_reasoning_effort = os.getenv(
         "RECITATION_REASONING_EFFORT", "high"
     ).strip().lower()
@@ -247,6 +254,7 @@ async def health() -> dict[str, Any]:
         )
         recitation_model = configured_recitation_model(recitation_provider)
         recitation_reasoning_effort = configured_recitation_reasoning_effort()
+        visual_reasoning_effort = configured_visual_reasoning_effort()
         configured["LLM_PROVIDER"] = True
         configured["AI_BASE_URL"] = bool(base_url)
         configured["LLM_MODEL"] = bool(model)
@@ -303,12 +311,11 @@ async def health() -> dict[str, Any]:
             "provider": provider,
             "model": model,
             "thinking": DEEPSEEK_THINKING,
-            "reasoning_effort": reasoning_effort,
-            "endpoint_preference": (
-                ["responses", "chat/completions"]
-                if provider == "openai_compatible"
-                else ["chat/completions"]
-            ),
+            "reasoning_effort": visual_reasoning_effort,
+            "endpoint_preference": ["chat/completions"],
+            "output_mode": "json_object",
+            "scene_batch_size": 8,
+            "fallback": "deterministic_visual_plan",
         },
         "recitation_interpreter": {
             "provider": recitation_provider,
@@ -348,7 +355,7 @@ async def create_visual_plan(
             base_url=settings.llm_base_url,
             model=settings.llm_model,
             thinking=settings.llm_thinking,
-            reasoning_effort=settings.llm_reasoning_effort,
+            reasoning_effort=settings.visual_reasoning_effort,
             timeout_seconds=settings.request_timeout_seconds,
         )
     except VisualDirectorError as exc:
