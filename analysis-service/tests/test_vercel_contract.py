@@ -37,6 +37,7 @@ def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "LLM_MODEL",
         "VISUAL_LLM_MODEL",
         "LLM_REASONING_EFFORT",
+        "REQUEST_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ELEVENLABS_API_KEY", "eleven-test")
@@ -96,6 +97,7 @@ def test_settings_default_to_production_openai_compatible_gateway(
     assert settings.llm_provider == "openai_compatible"
     assert settings.llm_base_url == "https://api2.65535.space"
     assert settings.llm_model == "gpt-5.6-sol"
+    assert settings.request_timeout_seconds == 270
 
 
 def test_stale_deepseek_model_is_normalized_after_provider_migration(

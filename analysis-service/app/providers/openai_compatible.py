@@ -482,6 +482,18 @@ def _responses_is_unavailable(response: httpx.Response) -> bool:
     )
 
 
+def _is_transient_provider_failure(response: httpx.Response) -> bool:
+    """Return whether another compatible endpoint may succeed immediately.
+
+    408/429 are request-level transient failures. 5xx responses, including
+    Cloudflare's 520-524 range, indicate gateway/upstream availability rather
+    than a bad prompt or credential. Authentication and ordinary parameter
+    errors deliberately remain outside this set and fail fast.
+    """
+
+    return response.status_code in {408, 429} or 500 <= response.status_code < 600
+
+
 def _strict_schema_is_unavailable(response: httpx.Response) -> bool:
     if response.status_code not in {400, 404, 405, 422, 501}:
         return False
@@ -573,8 +585,8 @@ async def generate_structured_result(
     """Generate one schema-bound JSON object.
 
     Generic OpenAI-compatible gateways use Responses first and fall back to
-    Chat Completions only when the Responses endpoint is explicitly absent.
-    DeepSeek remains a separate, stable Chat Completions adapter for rollback.
+    Chat Completions when that endpoint is absent, unsupported, or transiently
+    unavailable. DeepSeek remains a separate Chat adapter for rollback.
     """
 
     if provider not in {OPENAI_COMPATIBLE_PROVIDER, DEEPSEEK_PROVIDER}:
@@ -642,7 +654,10 @@ async def generate_structured_result(
                             output_mode="json_schema",
                             request_count=request_count,
                         )
-                elif _responses_is_unavailable(response):
+                elif (
+                    _responses_is_unavailable(response)
+                    or _is_transient_provider_failure(response)
+                ):
                     responses_available = False
                 elif not _strict_schema_is_unavailable(response):
                     raise StructuredLlmError(
@@ -677,9 +692,11 @@ async def generate_structured_result(
                             ),
                         )
                         if response.status_code >= 400:
-                            if _responses_is_unavailable(
-                                response
-                            ) or _json_mode_is_unavailable(response):
+                            if (
+                                _responses_is_unavailable(response)
+                                or _json_mode_is_unavailable(response)
+                                or _is_transient_provider_failure(response)
+                            ):
                                 responses_json_unavailable = True
                                 break
                             raise StructuredLlmError(

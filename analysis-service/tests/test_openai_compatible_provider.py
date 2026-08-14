@@ -169,6 +169,130 @@ def test_openai_compatible_falls_back_when_responses_endpoint_is_absent() -> Non
     assert fallback["reasoning_effort"] == "high"
 
 
+@pytest.mark.parametrize(
+    "status_code",
+    [408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
+)
+def test_responses_transient_failure_falls_back_to_chat(
+    status_code: int,
+) -> None:
+    requests: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path.endswith("/responses"):
+            return httpx.Response(status_code, text="temporary gateway failure")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok":true}'}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch(
+        "app.providers.openai_compatible.httpx.AsyncClient",
+        side_effect=client_factory,
+    ):
+        result = asyncio.run(generate_structured_result(
+            provider="openai_compatible",
+            api_key="provider-test-key",
+            base_url="https://gateway.example/v1",
+            model="provider/model",
+            system_prompt="system prompt",
+            user_prompt="user prompt",
+            schema_name="independent_schema",
+            schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            thinking="enabled",
+            reasoning_effort="high",
+            temperature=0.1,
+            timeout_seconds=30,
+        ))
+
+    assert result.data == {"ok": True}
+    assert result.endpoint == "chat/completions"
+    assert result.request_count == 2
+    assert requests == ["/v1/responses", "/v1/chat/completions"]
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 422])
+def test_responses_non_transient_4xx_fails_without_fallback(
+    status_code: int,
+) -> None:
+    requests: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(status_code, text="invalid request or credentials")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch(
+        "app.providers.openai_compatible.httpx.AsyncClient",
+        side_effect=client_factory,
+    ), pytest.raises(StructuredLlmError, match=f"HTTP {status_code}"):
+        _run(provider="openai_compatible")
+
+    assert requests == ["/v1/responses"]
+
+
+def test_responses_json_mode_transient_failure_falls_back_to_chat() -> None:
+    requests: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        body = json.loads(request.content)
+        if request.url.path.endswith("/responses"):
+            if body["text"]["format"]["type"] == "json_schema":
+                return httpx.Response(400, text="json_schema is not supported")
+            return httpx.Response(524, text="upstream timed out")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok":true}'}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch(
+        "app.providers.openai_compatible.httpx.AsyncClient",
+        side_effect=client_factory,
+    ):
+        result = asyncio.run(generate_structured_result(
+            provider="openai_compatible",
+            api_key="provider-test-key",
+            base_url="https://gateway.example/v1",
+            model="provider/model",
+            system_prompt="system prompt",
+            user_prompt="user prompt",
+            schema_name="independent_schema",
+            schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            thinking="enabled",
+            reasoning_effort="high",
+            temperature=0.1,
+            timeout_seconds=30,
+        ))
+
+    assert result.data == {"ok": True}
+    assert result.endpoint == "chat/completions"
+    assert result.request_count == 3
+    assert requests == [
+        "/v1/responses",
+        "/v1/responses",
+        "/v1/chat/completions",
+    ]
+
+
 def test_responses_json_mode_repairs_one_invalid_json_object() -> None:
     requests: list[tuple[str, dict[str, object]]] = []
 

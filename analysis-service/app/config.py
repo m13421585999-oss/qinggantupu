@@ -154,7 +154,7 @@ class Settings:
             llm_model=configured_model(provider),
             llm_thinking=DEEPSEEK_THINKING,
             llm_reasoning_effort=configured_reasoning_effort(),
-            request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "180")),
+            request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "270")),
             image_provider=configured_image_provider(),
             image_model=configured_image_model(),
             image_ocr_model=configured_image_ocr_model(provider),
