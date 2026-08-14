@@ -1,3 +1,5 @@
+import { heroAuthorDisplay } from "@/lib/hero-production-prompt";
+
 export interface HeroTextValidationConfig {
   model?: string;
   apiKey?: string;
@@ -23,7 +25,7 @@ function encodeBase64(bytes: ArrayBuffer) {
 }
 
 function normalized(value: unknown) {
-  return String(value ?? "").replace(/[\s《》〈〉「」『』“”'"·•]/gu, "").trim();
+  return String(value ?? "").replace(/[\s《》〈〉「」『』“”'"·•:：]/gu, "").trim();
 }
 
 function apiEndpoint(baseUrl: string, resource: string) {
@@ -112,7 +114,7 @@ export async function validateHeroText(
           content: [
             {
               type: "text",
-              text: "读取图片中作为作品标题和作者的中文。只返回 JSON：{\"title\":\"\",\"author\":\"\"}。不要把“朗诵情感图谱”识别成标题或作者。",
+              text: "逐字读取图片中的作品标题和完整作者行。只返回 JSON：{\"title\":\"\",\"author\":\"\"}。author 必须保留图片中可见的“作者：”前缀；标题或作者有字被裁切、看不清时返回空字符串，不得猜测。不要把“朗诵情感图谱”识别成标题或作者。",
             },
             {
               type: "image_url",
@@ -134,8 +136,9 @@ export async function validateHeroText(
     const extracted = JSON.parse(String(content ?? "{}")) as Record<string, unknown>;
     const extractedTitle = String(extracted.title ?? "");
     const extractedAuthor = String(extracted.author ?? "");
+    const expectedAuthor = heroAuthorDisplay(author);
     const matched = normalized(extractedTitle) === normalized(title)
-      && (!author || normalized(extractedAuthor) === normalized(author));
+      && (!expectedAuthor || normalized(extractedAuthor) === normalized(expectedAuthor));
     return {
       status: matched ? "matched" : "mismatch",
       extractedTitle,

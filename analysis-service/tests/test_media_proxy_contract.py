@@ -349,7 +349,7 @@ def test_hero_ocr_proxy_returns_only_safe_validation_result(
         return httpx.Response(
             200,
             json={
-                "output_text": '{"title":"面朝大海，春暖花开","author":"海子"}'
+                "output_text": '{"title":"面朝大海，春暖花开","author":"作者：海子"}'
             },
         )
 
@@ -377,6 +377,9 @@ def test_hero_ocr_proxy_returns_only_safe_validation_result(
     assert captured["path"] == "/v1/responses"
     assert captured["body"]["reasoning"] == {"effort": "high"}
     assert captured["body"]["text"]["format"]["strict"] is True
+    instruction = captured["body"]["input"][0]["content"][0]["text"]
+    assert "author 必须返回图片里完整可见的作者行" in instruction
+    assert "包括“作者：”前缀" in instruction
 
 
 def test_hero_ocr_falls_back_to_chat_when_responses_is_absent(
@@ -395,7 +398,7 @@ def test_hero_ocr_falls_back_to_chat_when_responses_is_absent(
                 "choices": [
                     {
                         "message": {
-                            "content": '{"title":"面朝大海，春暖花开","author":"海子"}'
+                            "content": '{"title":"面朝大海，春暖花开","author":"作者:海子"}'
                         }
                     }
                 ]
@@ -424,3 +427,38 @@ def test_hero_ocr_falls_back_to_chat_when_responses_is_absent(
     assert response.json()["status"] == "matched"
     assert response.json()["endpoint"] == "chat/completions"
     assert paths == ["/v1/responses", "/v1/chat/completions"]
+
+
+def test_hero_ocr_rejects_author_line_without_required_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _environment(monkeypatch)
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "output_text": '{"title":"面朝大海，春暖花开","author":"海子"}'
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch("app.providers.hero_text_validation.httpx.AsyncClient", side_effect=factory):
+        response = TestClient(app).post(
+            "/v1/hero-text-validation",
+            headers={"authorization": "Bearer service-test"},
+            json={
+                "image_base64": "aGVsbG8=",
+                "mime_type": "image/png",
+                "title": "《面朝大海，春暖花开》",
+                "author": "海子",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "mismatch"

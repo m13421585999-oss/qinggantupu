@@ -37,6 +37,9 @@ test("worker exposes independent visual planning, generation and review routes",
   assert.match(worker, /text_validation_status/);
   assert.match(worker, /IMAGE_OCR_MODEL/);
   assert.match(worker, /const attempts = kind === "hero"/);
+  assert.match(worker, /withHeroProductionLayout\(basePrompt, title, author\)/);
+  assert.match(worker, /withHeroProductionNegativePrompt\(baseNegativePrompt\)/);
+  assert.match(worker, /prompt: productionPrompt/);
   assert.match(worker, /textValidation\.status === "matched"/);
   assert.match(worker, /generationStatus = .*needs_review/);
   assert.match(worker, /ready \? 1 : 0, ready \? 1 : 0/);

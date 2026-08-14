@@ -3505,7 +3505,13 @@ button.annotation-char:hover {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center;
+  /*
+   * Image providers commonly return a 3:2 landscape source even though the
+   * viewer uses a much wider 1500:280 window. Keep the crop slightly above
+   * centre so the left-hand title safe area is not clipped at the top. Native
+   * 1500:280 uploads are unaffected because they have no vertical overflow.
+   */
+  object-position: 50% 45%;
 }
 
 .viewer-artboard .viewer-hero-art {

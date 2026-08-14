@@ -9,6 +9,10 @@ import {
 } from "@/lib/image-generation-provider";
 import { importControlSpec } from "@/lib/control-spec-import";
 import { validateHeroText, type HeroTextValidationResult } from "@/lib/hero-text-validator";
+import {
+  withHeroProductionLayout,
+  withHeroProductionNegativePrompt,
+} from "@/lib/hero-production-prompt";
 import { withDynamicTimingProfile } from "@/lib/timing-profile";
 import { requestVisualDirection, VisualDirectorRequestError } from "@/lib/visual-director";
 import {
@@ -2177,6 +2181,16 @@ async function generateOneVisual(env: Env, work: Row, specRow: Row, recordFailur
   const spec = parseJson<Record<string, unknown>>(specRow.spec_json as string | null) ?? {};
   const kind = String(specRow.kind) as VisualAssetKind;
   const sceneId = specRow.scene_id == null ? undefined : String(specRow.scene_id);
+  const title = String(work.title);
+  const author = String(work.author ?? "");
+  const basePrompt = String(spec.image_prompt ?? "");
+  const baseNegativePrompt = String(spec.negative_prompt ?? "");
+  const productionPrompt = kind === "hero"
+    ? withHeroProductionLayout(basePrompt, title, author)
+    : basePrompt;
+  const productionNegativePrompt = kind === "hero"
+    ? withHeroProductionNegativePrompt(baseNegativePrompt)
+    : baseNegativePrompt;
   const latest = await first<Row>(env.DB.prepare(
     `SELECT COALESCE(MAX(version), 0) AS version FROM visual_assets
       WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?`,
@@ -2193,12 +2207,12 @@ async function generateOneVisual(env: Env, work: Row, specRow: Row, recordFailur
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       generated = await provider.generate({
         kind,
-        prompt: String(spec.image_prompt ?? ""),
-        negativePrompt: String(spec.negative_prompt ?? "") || undefined,
+        prompt: productionPrompt,
+        negativePrompt: productionNegativePrompt || undefined,
         width: kind === "hero" ? 1500 : 768,
         height: kind === "hero" ? 280 : 576,
-        title: String(work.title),
-        author: String(work.author ?? ""),
+        title,
+        author,
         sceneId,
       });
       if (kind !== "hero" || generated.isPlaceholder) break;

@@ -31,7 +31,12 @@ class HeroTextValidationResult:
 
 
 def _normalized(value: Any) -> str:
-    return re.sub(r"[\s《》〈〉「」『』“”'\"·•]", "", str(value or "")).strip()
+    return re.sub(r"[\s《》〈〉「」『』“”'\"·•:：]", "", str(value or "")).strip()
+
+
+def _author_display(author: str) -> str:
+    name = re.sub(r"^\s*作者\s*[:：]\s*", "", author).strip()
+    return f"作者：{name}" if name else ""
 
 
 def _image_data_url(image_base64: str, mime_type: str) -> str:
@@ -77,9 +82,11 @@ async def validate_hero_text(
     timeout_seconds: float,
 ) -> HeroTextValidationResult:
     instruction = (
-        "读取图片中作为作品标题和作者的中文。只返回 JSON："
-        '{"title":"","author":""}。不要把“朗诵情感图谱”'
-        "识别成标题或作者；看不清时返回空字符串，不得猜测。"
+        "逐字读取图片中作为作品标题和作者行的中文。只返回 JSON："
+        '{"title":"","author":""}。author 必须返回图片里完整可见的作者行，'
+        "包括“作者：”前缀；若图片只写姓名而没有该前缀，就按实际可见文字返回姓名。"
+        "不要把“朗诵情感图谱”识别成标题或作者；标题或作者行有任何字被裁切、"
+        "看不清时，相应字段返回空字符串，不得补全或猜测。"
     )
     image_url = _image_data_url(image_base64, mime_type)
     schema = {
@@ -210,9 +217,10 @@ async def validate_hero_text(
         extracted = _json_object(_content(payload))
     extracted_title = str(extracted.get("title") or "")
     extracted_author = str(extracted.get("author") or "")
+    expected_author_display = _author_display(expected_author)
     matched = _normalized(extracted_title) == _normalized(expected_title) and (
-        not expected_author
-        or _normalized(extracted_author) == _normalized(expected_author)
+        not expected_author_display
+        or _normalized(extracted_author) == _normalized(expected_author_display)
     )
     return HeroTextValidationResult(
         status="matched" if matched else "mismatch",

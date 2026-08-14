@@ -137,6 +137,7 @@ test("viewer keeps the fixed artboard, visual asset dimensions and player safety
   assert.match(css, /\.viewer-artboard\s*\{[\s\S]*?width:\s*1600px;/);
   assert.match(css, /\.viewer-artboard \.viewer-paper\s*\{[\s\S]*?width:\s*1500px;/);
   assert.match(css, /\.viewer-artboard \.viewer-hero\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*280px;/);
+  assert.match(css, /\.viewer-artboard \.viewer-hero-image\s*\{[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*50% 45%;/);
   assert.match(css, /\.viewer-artboard \.viewer-sentence-wrap \.graph-sentence\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-height:\s*270px;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;/);
   assert.match(css, /\.viewer-artboard \.viewer-sentence-wrap \.scene-visual-rail\s*\{[\s\S]*?display:\s*flex;[\s\S]*?min-height:\s*270px;[\s\S]*?align-items:\s*center;[\s\S]*?justify-content:\s*center;/);
   assert.match(css, /\.scene-visual-frame\s*\{[\s\S]*?width:\s*260px;[\s\S]*?height:\s*190px;/);

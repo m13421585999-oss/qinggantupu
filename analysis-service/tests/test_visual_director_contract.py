@@ -9,7 +9,11 @@ import pytest
 from fastapi import HTTPException
 
 from app.config import Settings
-from app.interpretation.visual_director import VisualDirectorError, direct_work_visuals
+from app.interpretation.visual_director import (
+    VisualDirectorError,
+    _hero_production_prompt,
+    direct_work_visuals,
+)
 from app.main import create_visual_plan
 from app.schemas.visual import SceneUnit, VisualDirectorRequest
 
@@ -75,13 +79,16 @@ def _result() -> dict[str, object]:
         "hero_visual_spec": {
             "type": "hero",
             "size": {"width": 1500, "height": 280},
-            "required_text": ["面朝大海，春暖花开", "海子", "朗诵情感图谱"],
-            "text_layout": "左侧标题",
+            "required_text": ["面朝大海，春暖花开", "作者：海子", "朗诵情感图谱"],
+            "text_layout": (
+                "左侧 x=6%–43% 为文字安全区：题签 y=18%–27%，标题 y=34%–60%，"
+                "作者 y=70%–82%；右侧 x=55%–96% 集中作品意象"
+            ),
             "visual_subject": "海面与花枝",
-            "composition": "右侧意象",
+            "composition": "左文右景；左侧干净留白，标题完整且不贴边，右侧承载画面主体",
             "lighting": "晨光",
             "palette": ["暖白", "雾蓝"],
-            "image_prompt": "东方写意诗歌 Hero",
+            "image_prompt": _hero_production_prompt("东方写意诗歌 Hero", _request()),
             "negative_prompt": "随机文字，水印",
         },
         "scene_visual_specs": scenes,
@@ -132,6 +139,17 @@ def test_visual_director_is_a_separate_structured_llm_request() -> None:
     prompt = json.dumps(messages, ensure_ascii=False)
     assert "不得生成或修改朗诵 control_spec" in prompt
     assert "scene_units" in prompt
+    assert "作者必须逐字写成“作者：海子”" in prompt
+    hero = actual["hero_visual_spec"]
+    assert hero["required_text"] == [
+        "面朝大海，春暖花开",
+        "作者：海子",
+        "朗诵情感图谱",
+    ]
+    assert "x=6%–43%" in hero["image_prompt"]
+    assert "主标题位于 y=34%–60%" in hero["image_prompt"]
+    assert "整行最大宽度约 550px" in hero["image_prompt"]
+    assert "x=55%–96% 的右侧" in hero["image_prompt"]
 
 
 def test_visual_director_restores_changed_source_scene() -> None:
@@ -202,7 +220,7 @@ def test_visual_director_restores_changed_hero_required_text() -> None:
 
     assert actual["hero_visual_spec"]["required_text"] == [
         "面朝大海，春暖花开",
-        "海子",
+        "作者：海子",
         "朗诵情感图谱",
     ]
 
