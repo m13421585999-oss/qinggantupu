@@ -6,6 +6,10 @@ const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "u
 const schema = await readFile(new URL("../db/schema.ts", import.meta.url), "utf8");
 const migration = await readFile(new URL("../drizzle/0003_overjoyed_sersi.sql", import.meta.url), "utf8");
 const provider = await readFile(new URL("../lib/image-generation-provider.ts", import.meta.url), "utf8");
+const visualSchema = await readFile(new URL("../lib/visual-schema.ts", import.meta.url), "utf8");
+const visualDirector = await readFile(new URL("../lib/visual-director.ts", import.meta.url), "utf8");
+const visualPanel = await readFile(new URL("../components/WorkVisualPanel.tsx", import.meta.url), "utf8");
+const visualPanelCss = await readFile(new URL("../components/WorkVisualPanel.module.css", import.meta.url), "utf8");
 
 test("visual backend keeps profile, specs and versioned asset metadata in D1", () => {
   assert.match(schema, /export const workVisualProfiles/);
@@ -27,11 +31,12 @@ test("worker exposes independent visual planning, generation and review routes",
   assert.match(worker, /action === "activate"/);
   assert.match(worker, /action === "hide"/);
   assert.match(worker, /requestVisualDirection/);
-  assert.match(worker, /visual\/\$\{workId\}/);
+  assert.match(worker, /works\/\$\{workId\}\/visuals\/hero\/v\$\{version\}/);
+  assert.match(worker, /works\/\$\{workId\}\/visuals\/scenes\/\$\{sceneId\}\/v\$\{version\}/);
   assert.match(worker, /generation_status = 'ready'/);
   assert.match(worker, /text_validation_status/);
   assert.match(worker, /IMAGE_OCR_MODEL/);
-  assert.match(worker, /attempts = .*\? 3 : 1/);
+  assert.match(worker, /const attempts = kind === "hero"/);
   assert.match(worker, /textValidation\.status === "matched"/);
   assert.match(worker, /generationStatus = .*needs_review/);
   assert.match(worker, /ready \? 1 : 0, ready \? 1 : 0/);
@@ -58,8 +63,53 @@ test("image provider is configurable and never exposes an API key in payload", (
   assert.match(provider, /class OpenAiCompatibleImageProvider/);
   assert.match(provider, /b64_json/);
   assert.match(provider, /data\.url/);
+  assert.match(provider, /class AnalysisServiceImageProvider/);
+  assert.match(provider, /\/v1\/image-generation/);
+  assert.match(provider, /apiEndpoint\(this\.config\.baseUrl, "responses"\)/);
   assert.match(worker, /IMAGE_PROVIDER/);
   assert.match(worker, /IMAGE_MODEL/);
+  assert.match(worker, /AI_API_KEY/);
+  assert.match(worker, /AI_BASE_URL/);
   assert.match(worker, /IMAGE_API_KEY/);
   assert.doesNotMatch(worker, /apiKey:\s*env\.IMAGE_API_KEY[^\n]*provider:/);
+});
+
+test("visual generation is resumable, bounded and reports partial failure", () => {
+  assert.match(worker, /VISUAL_GENERATION_JOB_TYPE = "visual_generation"/);
+  assert.match(worker, /VISUAL_SCENE_CONCURRENCY = 3/);
+  assert.match(worker, /VISUAL_GENERATION_RETRY_LIMIT = 1/);
+  assert.match(worker, /status = 'planning'/);
+  assert.match(worker, /"generating_hero"/);
+  assert.match(worker, /"generating_scenes"/);
+  assert.match(worker, /"uploading"/);
+  assert.match(worker, /"completed"/);
+  assert.match(worker, /"partial_failed"/);
+  assert.match(worker, /visualResultSince/);
+  assert.match(worker, /ctx\.waitUntil\(runVisualGenerationJob/);
+  assert.match(worker, /visual-jobs/);
+  assert.match(worker, /createVisualGenerationJob\(env, String\(asset\.work_id\)/);
+  assert.match(worker, /generated\.width \?\?/);
+  assert.match(worker, /generated\.height \?\?/);
+  assert.match(worker, /detectImageDimensions\(generated\.bytes\)/);
+  assert.match(worker, /visualDirectorProviderFromResult/);
+  assert.match(worker, /activeVisualGenerationJobs/);
+  assert.match(worker, /VISUAL_GENERATION_IN_PROGRESS/);
+  assert.match(worker, /safeVisualErrorMessage/);
+  assert.doesNotMatch(worker, /director_model,\s*is_locked[\s\S]{0,120}'deepseek'/);
+});
+
+test("visual director fields and Hero production ratio match the current viewer", () => {
+  assert.match(visualSchema, /composition_language: string/);
+  assert.match(visualSchema, /symbolic_language: string\[\]/);
+  assert.match(visualSchema, /scene_meaning: string/);
+  assert.match(visualSchema, /size: \{ width: 1500; height: 280 \}/);
+  assert.match(visualDirector, /rawProfile\.composition_language \?\? rawProfile\.composition_rule/);
+  assert.match(visualDirector, /rawProfile\.symbolic_language \?\? rawProfile\.symbolic_elements/);
+  assert.match(visualDirector, /scene\.scene_meaning \?\? scene\.scene_summary/);
+  assert.match(worker, /rawProfile\.composition_language \?\? rawProfile\.composition_rule/);
+  assert.match(worker, /spec\.scene_meaning \?\? spec\.scene_summary/);
+  assert.match(worker, /height: kind === "hero" \? 280 : 576/);
+  assert.match(visualPanel, /\[1500, 280\]/);
+  assert.match(visualPanel, /1500 × 280 Hero/);
+  assert.match(visualPanelCss, /cropFrameHero \{ aspect-ratio: 1500 \/ 280; \}/);
 });

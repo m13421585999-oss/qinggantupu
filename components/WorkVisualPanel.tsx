@@ -88,7 +88,7 @@ async function loadImage(file: File) {
 
 async function cropImage(draft: CropDraft) {
   const image = await loadImage(draft.file);
-  const [width, height] = draft.kind === "hero" ? [1500, 420] : [768, 576];
+  const [width, height] = draft.kind === "hero" ? [1500, 280] : [768, 576];
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -420,7 +420,7 @@ export function WorkVisualPanel({
             ) : (
               <div className={styles.placeholder}>
                 <strong>{compactKind === "hero" ? title || "作品主视觉" : "本句意境图"}</strong>
-                <small>{compactKind === "hero" ? `${author || "作者"} · 1500 × 420` : "4:3"}</small>
+                <small>{compactKind === "hero" ? `${author || "作者"} · 1500 × 280` : "4:3"}</small>
               </div>
             )}
           </div>
@@ -477,7 +477,7 @@ export function WorkVisualPanel({
                     : generateWorkVisualAssets(workId, compactKind === "hero"
                       ? { type: "hero" }
                       : { type: "scene", sceneId: compactScene!.sceneId }),
-                  compactAsset ? "图片已进入重新生成队列" : "图片已进入生成队列",
+                  compactAsset ? "图片已重新生成" : "图片已生成",
                 )}
               >
                 {busyKey === compactKey ? <span className={styles.busy} /> : null}
@@ -552,11 +552,11 @@ export function WorkVisualPanel({
           <button
             type="button"
             className={styles.buttonPrimary}
-            disabled={globalDisabled || generationUnavailable || !visuals.heroSpec || visuals.sceneSpecs.length === 0}
-            onClick={() => void run("all", () => generateWorkVisualAssets(workId, { type: "all" }), "全部视觉资产已进入生成队列")}
+            disabled={globalDisabled || generationUnavailable}
+            onClick={() => void run("all", () => generateWorkVisualAssets(workId, { type: "all" }), "全部视觉资产已生成")}
           >
             {busyKey === "all" ? <span className={styles.busy} /> : null}
-            生成全部视觉资产
+            一键生成全部视觉
           </button>
           {profile ? (
             <button
@@ -617,7 +617,7 @@ export function WorkVisualPanel({
           {hero?.url ? <img src={hero.url} alt={`${title || "作品"} Hero 预览`} /> : (
             <div className={styles.placeholder}>
               <strong>{title || "作品主视觉"}</strong>
-              <small>{author || "作者"} · 1500 × 420 Hero</small>
+              <small>{author || "作者"} · 1500 × 280 Hero</small>
             </div>
           )}
           {hero && textValidationCopy(hero.textValidationStatus)?.tone === "warn" ? (
@@ -627,7 +627,7 @@ export function WorkVisualPanel({
         <div className={styles.assetBody}>
           <div className={styles.assetHeader}>
             <div>
-              <p className={styles.eyebrow}>Hero · 1500 × 420</p>
+              <p className={styles.eyebrow}>Hero · 1500 × 280</p>
               <h3>作品标题主视觉</h3>
               <p className={styles.assetMeta}>{visuals.heroSpec?.visualSubject || "等待视觉方案"}</p>
             </div>
@@ -649,7 +649,7 @@ export function WorkVisualPanel({
               onClick={() => void run(
                 "hero",
                 () => hero ? regenerateVisualAsset(hero.id) : generateWorkVisualAssets(workId, { type: "hero" }),
-                hero ? "Hero 已进入重新生成队列" : "Hero 已进入生成队列",
+                hero ? "Hero 已重新生成" : "Hero 已生成",
               )}
             >{busyKey === "hero" ? <span className={styles.busy} /> : null}{hero ? "重新生成" : "生成 Hero"}</button>
             {uploadLabel("hero")}
@@ -706,7 +706,7 @@ export function WorkVisualPanel({
                     disabled={globalDisabled || generationUnavailable}
                     onClick={() => void run(key, () => asset
                       ? regenerateVisualAsset(asset.id)
-                      : generateWorkVisualAssets(workId, { type: "scene", sceneId: scene.sceneId }), asset ? "意境图已进入重新生成队列" : "意境图已进入生成队列")}
+                      : generateWorkVisualAssets(workId, { type: "scene", sceneId: scene.sceneId }), asset ? "意境图已重新生成" : "意境图已生成")}
                   >{busyKey === key ? <span className={styles.busy} /> : null}{asset ? "重新生成" : "生成意境图"}</button>
                   {uploadLabel("scene", scene.sceneId)}
                   {asset ? (

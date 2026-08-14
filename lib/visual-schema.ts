@@ -12,15 +12,19 @@ export interface WorkVisualProfile {
   texture: string;
   lighting: string;
   atmosphere: string;
-  composition_rule: string;
+  composition_language: string;
+  /** Deprecated persisted alias accepted during rolling upgrades. */
+  composition_rule?: string;
   human_presence: string;
-  symbolic_elements: string[];
+  symbolic_language: string[];
+  /** Deprecated persisted alias accepted during rolling upgrades. */
+  symbolic_elements?: string[];
   avoid: string[];
 }
 
 export interface HeroVisualSpec {
   type: "hero";
-  size: { width: 1500; height: 420 };
+  size: { width: 1500; height: 280 };
   required_text: string[];
   text_layout: string;
   visual_subject: string;
@@ -42,7 +46,7 @@ export interface SceneVisualSpec {
     | "abstract_scene"
     | "environment"
     | "minimal";
-  scene_summary: string;
+  scene_meaning: string;
   main_subject: string;
   environment: string;
   emotion: string[];

@@ -470,7 +470,7 @@
   background: #2f2b27;
 }
 
-.cropFrameHero { aspect-ratio: 1500 / 420; }
+.cropFrameHero { aspect-ratio: 1500 / 280; }
 .cropFrameScene { aspect-ratio: 4 / 3; }
 
 .cropFrame img {
@@ -569,7 +569,7 @@
 
 .compactPreviewHero {
   width: 100%;
-  aspect-ratio: 1500 / 420;
+  aspect-ratio: 1500 / 280;
 }
 
 .compactPreview img {

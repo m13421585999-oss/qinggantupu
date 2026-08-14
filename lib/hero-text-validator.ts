@@ -2,6 +2,8 @@ export interface HeroTextValidationConfig {
   model?: string;
   apiKey?: string;
   baseUrl?: string;
+  serviceUrl?: string;
+  serviceToken?: string;
 }
 
 export interface HeroTextValidationResult {
@@ -24,6 +26,38 @@ function normalized(value: unknown) {
   return String(value ?? "").replace(/[\s《》〈〉「」『』“”'"·•]/gu, "").trim();
 }
 
+function apiEndpoint(baseUrl: string, resource: string) {
+  const base = baseUrl.trim().replace(/\/+$/, "");
+  return /\/v1$/u.test(base) ? `${base}/${resource}` : `${base}/v1/${resource}`;
+}
+
+function safeErrorDetail(value: string, secret?: string) {
+  let detail = value;
+  if (secret) detail = detail.split(secret).join("[redacted]");
+  return detail
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/giu, "Bearer [redacted]")
+    .slice(0, 300);
+}
+
+function normalizeValidationPayload(payload: Record<string, unknown>): HeroTextValidationResult {
+  const result = payload.result && typeof payload.result === "object" && !Array.isArray(payload.result)
+    ? payload.result as Record<string, unknown>
+    : payload;
+  const status = String(result.status ?? "failed");
+  return {
+    status: status === "matched" || status === "mismatch" || status === "not_run"
+      ? status
+      : "failed",
+    extractedTitle: result.extracted_title == null && result.extractedTitle == null
+      ? undefined
+      : String(result.extracted_title ?? result.extractedTitle),
+    extractedAuthor: result.extracted_author == null && result.extractedAuthor == null
+      ? undefined
+      : String(result.extracted_author ?? result.extractedAuthor),
+    message: result.message == null ? undefined : String(result.message),
+  };
+}
+
 export async function validateHeroText(
   bytes: ArrayBuffer,
   mimeType: string,
@@ -31,10 +65,39 @@ export async function validateHeroText(
   author: string,
   config: HeroTextValidationConfig,
 ): Promise<HeroTextValidationResult> {
+  const serviceUrl = config.serviceUrl?.trim();
+  const serviceToken = config.serviceToken?.trim();
+  if (serviceUrl && serviceToken) {
+    try {
+      const response = await fetch(`${serviceUrl.replace(/\/+$/, "")}/v1/hero-text-validation`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${serviceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          image_base64: encodeBase64(bytes),
+          mime_type: mimeType,
+          title,
+          author,
+          model: config.model?.trim() || undefined,
+        }),
+      });
+      if (!response.ok) {
+        return {
+          status: "failed",
+          message: `OCR proxy HTTP ${response.status}: ${safeErrorDetail(await response.text(), serviceToken)}`,
+        };
+      }
+      return normalizeValidationPayload(await response.json() as Record<string, unknown>);
+    } catch (error) {
+      return { status: "failed", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
   if (!config.model?.trim() || !config.apiKey?.trim()) return { status: "not_run" };
-  const baseUrl = config.baseUrl?.trim().replace(/\/$/, "") || "https://api.openai.com/v1";
+  const baseUrl = config.baseUrl?.trim() || "https://api.openai.com";
   try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await fetch(apiEndpoint(baseUrl, "chat/completions"), {
       method: "POST",
       headers: {
         authorization: `Bearer ${config.apiKey.trim()}`,

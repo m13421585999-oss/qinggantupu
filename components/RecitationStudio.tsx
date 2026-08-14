@@ -466,7 +466,13 @@ function AcousticProsodyCurve({
   const label = sentence.prosody.length
     ? sentence.prosody.map((event) => PROSODY_LABELS[event.type]).join("、")
     : "教学宏观语势";
-  const drawingPoints = extendProsodyCurveToTokenEdges(points, metrics.trackStart, metrics.trackEnd);
+  const drawingPoints = extendProsodyCurveToTokenEdges(
+    points,
+    metrics.trackStart,
+    metrics.trackEnd,
+    verticalPadding,
+    height - verticalPadding,
+  );
   const spline = monotoneSplinePath(drawingPoints);
   const fillPath = `${spline} L ${drawingPoints.at(-1)!.x} ${height + 1} L ${drawingPoints[0].x} ${height + 1} Z`;
   const visualLevelFromPointer = (clientY: number) => {

@@ -27,9 +27,12 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 
 def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
+        "AI_API_KEY",
+        "AI_BASE_URL",
         "LLM_API_KEY",
         "AI_GATEWAY_API_KEY",
         "VERCEL_OIDC_TOKEN",
+        "LLM_PROVIDER",
         "LLM_BASE_URL",
         "LLM_MODEL",
         "VISUAL_LLM_MODEL",
@@ -54,18 +57,20 @@ def test_vercel_configuration_targets_entrypoint_and_portable_duration() -> None
     assert "rewrites" not in configuration
 
 
-def test_settings_fix_deepseek_provider_and_read_configured_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settings_read_canonical_openai_compatible_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
-    monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
-    monkeypatch.setenv("LLM_BASE_URL", "https://wrong.example/v1")
-    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("AI_API_KEY", "gateway-test")
+    monkeypatch.setenv("AI_BASE_URL", "https://gateway.example/v1/")
+    monkeypatch.setenv("LLM_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("LLM_MODEL", "provider/model")
 
     settings = Settings.from_environment()
 
-    assert settings.llm_api_key == "deepseek-test"
-    assert settings.llm_auth_source == "llm_api_key"
-    assert settings.llm_base_url == "https://api.deepseek.com"
-    assert settings.llm_model == "deepseek-v4-pro"
+    assert settings.llm_api_key == "gateway-test"
+    assert settings.llm_auth_source == "ai_api_key"
+    assert settings.llm_provider == "openai_compatible"
+    assert settings.llm_base_url == "https://gateway.example/v1"
+    assert settings.llm_model == "provider/model"
     assert settings.llm_thinking == "enabled"
     assert settings.llm_reasoning_effort == "high"
 
@@ -73,13 +78,27 @@ def test_settings_fix_deepseek_provider_and_read_configured_model(monkeypatch: p
 def test_settings_default_to_v4_pro_when_model_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
     monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
 
     settings = Settings.from_environment()
 
     assert settings.llm_model == "deepseek-v4-pro"
 
 
-def test_visual_director_model_defaults_to_llm_and_can_be_overridden(
+def test_settings_default_to_production_openai_compatible_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("AI_API_KEY", "gateway-test")
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_provider == "openai_compatible"
+    assert settings.llm_base_url == "https://api2.65535.space"
+    assert settings.llm_model == "gpt-5.6-sol"
+
+
+def test_visual_director_always_uses_the_same_llm_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _base_environment(monkeypatch)
@@ -87,7 +106,7 @@ def test_visual_director_model_defaults_to_llm_and_can_be_overridden(
     monkeypatch.delenv("VISUAL_LLM_MODEL", raising=False)
     assert configured_visual_model() == "deepseek-v4-pro"
     monkeypatch.setenv("VISUAL_LLM_MODEL", "deepseek-visual-director")
-    assert configured_visual_model() == "deepseek-visual-director"
+    assert configured_visual_model() == "deepseek-v4-pro"
 
 
 def test_reasoning_effort_can_be_raised_to_max(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,7 +122,7 @@ def test_reasoning_effort_can_be_raised_to_max(monkeypatch: pytest.MonkeyPatch) 
 def test_invalid_reasoning_effort_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
     monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
-    monkeypatch.setenv("LLM_REASONING_EFFORT", "xhigh")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "ultra")
     with pytest.raises(ConfigurationError, match="LLM_REASONING_EFFORT"):
         Settings.from_environment()
 
@@ -130,7 +149,7 @@ def test_gateway_keeps_strict_json_schema_mode() -> None:
 
 def test_missing_llm_api_key_is_a_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
-    with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
+    with pytest.raises(ConfigurationError, match="AI_API_KEY"):
         Settings.from_environment()
 
 
@@ -139,6 +158,7 @@ def test_health_reports_the_effective_deepseek_configuration(
 ) -> None:
     _base_environment(monkeypatch)
     monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")
 
     result = asyncio.run(health())
@@ -150,7 +170,30 @@ def test_health_reports_the_effective_deepseek_configuration(
         "model": "deepseek-v4-pro",
         "thinking": "enabled",
         "reasoning_effort": "high",
+        "endpoint_preference": ["chat/completions"],
     }
+
+
+def test_health_reports_openai_compatible_gateway_and_shared_visual_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("AI_API_KEY", "gateway-test")
+    monkeypatch.setenv("AI_BASE_URL", "https://gateway.example/v1")
+    monkeypatch.setenv("LLM_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("LLM_MODEL", "provider/model")
+
+    result = asyncio.run(health())
+
+    assert result["ok"] is True
+    assert result["llm"]["provider"] == "openai_compatible"
+    assert result["llm"]["base_url"] == "https://gateway.example/v1"
+    assert result["llm"]["model"] == "provider/model"
+    assert result["llm"]["endpoint_preference"] == [
+        "responses",
+        "chat/completions",
+    ]
+    assert result["visual_director"]["model"] == "provider/model"
 
 
 def test_deepseek_request_enables_thinking_with_configured_effort() -> None:
@@ -179,12 +222,13 @@ def test_deepseek_request_enables_thinking_with_configured_effort() -> None:
         },
     }
     with patch(
-        "app.interpretation.llm_interpreter.httpx.AsyncClient",
+        "app.providers.openai_compatible.httpx.AsyncClient",
         side_effect=client_factory,
     ), pytest.raises(InterpretationError, match="HTTP 500"):
         asyncio.run(
             interpret_control_spec(
                 analysis_package=analysis_package,
+                provider="deepseek",
                 api_key="deepseek-test",
                 base_url="https://api.deepseek.com",
                 model="deepseek-v4-pro",
@@ -218,7 +262,8 @@ def test_job_request_waits_for_pipeline_instead_of_background_task() -> None:
     settings = Settings(
         elevenlabs_api_key="eleven",
         llm_api_key="deepseek",
-        llm_auth_source="llm_api_key",
+        llm_auth_source="llm_api_key_legacy",
+        llm_provider="deepseek",
         analysis_service_token="service",
         analysis_callback_token="callback",
         sites_bypass_token="sites",

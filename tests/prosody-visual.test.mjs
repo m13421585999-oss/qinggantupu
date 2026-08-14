@@ -100,22 +100,64 @@ test("pointer Y maps through a scaled SVG and clamps to the nine teaching levels
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 124, rectHeight: 0 }), undefined);
 });
 
-test("paint-only curve endpoints extend to character edges without creating editable tokens", () => {
+test("paint-only curve endpoints follow the edge-anchor trend without creating editable tokens", () => {
   const anchors = [
     { x: 40, y: 30, tokenIndex: 4 },
     { x: 88, y: 18, tokenIndex: 5 },
   ];
   const snapshot = structuredClone(anchors);
-  const drawingPoints = extendProsodyCurveToTokenEdges(anchors, 18, 112);
+  const drawingPoints = extendProsodyCurveToTokenEdges(anchors, 18, 112, 7, 89);
 
   assert.deepEqual(anchors, snapshot, "source token anchors remain untouched");
   assert.deepEqual(drawingPoints, [
-    { x: 18, y: 30 },
+    { x: 18, y: 35.5 },
     { x: 40, y: 30 },
     { x: 88, y: 18 },
-    { x: 112, y: 18 },
+    { x: 112, y: 12 },
   ]);
+  assert.equal(drawingPoints[0].x, 18, "the path begins exactly at the first character edge");
+  assert.equal(drawingPoints.at(-1).x, 112, "the path ends exactly at the last character edge");
   assert.ok(drawingPoints.every((point) => !("tokenIndex" in point)));
+});
+
+test("paint-only endpoint extrapolation is distance-limited and visually clamped", () => {
+  const drawingPoints = extendProsodyCurveToTokenEdges(
+    [
+      { x: 40, y: 42, tokenIndex: 4 },
+      { x: 50, y: 16, tokenIndex: 5 },
+      { x: 60, y: 34, tokenIndex: 6 },
+    ],
+    -200,
+    400,
+    7,
+    48,
+  );
+
+  assert.deepEqual(drawingPoints[0], { x: -200, y: 48 }, "start tangent is capped to one anchor interval and the visible Y range");
+  assert.deepEqual(drawingPoints.at(-1), { x: 400, y: 48 }, "end tangent is capped to one anchor interval and the visible Y range");
+});
+
+test("paint-only endpoints fall back to a horizontal height for one or repeated anchors", () => {
+  assert.deepEqual(
+    extendProsodyCurveToTokenEdges([{ x: 40, y: 30, tokenIndex: 4 }], 18, 64, 7, 89),
+    [
+      { x: 18, y: 30 },
+      { x: 40, y: 30 },
+      { x: 64, y: 30 },
+    ],
+  );
+  assert.deepEqual(
+    extendProsodyCurveToTokenEdges([
+      { x: 40, y: 30, tokenIndex: 4 },
+      { x: 40, y: 18, tokenIndex: 5 },
+    ], 18, 64, 7, 89),
+    [
+      { x: 18, y: 30 },
+      { x: 40, y: 30 },
+      { x: 40, y: 18 },
+      { x: 64, y: 18 },
+    ],
+  );
 });
 
 test("monotone spline passes through token anchors without template replacement", () => {

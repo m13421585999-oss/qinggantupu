@@ -28,15 +28,61 @@ export function extendProsodyCurveToTokenEdges(
   anchors: SplinePoint[],
   trackStart: number,
   trackEnd: number,
+  minY = Number.NEGATIVE_INFINITY,
+  maxY = Number.POSITIVE_INFINITY,
 ) {
   if (!anchors.length) return [];
   const points = anchors.map(({ x, y }) => ({ x, y }));
   const first = points[0];
   const last = points.at(-1)!;
-  const start = Number.isFinite(trackStart) ? Math.min(trackStart, first.x) : first.x;
-  const end = Number.isFinite(trackEnd) ? Math.max(trackEnd, last.x) : last.x;
-  if (start < first.x) points.unshift({ x: start, y: first.y });
-  if (end > last.x) points.push({ x: end, y: last.y });
+  const lowerY = Number.isFinite(minY) && Number.isFinite(maxY)
+    ? Math.min(minY, maxY)
+    : Number.isFinite(minY) ? minY : Number.NEGATIVE_INFINITY;
+  const upperY = Number.isFinite(minY) && Number.isFinite(maxY)
+    ? Math.max(minY, maxY)
+    : Number.isFinite(maxY) ? maxY : Number.POSITIVE_INFINITY;
+  const clampY = (value: number, fallback: number) => {
+    const safeValue = Number.isFinite(value) ? value : fallback;
+    return Math.max(lowerY, Math.min(upperY, safeValue));
+  };
+  const extrapolatedY = (
+    edgeX: number,
+    edgeAnchor: SplinePoint,
+    adjacentAnchor: SplinePoint | undefined,
+    direction: "start" | "end",
+  ) => {
+    if (!adjacentAnchor || !Number.isFinite(edgeAnchor.y)) return clampY(edgeAnchor.y, 0);
+    const anchorDistance = direction === "start"
+      ? adjacentAnchor.x - edgeAnchor.x
+      : edgeAnchor.x - adjacentAnchor.x;
+    const extensionDistance = direction === "start"
+      ? edgeAnchor.x - edgeX
+      : edgeX - edgeAnchor.x;
+    if (
+      !Number.isFinite(anchorDistance) || anchorDistance <= 0
+      || !Number.isFinite(extensionDistance) || extensionDistance <= 0
+      || !Number.isFinite(adjacentAnchor.y)
+    ) return clampY(edgeAnchor.y, 0);
+    const ratio = Math.max(0, Math.min(1, extensionDistance / anchorDistance));
+    const deltaY = direction === "start"
+      ? edgeAnchor.y - adjacentAnchor.y
+      : edgeAnchor.y - adjacentAnchor.y;
+    return clampY(edgeAnchor.y + deltaY * ratio, edgeAnchor.y);
+  };
+  const start = Number.isFinite(trackStart) && trackStart < first.x ? trackStart : first.x;
+  const end = Number.isFinite(trackEnd) && trackEnd > last.x ? trackEnd : last.x;
+  if (start < first.x) {
+    points.unshift({
+      x: start,
+      y: extrapolatedY(start, first, points[1], "start"),
+    });
+  }
+  if (end > last.x) {
+    points.push({
+      x: end,
+      y: extrapolatedY(end, last, points.at(-2), "end"),
+    });
+  }
   return points;
 }
 

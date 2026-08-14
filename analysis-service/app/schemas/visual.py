@@ -34,15 +34,15 @@ class WorkVisualProfile(StrictVisualModel):
     texture: str
     lighting: str
     atmosphere: str
-    composition_rule: str
+    composition_language: str
     human_presence: str
-    symbolic_elements: list[str] = Field(default_factory=list, max_length=16)
+    symbolic_language: list[str] = Field(default_factory=list, max_length=16)
     avoid: list[str] = Field(default_factory=list, max_length=20)
 
 
 class HeroSize(StrictVisualModel):
     width: Literal[1500]
-    height: Literal[420]
+    height: Literal[280]
 
 
 class HeroVisualSpec(StrictVisualModel):
@@ -70,7 +70,7 @@ class SceneVisualSpec(StrictVisualModel):
         "environment",
         "minimal",
     ]
-    scene_summary: str
+    scene_meaning: str
     main_subject: str
     environment: str
     emotion: list[str] = Field(default_factory=list, max_length=10)

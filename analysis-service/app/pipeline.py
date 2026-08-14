@@ -258,6 +258,7 @@ async def analyze_job(
     }
     control_spec = await interpret_control_spec(
         analysis_package=analysis_package,
+        provider=settings.llm_provider,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         model=settings.llm_model,

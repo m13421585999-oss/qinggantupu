@@ -4,23 +4,31 @@ import asyncio
 import logging
 import os
 import secrets
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import (
-    DEEPSEEK_BASE_URL,
-    DEEPSEEK_PROVIDER,
-    DEEPSEEK_REASONING_EFFORTS,
     DEEPSEEK_THINKING,
+    LLM_REASONING_EFFORTS,
     ConfigurationError,
     Settings,
+    configured_base_url,
+    configured_image_model,
+    configured_image_ocr_model,
+    configured_image_provider,
     configured_model,
-    configured_visual_model,
+    configured_provider,
 )
 from app.interpretation.visual_director import direct_work_visuals
 from app.pipeline import PIPELINE_VERSION, analyze_job
+from app.providers.image_generation import ImageGenerationError, generate_image
+from app.providers.hero_text_validation import (
+    HeroTextValidationError,
+    validate_hero_text,
+)
 from app.schemas.control_spec import JobRequest
 from app.schemas.visual import VisualDirectorRequest
 
@@ -34,6 +42,30 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+
+class ImageGenerationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["hero", "scene"]
+    prompt: str = Field(min_length=1, max_length=50_000)
+    negative_prompt: str | None = Field(default=None, max_length=20_000)
+    width: int = Field(ge=64, le=4096)
+    height: int = Field(ge=64, le=4096)
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    title: str | None = Field(default=None, max_length=500)
+    author: str | None = Field(default=None, max_length=500)
+    scene_id: str | None = Field(default=None, max_length=500)
+
+
+class HeroTextValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image_base64: str = Field(min_length=1, max_length=25_000_000)
+    mime_type: Literal["image/png", "image/jpeg", "image/webp", "image/avif"]
+    title: str = Field(min_length=1, max_length=500)
+    author: str = Field(default="", max_length=500)
+    model: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 def _settings() -> Settings:
@@ -130,6 +162,7 @@ async def _run_job(job: JobRequest, settings: Settings) -> str:
                     "standard_ai_audio_asset_id": analysis_package.get(
                         "standard_ai_audio_asset_id"
                     ),
+                    "language_model_provider": settings.llm_provider,
                     "language_model": settings.llm_model,
                     "thinking": settings.llm_thinking,
                     "reasoning_effort": settings.llm_reasoning_effort,
@@ -173,25 +206,74 @@ async def health() -> dict[str, Any]:
         "SITES_BYPASS_TOKEN",
     )
     configured = {name: bool(os.getenv(name, "").strip()) for name in required}
-    configured["LLM_AUTH"] = bool(os.getenv("LLM_API_KEY", "").strip())
+    configured["LLM_AUTH"] = bool(
+        os.getenv("AI_API_KEY", "").strip()
+        or os.getenv("LLM_API_KEY", "").strip()
+    )
     reasoning_effort = os.getenv("LLM_REASONING_EFFORT", "high").strip().lower()
-    configured["LLM_REASONING_EFFORT"] = reasoning_effort in DEEPSEEK_REASONING_EFFORTS
+    configured["LLM_REASONING_EFFORT"] = reasoning_effort in LLM_REASONING_EFFORTS
+    try:
+        provider = configured_provider()
+        base_url = configured_base_url(provider)
+        model = configured_model(provider)
+        image_provider = configured_image_provider()
+        image_model = configured_image_model()
+        image_ocr_model = configured_image_ocr_model(provider)
+        configured["LLM_PROVIDER"] = True
+        configured["AI_BASE_URL"] = bool(base_url)
+        configured["LLM_MODEL"] = bool(model)
+        configured["IMAGE_PROVIDER"] = True
+        configured["IMAGE_MODEL"] = bool(image_model)
+        configured["IMAGE_OCR_MODEL"] = bool(image_ocr_model)
+    except ConfigurationError:
+        provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "invalid"
+        base_url = os.getenv("AI_BASE_URL", "").strip()
+        model = os.getenv("LLM_MODEL", "").strip()
+        image_provider = os.getenv("IMAGE_PROVIDER", "").strip() or "invalid"
+        image_model = os.getenv("IMAGE_MODEL", "").strip()
+        image_ocr_model = os.getenv("IMAGE_OCR_MODEL", "").strip()
+        configured["LLM_PROVIDER"] = False
+        configured["AI_BASE_URL"] = False
+        configured["LLM_MODEL"] = False
+        configured["IMAGE_PROVIDER"] = False
+        configured["IMAGE_MODEL"] = False
+        configured["IMAGE_OCR_MODEL"] = False
     llm = {
-        "provider": DEEPSEEK_PROVIDER,
-        "base_url": DEEPSEEK_BASE_URL,
-        "model": configured_model(),
+        "provider": provider,
+        "base_url": base_url,
+        "model": model,
         "thinking": DEEPSEEK_THINKING,
         "reasoning_effort": reasoning_effort,
+        "endpoint_preference": (
+            ["responses", "chat/completions"]
+            if provider == "openai_compatible"
+            else ["chat/completions"]
+        ),
     }
     return {
         "ok": all(configured.values()),
         "configured": configured,
         "llm": llm,
         "visual_director": {
-            "provider": DEEPSEEK_PROVIDER,
-            "model": configured_visual_model(),
+            "provider": provider,
+            "model": model,
             "thinking": DEEPSEEK_THINKING,
             "reasoning_effort": reasoning_effort,
+            "endpoint_preference": (
+                ["responses", "chat/completions"]
+                if provider == "openai_compatible"
+                else ["chat/completions"]
+            ),
+        },
+        "image_generation": {
+            "provider": image_provider,
+            "model": image_model,
+            "endpoint_preference": ["images/generations", "responses"],
+        },
+        "hero_text_validation": {
+            "provider": provider,
+            "model": image_ocr_model,
+            "endpoint_preference": ["responses", "chat/completions"],
         },
     }
 
@@ -205,21 +287,96 @@ async def create_visual_plan(
     # only fails the caller's visual operation and cannot mutate analysis data.
     result = await direct_work_visuals(
         request=request,
+        provider=settings.llm_provider,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
-        model=configured_visual_model(),
+        model=settings.llm_model,
         thinking=settings.llm_thinking,
         reasoning_effort=settings.llm_reasoning_effort,
         timeout_seconds=settings.request_timeout_seconds,
     )
+    generation_meta = result.pop("_meta", {})
+    generation_meta = generation_meta if isinstance(generation_meta, dict) else {}
     return {
         **result,
         "_meta": {
-            "provider": DEEPSEEK_PROVIDER,
-            "model": configured_visual_model(),
+            "provider": settings.llm_provider,
+            "model": settings.llm_model,
             "thinking": settings.llm_thinking,
             "reasoning_effort": settings.llm_reasoning_effort,
+            **generation_meta,
         },
+    }
+
+
+@app.post("/v1/image-generation", status_code=status.HTTP_200_OK)
+async def create_image_generation(
+    request: ImageGenerationRequest,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    requested_model = (request.model or "").strip()
+    model = (
+        settings.image_model
+        if not requested_model or requested_model == "service-configured"
+        else requested_model
+    )
+    try:
+        result = await generate_image(
+            provider=settings.image_provider,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=model,
+            prompt=request.prompt,
+            negative_prompt=request.negative_prompt,
+            width=request.width,
+            height=request.height,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except ImageGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "data": [result.image],
+        "provider": result.provider,
+        "model": result.model,
+        "endpoint": result.endpoint,
+        "kind": request.kind,
+        **({"width": result.width} if result.width is not None else {}),
+        **({"height": result.height} if result.height is not None else {}),
+        **({"scene_id": request.scene_id} if request.scene_id else {}),
+    }
+
+
+@app.post("/v1/hero-text-validation", status_code=status.HTTP_200_OK)
+async def create_hero_text_validation(
+    request: HeroTextValidationRequest,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    requested_model = (request.model or "").strip()
+    model = requested_model or settings.image_ocr_model or settings.llm_model
+    metadata = {
+        "provider": settings.llm_provider,
+        "model": model,
+    }
+    try:
+        result = await validate_hero_text(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=model,
+            image_base64=request.image_base64,
+            mime_type=request.mime_type,
+            expected_title=request.title,
+            expected_author=request.author,
+            reasoning_effort=settings.llm_reasoning_effort,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except HeroTextValidationError:
+        return {"status": "failed", "endpoint": "unavailable", **metadata}
+    return {
+        "status": result.status,
+        "extracted_title": result.extracted_title,
+        "extracted_author": result.extracted_author,
+        "endpoint": result.endpoint,
+        **metadata,
     }
 
 

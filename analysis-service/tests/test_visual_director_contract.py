@@ -42,9 +42,9 @@ def _result() -> dict[str, object]:
         "texture": "宣纸",
         "lighting": "晨光",
         "atmosphere": "安静开阔",
-        "composition_rule": "主体偏边缘并保留留白",
+        "composition_language": "主体偏边缘并保留留白",
         "human_presence": "弱化人物",
-        "symbolic_elements": ["海面", "花枝"],
+        "symbolic_language": ["海面", "花枝"],
         "avoid": ["随机文字", "水印"],
     }
     scenes = []
@@ -55,7 +55,7 @@ def _result() -> dict[str, object]:
             "source_text": unit.source_text,
             "narrative_function": "展开",
             "visual_type": "environment",
-            "scene_summary": "晨光中的开阔空间",
+            "scene_meaning": "晨光中的开阔空间",
             "main_subject": "海与花",
             "environment": "海边",
             "emotion": ["温暖"],
@@ -71,7 +71,7 @@ def _result() -> dict[str, object]:
         "work_visual_profile": profile,
         "hero_visual_spec": {
             "type": "hero",
-            "size": {"width": 1500, "height": 420},
+            "size": {"width": 1500, "height": 280},
             "required_text": ["面朝大海，春暖花开", "海子", "朗诵情感图谱"],
             "text_layout": "左侧标题",
             "visual_subject": "海面与花枝",
@@ -102,9 +102,10 @@ def test_visual_director_is_a_separate_structured_llm_request() -> None:
     def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
         return real_client(*args, transport=transport, **kwargs)
 
-    with patch("app.interpretation.visual_director.httpx.AsyncClient", side_effect=client_factory):
+    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory):
         actual = asyncio.run(direct_work_visuals(
             request=_request(),
+            provider="deepseek",
             api_key="test",
             base_url="https://api.deepseek.com",
             model="deepseek-v4-pro",
@@ -113,7 +114,13 @@ def test_visual_director_is_a_separate_structured_llm_request() -> None:
             timeout_seconds=30,
         ))
 
+    metadata = actual.pop("_meta")
     assert actual == result
+    assert metadata == {
+        "endpoint": "chat/completions",
+        "output_mode": "json_object",
+        "request_count": 1,
+    }
     assert captured["model"] == "deepseek-v4-pro"
     assert captured["thinking"] == {"type": "enabled"}
     assert captured["reasoning_effort"] == "high"
@@ -142,12 +149,13 @@ def test_visual_director_rejects_changed_source_scene() -> None:
     def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
         return real_client(*args, transport=transport, **kwargs)
 
-    with patch("app.interpretation.visual_director.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
+    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
         VisualDirectorError,
         match="changed the source identity or text",
     ):
         asyncio.run(direct_work_visuals(
             request=_request(),
+            provider="deepseek",
             api_key="test",
             base_url="https://api.deepseek.com",
             model="deepseek-v4-pro",
@@ -175,12 +183,13 @@ def test_visual_director_rejects_changed_hero_required_text() -> None:
     def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
         return real_client(*args, transport=transport, **kwargs)
 
-    with patch("app.interpretation.visual_director.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
+    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
         VisualDirectorError,
         match="changed required Hero title or author text",
     ):
         asyncio.run(direct_work_visuals(
             request=_request(),
+            provider="deepseek",
             api_key="test",
             base_url="https://api.deepseek.com",
             model="deepseek-v4-pro",
@@ -209,12 +218,13 @@ def test_visual_director_rejects_changed_locked_profile() -> None:
     def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
         return real_client(*args, transport=transport, **kwargs)
 
-    with patch("app.interpretation.visual_director.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
+    with patch("app.providers.openai_compatible.httpx.AsyncClient", side_effect=client_factory), pytest.raises(
         VisualDirectorError,
         match="changed a locked work visual profile",
     ):
         asyncio.run(direct_work_visuals(
             request=locked_request,
+            provider="deepseek",
             api_key="test",
             base_url="https://api.deepseek.com",
             model="deepseek-v4-pro",

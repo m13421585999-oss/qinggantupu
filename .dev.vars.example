@@ -5,9 +5,15 @@ ANALYSIS_SERVICE_TOKEN=
 ANALYSIS_CALLBACK_TOKEN=
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=
-# 视觉层（只读客户端永远拿不到 Key）。未配置时使用安全占位状态。
-IMAGE_PROVIDER=placeholder
-IMAGE_MODEL=
-IMAGE_API_KEY=
-IMAGE_BASE_URL=https://api.openai.com/v1
+# 视觉层（只读客户端永远拿不到 Key）。默认经 analysis-service 代理，
+# 复用服务端 AI_API_KEY（兼容旧 LLM_API_KEY），Sites 无需复制密钥。
+IMAGE_PROVIDER=analysis_service
+IMAGE_MODEL=image2.0
+IMAGE_API_MODE=auto
 IMAGE_OCR_MODEL=
+# 可选直连 openai / openai_compatible；Base 可写域名根或已带 /v1。
+AI_BASE_URL=https://api2.65535.space
+AI_API_KEY=
+# 旧版回滚别名，代码仍兼容但新配置不要优先使用。
+IMAGE_BASE_URL=
+IMAGE_API_KEY=

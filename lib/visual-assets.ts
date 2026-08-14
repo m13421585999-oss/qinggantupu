@@ -116,6 +116,15 @@ export interface WorkVisualBundle {
 
 type VisualResponse = { visuals: WorkVisualBundle } | WorkVisualBundle;
 
+interface VisualGenerationResponse {
+  visuals: WorkVisualBundle;
+  visual_job_id?: string;
+  status?: string;
+  progress?: number;
+  failures?: Array<{ specId?: string; sceneId?: string; message?: string }>;
+  error?: { code?: string; message?: string };
+}
+
 function isVisualEnvelope(value: VisualResponse): value is { visuals: WorkVisualBundle } {
   return "visuals" in value;
 }
@@ -167,9 +176,19 @@ function unwrapVisuals(payload: VisualResponse): WorkVisualBundle {
     profile: rawProfile ? {
       ...rawProfile,
       visualStyle: String(rawProfile.visualStyle ?? rawProfile.visual_style ?? ""),
-      compositionRule: String(rawProfile.compositionRule ?? rawProfile.composition_rule ?? ""),
+      compositionRule: String(
+        rawProfile.compositionRule
+        ?? rawProfile.composition_language
+        ?? rawProfile.composition_rule
+        ?? "",
+      ),
       humanPresence: String(rawProfile.humanPresence ?? rawProfile.human_presence ?? ""),
-      symbolicElements: (rawProfile.symbolicElements ?? rawProfile.symbolic_elements ?? []) as string[],
+      symbolicElements: (
+        rawProfile.symbolicElements
+        ?? rawProfile.symbolic_language
+        ?? rawProfile.symbolic_elements
+        ?? []
+      ) as string[],
     } : undefined,
     heroSpec: rawHero ? {
       ...rawHero,
@@ -186,7 +205,7 @@ function unwrapVisuals(payload: VisualResponse): WorkVisualBundle {
       sourceText: String(scene.sourceText ?? scene.source_text ?? ""),
       narrativeFunction: String(scene.narrativeFunction ?? scene.narrative_function ?? ""),
       visualType: (scene.visualType ?? scene.visual_type ?? "minimal") as SceneVisualType,
-      sceneSummary: String(scene.sceneSummary ?? scene.scene_summary ?? ""),
+      sceneSummary: String(scene.sceneSummary ?? scene.scene_meaning ?? scene.scene_summary ?? ""),
       mainSubject: String(scene.mainSubject ?? scene.main_subject ?? ""),
       cameraDistance: String(scene.cameraDistance ?? scene.camera_distance ?? ""),
       imagePrompt: String(scene.imagePrompt ?? scene.image_prompt ?? ""),
@@ -200,6 +219,29 @@ function unwrapVisuals(payload: VisualResponse): WorkVisualBundle {
 
 async function visualRequest(url: string, init?: RequestInit) {
   return unwrapVisuals(await visualJson<VisualResponse>(await fetch(url, init)));
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function visualGenerationRequest(url: string, init?: RequestInit) {
+  const started = await visualJson<VisualGenerationResponse>(await fetch(url, init));
+  if (!started.visual_job_id) return unwrapVisuals(started);
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await wait(1_200);
+    const job = await visualJson<VisualGenerationResponse>(await fetch(
+      `/api/visual-jobs/${encodeURIComponent(started.visual_job_id)}`,
+    ));
+    if (job.status === "completed" || job.status === "succeeded" || job.status === "partial_failed") {
+      return unwrapVisuals(job);
+    }
+    if (job.status === "failed") {
+      throw new Error(job.error?.message || "图片生成任务失败，请稍后重试。");
+    }
+  }
+  throw new Error("图片仍在后台生成。请稍后重新打开作品视觉查看结果。");
 }
 
 export function getWorkVisuals(workId: string) {
@@ -216,7 +258,7 @@ export function generateWorkVisualAssets(
   workId: string,
   target: { type: "all" | "hero" | "scene"; sceneId?: string },
 ) {
-  return visualRequest(`/api/works/${encodeURIComponent(workId)}/visuals/generate`, {
+  return visualGenerationRequest(`/api/works/${encodeURIComponent(workId)}/visuals/generate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(target),
@@ -254,7 +296,7 @@ export function updateVisualAsset(
 }
 
 export function regenerateVisualAsset(assetId: string) {
-  return visualRequest(`/api/visual-assets/${encodeURIComponent(assetId)}/regenerate`, {
+  return visualGenerationRequest(`/api/visual-assets/${encodeURIComponent(assetId)}/regenerate`, {
     method: "POST",
   });
 }

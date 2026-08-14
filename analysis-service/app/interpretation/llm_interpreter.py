@@ -4,10 +4,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-import httpx
 from pydantic import ValidationError
 
 from app.acoustics.prolongation import classify_prolongation_candidates
+from app.providers.openai_compatible import (
+    StructuredLlmError,
+    generate_structured_result,
+)
 from app.schemas.control_spec import LlmInterpretation
 
 
@@ -66,23 +69,6 @@ def _compact_evidence(analysis_package: dict[str, Any]) -> dict[str, Any]:
         "energy_changes": analysis_package["acoustic_evidence"]["energy_changes"],
         "sentence_summaries": analysis_package["segments"],
     }
-
-
-def _extract_content(payload: dict[str, Any]) -> str:
-    try:
-        message = payload["choices"][0]["message"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise InterpretationError("LLM response did not contain a message") from exc
-    if message.get("refusal"):
-        raise InterpretationError(f"LLM refused the interpretation: {message['refusal']}")
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        texts = [str(item.get("text") or "") for item in content if isinstance(item, dict)]
-        if any(texts):
-            return "".join(texts)
-    raise InterpretationError("LLM response did not contain JSON content")
 
 
 def _validate_against_analysis(
@@ -299,6 +285,7 @@ def _response_format_for_provider(*, base_url: str, model: str, schema: dict[str
 async def interpret_control_spec(
     *,
     analysis_package: dict[str, Any],
+    provider: str,
     api_key: str,
     base_url: str,
     model: str,
@@ -311,65 +298,60 @@ async def interpret_control_spec(
     evidence = _compact_evidence(analysis_package)
     schema = LlmInterpretation.model_json_schema()
     schema_text = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
-    request_body = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "你是专业朗诵指导，只负责依据当前作品的正文、上下文和声音事实生成朗诵标签。"
-                    "不得修改正文或 token 范围，不得套用其他作品。严格遵守以下规则：\n\n" + rules
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    "请解释以下当前作品的声音证据。每个 sentence 必须原样返回 text、start_index、end_index。"
-                    "你只负责 focus_spans、文本逻辑、情感解释、rhythm，以及把连续 macro_prosody_path 解释为教学语势事件。"
-                    "停顿、拖音、句尾语调和基础声音路径由声学层直接生成，不要在输出中重复判断。"
-                    "focus_spans 表示教学上整体标红的焦点词组；其内部声学核心由系统另算。"
-                    "可选的 performance_profile 只描述生成示范需要的隐藏表演状态：全篇提供宏观基调，"
-                    "句级只在确有变化时提供。允许 delivery_mode、emotion_tone、continuity、voice_quality、"
-                    "focus_style、expression_amplitude、avoid；不要为了填满字段强行输出。"
-                    "focus_style 也可写在单个 focus_span 中，用于说明焦点通过支撑、柔化、放慢、低位、"
-                    "气声或气声转支撑实现，绝不能把重音一律理解为增大音量。"
-                    "prosody 可以为空或包含多个连续事件，不得为了填字段强行标注。"
-                    "判断 prosody 时必须尊重路径的真实连续高度，综合音高、能量、时值、停连和语义，"
-                    "不能让普通话单字声调或单个 F0 极值决定类型。证据不足时返回空数组或降低 confidence。"
-                    "仅返回一个合法 JSON 对象，不得添加 Markdown 或解释文字。输出必须符合下面的 JSON Schema：\n"
-                    + schema_text
-                    + "\n\n声音证据：\n"
-                    + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
-                ),
-            },
-        ],
-        "response_format": _response_format_for_provider(
+    system_prompt = (
+        "你是专业朗诵指导，只负责依据当前作品的正文、上下文和声音事实生成朗诵标签。"
+        "不得修改正文或 token 范围，不得套用其他作品。严格遵守以下规则：\n\n" + rules
+    )
+    user_prompt = (
+        "请解释以下当前作品的声音证据。每个 sentence 必须原样返回 text、start_index、end_index。"
+        "你只负责 focus_spans、文本逻辑、情感解释、rhythm，以及把连续 macro_prosody_path 解释为教学语势事件。"
+        "停顿、拖音、句尾语调和基础声音路径由声学层直接生成，不要在输出中重复判断。"
+        "focus_spans 表示教学上整体标红的焦点词组；其内部声学核心由系统另算。"
+        "可选的 performance_profile 只描述生成示范需要的隐藏表演状态：全篇提供宏观基调，"
+        "句级只在确有变化时提供。允许 delivery_mode、emotion_tone、continuity、voice_quality、"
+        "focus_style、expression_amplitude、avoid；不要为了填满字段强行输出。"
+        "focus_style 也可写在单个 focus_span 中，用于说明焦点通过支撑、柔化、放慢、低位、"
+        "气声或气声转支撑实现，绝不能把重音一律理解为增大音量。"
+        "prosody 可以为空或包含多个连续事件，不得为了填字段强行标注。"
+        "判断 prosody 时必须尊重路径的真实连续高度，综合音高、能量、时值、停连和语义，"
+        "不能让普通话单字声调或单个 F0 极值决定类型。证据不足时返回空数组或降低 confidence。"
+        "仅返回一个合法 JSON 对象，不得添加 Markdown 或解释文字。输出必须符合下面的 JSON Schema：\n"
+        + schema_text
+        + "\n\n声音证据：\n"
+        + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+    )
+    try:
+        generation = await generate_structured_result(
+            provider=provider,
+            api_key=api_key,
             base_url=base_url,
             model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema_name="recitation_control_spec_interpretation",
             schema=schema,
-        ),
-        "thinking": {"type": thinking},
-        "reasoning_effort": reasoning_effort,
-        "temperature": 0.1,
-    }
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            temperature=0.1,
+            timeout_seconds=timeout_seconds,
+            validator=LlmInterpretation.model_validate,
+        )
+    except StructuredLlmError as exc:
+        raise InterpretationError(f"LLM interpretation failed: {exc}") from exc
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=30)) as client:
-            response = await client.post(
-                f"{base_url}/chat/completions",
-                headers={"authorization": f"Bearer {api_key}", "content-type": "application/json"},
-                json=request_body,
-            )
-    except httpx.TimeoutException as exc:
-        raise InterpretationError("LLM interpretation timed out") from exc
-    except httpx.HTTPError as exc:
-        raise InterpretationError(f"Unable to call the LLM service: {exc}") from exc
-    if response.status_code >= 400:
-        detail = response.text.strip()[:800]
-        raise InterpretationError(f"LLM interpretation failed (HTTP {response.status_code}): {detail}")
-    try:
-        payload = response.json()
-        raw = json.loads(_extract_content(payload))
-        interpretation = LlmInterpretation.model_validate(raw)
+        interpretation = LlmInterpretation.model_validate(generation.data)
     except (ValueError, ValidationError) as exc:
         raise InterpretationError(f"LLM returned an invalid control spec: {exc}") from exc
+    metadata = analysis_package.get("_meta")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    analysis_package["_meta"] = {
+        **metadata,
+        "llm": {
+            "provider": provider,
+            "model": model,
+            "endpoint": generation.endpoint,
+            "output_mode": generation.output_mode,
+            "request_count": generation.request_count,
+        },
+    }
     return assemble_control_spec(interpretation, analysis_package)

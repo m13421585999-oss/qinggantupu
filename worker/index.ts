@@ -2,6 +2,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import {
   createImageGenerationProvider,
+  detectImageDimensions,
   ImageGenerationError,
   type GeneratedImage,
   type ImageGenerationProvider,
@@ -28,8 +29,12 @@ interface Env {
   ANALYSIS_CALLBACK_TOKEN?: string;
   ELEVENLABS_API_KEY?: string;
   ELEVENLABS_VOICE_ID?: string;
+  AI_API_KEY?: string;
+  AI_BASE_URL?: string;
   IMAGE_PROVIDER?: string;
   IMAGE_MODEL?: string;
+  IMAGE_API_MODE?: string;
+  /** Legacy rollback aliases. Prefer AI_API_KEY and AI_BASE_URL. */
   IMAGE_API_KEY?: string;
   IMAGE_BASE_URL?: string;
   IMAGE_OCR_MODEL?: string;
@@ -53,6 +58,11 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const ANALYSIS_JOB_TIMEOUT_MS = 12 * 60 * 1000;
 const STANDARD_ANALYSIS_JOB_TYPE = "standard_audio_analysis";
 const LEGACY_ANALYSIS_JOB_TYPE = "reference_analysis";
+const VISUAL_GENERATION_JOB_TYPE = "visual_generation";
+const VISUAL_SCENE_CONCURRENCY = 3;
+const VISUAL_GENERATION_RETRY_LIMIT = 1;
+const VISUAL_JOB_LEASE_MS = 5 * 60 * 1000;
+const VISUAL_TERMINAL_STATUSES = new Set(["completed", "succeeded", "partial_failed", "failed"]);
 const VOICE_CHANGER_MODEL_ID = "eleven_multilingual_sts_v2";
 const VOICE_CHANGER_OUTPUT_FORMAT = "mp3_44100_128";
 
@@ -108,13 +118,56 @@ function parseJson<T>(value: string | null | undefined): T | undefined {
   }
 }
 
+function safeVisualErrorMessage(env: Env, error: unknown) {
+  let message = error instanceof Error ? error.message : String(error);
+  for (const secret of [
+    env.AI_API_KEY,
+    env.IMAGE_API_KEY,
+    env.ANALYSIS_SERVICE_TOKEN,
+    env.ANALYSIS_CALLBACK_TOKEN,
+  ]) {
+    if (secret?.trim()) message = message.split(secret.trim()).join("[redacted]");
+  }
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/giu, "Bearer [redacted]")
+    .replace(/(["']?(?:api[_-]?key|authorization)["']?\s*[:=]\s*["']?)[^"'\s,}]+/giu, "$1[redacted]")
+    .slice(0, 800);
+}
+
 function imageProvider(env: Env) {
+  const requestedProvider = env.IMAGE_PROVIDER?.trim();
+  const normalizedRequestedProvider = requestedProvider?.toLowerCase().replace(/_/gu, "-");
+  const directApiKey = imageApiKey(env);
+  const analysisProxyConfigured = Boolean(
+    env.ANALYSIS_SERVICE_URL?.trim() && env.ANALYSIS_SERVICE_TOKEN?.trim(),
+  );
+  const useAnalysisProxy = analysisProxyConfigured
+    && normalizedRequestedProvider !== "placeholder"
+    && (!directApiKey || !requestedProvider || normalizedRequestedProvider === "analysis-service");
   return createImageGenerationProvider({
-    provider: env.IMAGE_PROVIDER,
+    provider: useAnalysisProxy ? "analysis_service" : requestedProvider,
     model: env.IMAGE_MODEL,
-    apiKey: env.IMAGE_API_KEY,
-    baseUrl: env.IMAGE_BASE_URL,
+    apiKey: useAnalysisProxy ? env.ANALYSIS_SERVICE_TOKEN : directApiKey,
+    baseUrl: useAnalysisProxy ? env.ANALYSIS_SERVICE_URL : imageBaseUrl(env),
+    apiMode: env.IMAGE_API_MODE,
   });
+}
+
+function imageApiKey(env: Env) {
+  return env.AI_API_KEY?.trim() || env.IMAGE_API_KEY?.trim();
+}
+
+function imageBaseUrl(env: Env) {
+  return env.AI_BASE_URL?.trim() || env.IMAGE_BASE_URL?.trim();
+}
+
+function imageExtension(mimeType: string) {
+  const normalized = mimeType.toLowerCase().split(";", 1)[0].trim();
+  if (normalized === "image/svg+xml") return "svg";
+  if (normalized === "image/jpeg" || normalized === "image/jpg") return "jpg";
+  if (normalized === "image/webp") return "webp";
+  if (normalized === "image/avif") return "avif";
+  return "png";
 }
 
 function boolValue(value: unknown) {
@@ -156,7 +209,7 @@ function visualSpecPayload(row: Row) {
     sourceText: spec.source_text ?? base.sourceText ?? "",
     narrativeFunction: spec.narrative_function ?? "",
     visualType: spec.visual_type ?? "minimal",
-    sceneSummary: spec.scene_summary ?? "",
+    sceneSummary: spec.scene_meaning ?? spec.scene_summary ?? "",
     mainSubject: spec.main_subject ?? "",
     environment: spec.environment ?? "",
     emotion: spec.emotion ?? [],
@@ -242,9 +295,9 @@ async function getVisualBundle(env: Env, workId: string, published = false) {
       texture: rawProfile.texture,
       lighting: rawProfile.lighting,
       atmosphere: rawProfile.atmosphere,
-      compositionRule: rawProfile.composition_rule,
+      compositionRule: rawProfile.composition_language ?? rawProfile.composition_rule,
       humanPresence: rawProfile.human_presence,
-      symbolicElements: rawProfile.symbolic_elements,
+      symbolicElements: rawProfile.symbolic_language ?? rawProfile.symbolic_elements,
       avoid: rawProfile.avoid,
       id: String(profileRow?.id),
       version: Number(profileRow?.version),
@@ -1814,9 +1867,20 @@ function visualDirectorModelFromResult(response: Record<string, unknown>) {
     : "";
 }
 
-async function planWorkVisuals(env: Env, workId: string) {
+function visualDirectorProviderFromResult(response: Record<string, unknown>) {
+  const metadata = response._meta;
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? String((metadata as Record<string, unknown>).provider ?? "unknown")
+    : "unknown";
+}
+
+async function planWorkVisuals(env: Env, workId: string, activeJobId?: string) {
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
   if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  if (!activeJobId) {
+    const conflict = await rejectWhileVisualGenerationIsActive(env, workId);
+    if (conflict) return conflict;
+  }
   const current = await getVisualBundle(env, workId);
   const lockedProfile = current.profile?.isLocked ? {
     visual_style: String(current.profile.visualStyle ?? ""),
@@ -1824,9 +1888,9 @@ async function planWorkVisuals(env: Env, workId: string) {
     texture: String(current.profile.texture ?? ""),
     lighting: String(current.profile.lighting ?? ""),
     atmosphere: String(current.profile.atmosphere ?? ""),
-    composition_rule: String(current.profile.compositionRule ?? ""),
+    composition_language: String(current.profile.compositionRule ?? ""),
     human_presence: String(current.profile.humanPresence ?? ""),
-    symbolic_elements: current.profile.symbolicElements as string[],
+    symbolic_language: current.profile.symbolicElements as string[],
     avoid: current.profile.avoid as string[],
   } satisfies WorkVisualProfile : undefined;
   const controlSpec = work.current_spec_version_id
@@ -1855,7 +1919,7 @@ async function planWorkVisuals(env: Env, workId: string) {
     return apiError(
       status,
       "VISUAL_DIRECTOR_FAILED",
-      error instanceof Error ? error.message : String(error),
+      safeVisualErrorMessage(env, error),
     );
   }
   const createdAt = now();
@@ -1871,12 +1935,13 @@ async function planWorkVisuals(env: Env, workId: string) {
       `INSERT INTO work_visual_profiles
         (id, work_id, version, profile_json, director_provider, director_model,
          is_locked, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'deepseek', ?, ?, 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     ).bind(
       profileId,
       workId,
       profileVersion,
       JSON.stringify(direction.work_visual_profile),
+      visualDirectorProviderFromResult(direction as unknown as Record<string, unknown>),
       visualDirectorModelFromResult(direction as unknown as Record<string, unknown>),
       lockedProfile ? 1 : 0,
       createdAt,
@@ -1991,11 +2056,16 @@ async function storeGeneratedVisual(
   const spec = parseJson<Record<string, unknown>>(specRow.spec_json as string | null) ?? {};
   const visualId = id("visual_asset");
   const assetId = id("asset");
-  const extension = generated.mimeType === "image/svg+xml" ? "svg" : generated.mimeType.includes("jpeg") ? "jpg" : "png";
-  const storageKey = `visual/${workId}/${kind}/${sceneId ?? "hero"}/v${version}-${visualId}.${extension}`;
+  const extension = imageExtension(generated.mimeType);
+  const storageKey = kind === "hero"
+    ? `works/${workId}/visuals/hero/v${version}.${extension}`
+    : `works/${workId}/visuals/scenes/${sceneId}/v${version}.${extension}`;
   const checksum = await sha256Hex(generated.bytes);
   const createdAt = now();
   const isHero = kind === "hero";
+  const detectedDimensions = detectImageDimensions(generated.bytes);
+  const generatedWidth = detectedDimensions?.width ?? generated.width ?? (isHero ? 1500 : 768);
+  const generatedHeight = detectedDimensions?.height ?? generated.height ?? (isHero ? 280 : 576);
   const heroMatched = isHero && textValidation?.status === "matched";
   const needsReview = isHero && !generated.isPlaceholder && !heroMatched;
   const ready = !generated.isPlaceholder && !needsReview;
@@ -2017,7 +2087,13 @@ async function storeGeneratedVisual(
       ).bind(
         assetId, workId, `visual_${kind}`, storageKey, `${kind}-${sceneId ?? "hero"}-v${version}.${extension}`,
         generated.mimeType, generated.bytes.byteLength, checksum, generated.provider,
-        JSON.stringify({ model: generated.model, scene_id: sceneId, version }), createdAt,
+        JSON.stringify({
+          model: generated.model,
+          scene_id: sceneId,
+          version,
+          width: generatedWidth,
+          height: generatedHeight,
+        }), createdAt,
       ),
       env.DB.prepare(
         `INSERT INTO visual_assets
@@ -2028,7 +2104,7 @@ async function storeGeneratedVisual(
       ).bind(
         visualId, workId, specRow.id, assetId, kind, sceneId ?? null, generated.provider,
         generated.model, String(spec.image_prompt ?? ""), String(spec.negative_prompt ?? "") || null,
-        kind === "hero" ? 1500 : 768, kind === "hero" ? 420 : 576, generated.seed ?? null,
+        generatedWidth, generatedHeight, generated.seed ?? null,
         generationStatus, textValidationStatus, textValidation ? JSON.stringify(textValidation) : null,
         ready ? 1 : 0, ready ? 1 : 0, version, createdAt,
       ),
@@ -2047,7 +2123,32 @@ async function storeGeneratedVisual(
   return visualId;
 }
 
-async function generateOneVisual(env: Env, work: Row, specRow: Row) {
+async function storeFailedVisual(
+  env: Env,
+  work: Row,
+  specRow: Row,
+  provider: ImageGenerationProvider,
+  version: number,
+  error: unknown,
+) {
+  const spec = parseJson<Record<string, unknown>>(specRow.spec_json as string | null) ?? {};
+  const kind = String(specRow.kind) as VisualAssetKind;
+  const sceneId = specRow.scene_id == null ? undefined : String(specRow.scene_id);
+  const visualId = id("visual_asset");
+  await env.DB.prepare(
+    `INSERT INTO visual_assets
+      (id, work_id, spec_id, kind, scene_id, provider, model, prompt, negative_prompt,
+       width, height, generation_status, error_message, is_visible, is_active, version, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, 0, 0, ?, ?)`,
+  ).bind(
+    visualId, work.id, specRow.id, kind, sceneId ?? null,
+    provider.provider, provider.model, String(spec.image_prompt ?? ""),
+    String(spec.negative_prompt ?? "") || null, kind === "hero" ? 1500 : 768,
+    kind === "hero" ? 280 : 576, safeVisualErrorMessage(env, error), version, now(),
+  ).run();
+}
+
+async function generateOneVisual(env: Env, work: Row, specRow: Row, recordFailure = true) {
   const provider = imageProvider(env);
   const spec = parseJson<Record<string, unknown>>(specRow.spec_json as string | null) ?? {};
   const kind = String(specRow.kind) as VisualAssetKind;
@@ -2060,14 +2161,18 @@ async function generateOneVisual(env: Env, work: Row, specRow: Row) {
   try {
     let generated: GeneratedImage | undefined;
     let textValidation: HeroTextValidationResult | undefined;
-    const attempts = kind === "hero" && env.IMAGE_OCR_MODEL?.trim() && provider.configured ? 3 : 1;
+    const proxyOcrConfigured = provider.provider === "analysis-service"
+      && Boolean(env.ANALYSIS_SERVICE_URL?.trim() && env.ANALYSIS_SERVICE_TOKEN?.trim());
+    const directOcrConfigured = Boolean(env.IMAGE_OCR_MODEL?.trim() && imageApiKey(env));
+    const attempts = kind === "hero" && provider.configured
+      && (proxyOcrConfigured || directOcrConfigured) ? 3 : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       generated = await provider.generate({
         kind,
         prompt: String(spec.image_prompt ?? ""),
         negativePrompt: String(spec.negative_prompt ?? "") || undefined,
         width: kind === "hero" ? 1500 : 768,
-        height: kind === "hero" ? 420 : 576,
+        height: kind === "hero" ? 280 : 576,
         title: String(work.title),
         author: String(work.author ?? ""),
         sceneId,
@@ -2078,67 +2183,402 @@ async function generateOneVisual(env: Env, work: Row, specRow: Row) {
         generated.mimeType,
         String(work.title),
         String(work.author ?? ""),
-        { model: env.IMAGE_OCR_MODEL, apiKey: env.IMAGE_API_KEY, baseUrl: env.IMAGE_BASE_URL },
+        {
+          model: env.IMAGE_OCR_MODEL,
+          apiKey: imageApiKey(env),
+          baseUrl: imageBaseUrl(env),
+          serviceUrl: provider.provider === "analysis-service" ? env.ANALYSIS_SERVICE_URL : undefined,
+          serviceToken: provider.provider === "analysis-service" ? env.ANALYSIS_SERVICE_TOKEN : undefined,
+        },
       );
       if (textValidation.status === "matched") break;
     }
     if (!generated) throw new ImageGenerationError("图片生成服务没有返回图片。");
     return await storeGeneratedVisual(env, String(work.id), specRow, generated, version, textValidation);
   } catch (error) {
-    const visualId = id("visual_asset");
-    await env.DB.prepare(
-      `INSERT INTO visual_assets
-        (id, work_id, spec_id, kind, scene_id, provider, model, prompt, negative_prompt,
-         width, height, generation_status, error_message, is_visible, is_active, version, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, 0, 0, ?, ?)`,
-    ).bind(
-      visualId, work.id, specRow.id, kind, sceneId ?? null,
-      provider.provider, provider.model, String(spec.image_prompt ?? ""),
-      String(spec.negative_prompt ?? "") || null, kind === "hero" ? 1500 : 768,
-      kind === "hero" ? 420 : 576, error instanceof Error ? error.message : String(error), version, now(),
-    ).run();
+    if (recordFailure) await storeFailedVisual(env, work, specRow, provider, version, error);
     throw error;
   }
 }
 
-async function generateWorkVisuals(request: Request, env: Env, workId: string) {
-  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
-  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
-  let body: Record<string, unknown> = {};
-  try { body = await request.json() as Record<string, unknown>; } catch { /* optional body */ }
-  const type = String(body.type ?? "all");
-  const sceneId = String(body.sceneId ?? body.scene_id ?? "").trim();
-  if (!['all', 'hero', 'scene'].includes(type) || (type === "scene" && !sceneId)) {
-    return apiError(400, "INVALID_VISUAL_TARGET", "请指定 all、hero 或具体 scene。");
-  }
+interface VisualGenerationTarget {
+  type: "all" | "hero" | "scene";
+  sceneId?: string;
+  includePlan: boolean;
+}
+
+function visualTargetKey(target: VisualGenerationTarget) {
+  return `${target.type}:${target.sceneId ?? ""}:${target.includePlan ? "plan" : "reuse"}`;
+}
+
+async function activeVisualGenerationJobs(env: Env, workId: string) {
   const result = await env.DB.prepare(
-    `SELECT * FROM visual_specs WHERE work_id = ? AND is_active = 1
-      AND (? = 'all' OR kind = ?)
-      AND (? != 'scene' OR scene_id = ?)
-      ORDER BY CASE WHEN kind = 'hero' THEN 0 ELSE 1 END, scene_id`,
-  ).bind(workId, type, type, type, sceneId).all<Row>();
-  const specs = result.results ?? [];
-  if (!specs.length) return apiError(409, "VISUAL_PLAN_REQUIRED", "请先生成作品视觉方案。");
-  const generated: string[] = [];
-  const failures: Array<{ specId: string; message: string }> = [];
-  for (const spec of specs) {
+    `SELECT * FROM processing_jobs WHERE work_id = ? AND type = ?
+      AND status IN ('queued', 'planning', 'generating_hero', 'generating_scenes', 'uploading', 'processing')
+      ORDER BY created_at DESC`,
+  ).bind(workId, VISUAL_GENERATION_JOB_TYPE).all<Row>();
+  return result.results ?? [];
+}
+
+async function rejectWhileVisualGenerationIsActive(env: Env, workId: string) {
+  const active = (await activeVisualGenerationJobs(env, workId))[0];
+  return active
+    ? apiError(409, "VISUAL_GENERATION_IN_PROGRESS", "作品视觉正在生成，请等待当前任务完成后再修改。", {
+      visual_job_id: String(active.id),
+      status: String(active.status),
+    })
+    : null;
+}
+
+async function generateOneVisualWithRetry(env: Env, work: Row, spec: Row) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= VISUAL_GENERATION_RETRY_LIMIT; attempt += 1) {
     try {
-      generated.push(await generateOneVisual(env, work, spec));
+      return await generateOneVisual(env, work, spec, false);
     } catch (error) {
-      failures.push({ specId: String(spec.id), message: error instanceof Error ? error.message : String(error) });
+      lastError = error;
     }
   }
+  const provider = imageProvider(env);
+  const kind = String(spec.kind) as VisualAssetKind;
+  const sceneId = spec.scene_id == null ? undefined : String(spec.scene_id);
+  const latest = await first<Row>(env.DB.prepare(
+    `SELECT COALESCE(MAX(version), 0) AS version FROM visual_assets
+      WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?`,
+  ).bind(work.id, kind, sceneId ?? ""));
+  await storeFailedVisual(env, work, spec, provider, Number(latest?.version ?? 0) + 1, lastError);
+  throw lastError instanceof Error ? lastError : new ImageGenerationError(String(lastError));
+}
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  task: (item: T) => Promise<void>,
+) {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor];
+      cursor += 1;
+      await task(item);
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function updateVisualJobProgress(env: Env, jobId: string, progress: number) {
+  const clamped = Math.min(99, Math.max(1, Math.round(progress)));
+  await env.DB.prepare(
+    `UPDATE processing_jobs
+        SET progress = CASE WHEN progress < ? THEN ? ELSE progress END, updated_at = ?
+      WHERE id = ? AND type = ?
+        AND status NOT IN ('completed', 'succeeded', 'partial_failed', 'failed')`,
+  ).bind(clamped, clamped, now(), jobId, VISUAL_GENERATION_JOB_TYPE).run();
+}
+
+async function setVisualJobStage(env: Env, jobId: string, stage: string, progress: number) {
+  await env.DB.prepare(
+    `UPDATE processing_jobs SET status = ?, progress = CASE WHEN progress < ? THEN ? ELSE progress END,
+      updated_at = ? WHERE id = ? AND type = ?
+      AND status NOT IN ('completed', 'succeeded', 'partial_failed', 'failed')`,
+  ).bind(stage, progress, progress, now(), jobId, VISUAL_GENERATION_JOB_TYPE).run();
+}
+
+async function visualResultSince(env: Env, specId: string, jobCreatedAt: string) {
+  return first<Row>(env.DB.prepare(
+    `SELECT id, generation_status, error_message FROM visual_assets
+      WHERE spec_id = ? AND created_at >= ?
+        AND generation_status IN ('ready', 'needs_review', 'failed')
+      ORDER BY version DESC LIMIT 1`,
+  ).bind(specId, jobCreatedAt));
+}
+
+async function runVisualGenerationJob(env: Env, jobId: string) {
+  let job = await first<Row>(env.DB.prepare(
+    "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+  ).bind(jobId, VISUAL_GENERATION_JOB_TYPE));
+  if (!job) return;
+  if (VISUAL_TERMINAL_STATUSES.has(String(job.status))) return;
+  const leaseExpired = Date.now() - Date.parse(String(job.updated_at)) >= VISUAL_JOB_LEASE_MS;
+  if (job.status !== "queued" && !leaseExpired) return;
+  const claim = await env.DB.prepare(
+    `UPDATE processing_jobs SET status = 'planning', progress = CASE WHEN progress < 1 THEN 1 ELSE progress END,
+      updated_at = ? WHERE id = ? AND type = ? AND status = ? AND updated_at = ?`,
+  ).bind(now(), jobId, VISUAL_GENERATION_JOB_TYPE, job.status, job.updated_at).run();
+  if (!Number(claim.meta.changes ?? 0)) return;
+  job = await first<Row>(env.DB.prepare(
+    "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+  ).bind(jobId, VISUAL_GENERATION_JOB_TYPE));
+  if (!job) return;
+  const target = parseJson<VisualGenerationTarget>(job.input_json as string | null);
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(job.work_id));
+  if (!target || !work) {
+    await env.DB.prepare(
+      `UPDATE processing_jobs SET status = 'failed', progress = 0, error_code = ?,
+        error_message = ?, updated_at = ? WHERE id = ? AND type = ?`,
+    ).bind(
+      "VISUAL_JOB_INPUT_INVALID",
+      work ? "视觉生成任务参数无效。" : "视觉生成任务对应的作品不存在。",
+      now(),
+      jobId,
+      VISUAL_GENERATION_JOB_TYPE,
+    ).run();
+    return;
+  }
+
+  try {
+    const plannedForJob = target.includePlan
+      ? await first<Row>(env.DB.prepare(
+        `SELECT id FROM visual_specs WHERE work_id = ? AND is_active = 1 AND created_at >= ? LIMIT 1`,
+      ).bind(work.id, job.created_at))
+      : null;
+    if (target.includePlan && !plannedForJob) {
+      const planResponse = await planWorkVisuals(env, String(work.id), jobId);
+      if (!planResponse.ok) {
+        const payload = await planResponse.json().catch(() => ({})) as Record<string, unknown>;
+        const error = payload.error && typeof payload.error === "object"
+          ? payload.error as Record<string, unknown>
+          : {};
+        throw new Error(String(error.message ?? `视觉方案生成失败（HTTP ${planResponse.status}）。`));
+      }
+      await updateVisualJobProgress(env, jobId, 10);
+    }
+
+    const result = await env.DB.prepare(
+      `SELECT * FROM visual_specs WHERE work_id = ? AND is_active = 1
+        AND (? = 'all' OR kind = ?)
+        AND (? != 'scene' OR scene_id = ?)
+        ORDER BY CASE WHEN kind = 'hero' THEN 0 ELSE 1 END, scene_id`,
+    ).bind(work.id, target.type, target.type, target.type, target.sceneId ?? "").all<Row>();
+    const specs = result.results ?? [];
+    if (!specs.length) throw new Error("请先生成作品视觉方案。");
+
+    const generated: string[] = [];
+    const failures: Array<{ specId: string; kind: string; sceneId?: string; message: string }> = [];
+    const heroSpecs = specs.filter((spec) => spec.kind === "hero");
+    const sceneSpecs = specs.filter((spec) => spec.kind === "scene");
+    let completed = 0;
+    const progressBase = target.includePlan ? 10 : 1;
+    const recordCompletion = async () => {
+      completed += 1;
+      await updateVisualJobProgress(
+        env,
+        jobId,
+        progressBase + ((99 - progressBase) * completed) / specs.length,
+      );
+    };
+    const generateSpec = async (spec: Row) => {
+      const existing = await visualResultSince(env, String(spec.id), String(job.created_at));
+      if (existing) {
+        if (existing.generation_status === "failed") {
+          failures.push({
+            specId: String(spec.id),
+            kind: String(spec.kind),
+            sceneId: spec.scene_id == null ? undefined : String(spec.scene_id),
+            message: String(existing.error_message ?? "图片生成失败。"),
+          });
+        } else {
+          generated.push(String(existing.id));
+        }
+        await recordCompletion();
+        return;
+      }
+      try {
+        generated.push(await generateOneVisualWithRetry(env, work, spec));
+      } catch (error) {
+        failures.push({
+          specId: String(spec.id),
+          kind: String(spec.kind),
+          sceneId: spec.scene_id == null ? undefined : String(spec.scene_id),
+            message: safeVisualErrorMessage(env, error),
+        });
+      } finally {
+        await recordCompletion();
+      }
+    };
+
+    // Hero establishes the work's main visual before scene generation begins.
+    if (heroSpecs.length) await setVisualJobStage(env, jobId, "generating_hero", Math.max(progressBase, 12));
+    for (const spec of heroSpecs) await generateSpec(spec);
+    if (sceneSpecs.length) await setVisualJobStage(env, jobId, "generating_scenes", Math.max(progressBase, 20));
+    await mapWithConcurrency(sceneSpecs, VISUAL_SCENE_CONCURRENCY, generateSpec);
+    await setVisualJobStage(env, jobId, "uploading", 99);
+
+    const status = failures.length === 0
+      ? "completed"
+      : generated.length > 0
+        ? "partial_failed"
+        : "failed";
+    const finishedAt = now();
+    await env.DB.prepare(
+      `UPDATE processing_jobs
+          SET status = ?, progress = 100, output_json = ?, error_code = ?,
+              error_message = ?, updated_at = ?
+        WHERE id = ? AND type = ?
+          AND status NOT IN ('completed', 'succeeded', 'partial_failed', 'failed')`,
+    ).bind(
+      status,
+      JSON.stringify({
+        target,
+        generated_asset_ids: generated,
+        failures,
+        scene_concurrency: VISUAL_SCENE_CONCURRENCY,
+        retry_limit: VISUAL_GENERATION_RETRY_LIMIT,
+      }),
+      failures.length ? "VISUAL_GENERATION_PARTIAL_FAILED" : null,
+      failures.length ? `${failures.length} 张图片生成失败。` : null,
+      finishedAt,
+      jobId,
+      VISUAL_GENERATION_JOB_TYPE,
+    ).run();
+  } catch (error) {
+    await env.DB.prepare(
+      `UPDATE processing_jobs
+          SET status = 'failed', progress = 100, output_json = ?, error_code = ?,
+              error_message = ?, updated_at = ?
+        WHERE id = ? AND type = ?
+          AND status NOT IN ('completed', 'succeeded', 'partial_failed', 'failed')`,
+    ).bind(
+      JSON.stringify({ target, generated_asset_ids: [], failures: [] }),
+      "VISUAL_GENERATION_FAILED",
+      safeVisualErrorMessage(env, error),
+      now(),
+      jobId,
+      VISUAL_GENERATION_JOB_TYPE,
+    ).run();
+  }
+}
+
+async function createVisualGenerationJob(
+  env: Env,
+  workId: string,
+  target: Omit<VisualGenerationTarget, "includePlan"> & { includePlan?: boolean },
+  ctx: ExecutionContext,
+) {
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  if (!['all', 'hero', 'scene'].includes(target.type) || (target.type === "scene" && !target.sceneId)) {
+    return apiError(400, "INVALID_VISUAL_TARGET", "请指定 all、hero 或具体 scene。");
+  }
+  let provider: ImageGenerationProvider;
+  try {
+    provider = imageProvider(env);
+  } catch (error) {
+    const status = error instanceof ImageGenerationError ? error.status : 503;
+    return apiError(status, "IMAGE_PROVIDER_INVALID", error instanceof Error ? error.message : String(error));
+  }
+  if (!provider.configured) {
+    return apiError(503, "IMAGE_PROVIDER_NOT_CONFIGURED", "图片生成服务尚未完成服务端配置。");
+  }
+
+  const currentSpecs = await env.DB.prepare(
+    `SELECT id FROM visual_specs WHERE work_id = ? AND is_active = 1
+      AND (? = 'all' OR kind = ?)
+      AND (? != 'scene' OR scene_id = ?) LIMIT 1`,
+  ).bind(workId, target.type, target.type, target.type, target.sceneId ?? "").all<Row>();
+  const includePlan = target.type === "all"
+    && (target.includePlan === true || !(currentSpecs.results ?? []).length);
+  if (target.type !== "all" && !(currentSpecs.results ?? []).length) {
+    return apiError(409, "VISUAL_PLAN_REQUIRED", "请先生成作品视觉方案。");
+  }
+  const normalizedTarget: VisualGenerationTarget = {
+    type: target.type,
+    sceneId: target.sceneId,
+    includePlan,
+  };
+
+  const activeRows = await activeVisualGenerationJobs(env, workId);
+  const active = activeRows.find((row) => {
+    const input = parseJson<VisualGenerationTarget>(row.input_json as string | null);
+    return input && visualTargetKey(input) === visualTargetKey(normalizedTarget);
+  });
+  if (active) {
+    ctx.waitUntil(runVisualGenerationJob(env, String(active.id)));
+    return json({
+      visual_job_id: active.id,
+      work_id: workId,
+      status: active.status,
+      progress: Number(active.progress ?? 0),
+      visuals: await getVisualBundle(env, workId),
+    }, 202);
+  }
+  if (activeRows.length) {
+    const current = activeRows[0];
+    return apiError(409, "VISUAL_GENERATION_IN_PROGRESS", "作品视觉已有生成任务正在运行，请等待完成后重试。", {
+      visual_job_id: String(current.id),
+      status: String(current.status),
+    });
+  }
+
+  const jobId = id("visual_job");
+  const createdAt = now();
+  await env.DB.prepare(
+    `INSERT INTO processing_jobs
+      (id, work_id, type, status, progress, idempotency_key, input_json, created_at, updated_at)
+     VALUES (?, ?, ?, 'queued', 0, ?, ?, ?, ?)`,
+  ).bind(
+    jobId,
+    workId,
+    VISUAL_GENERATION_JOB_TYPE,
+    `visual-generation:${workId}:${visualTargetKey(normalizedTarget)}:${jobId}`,
+    JSON.stringify(normalizedTarget),
+    createdAt,
+    createdAt,
+  ).run();
+  ctx.waitUntil(runVisualGenerationJob(env, jobId));
   return json({
-    ok: failures.length === 0,
-    generatedAssetIds: generated,
-    failures,
+    visual_job_id: jobId,
+    work_id: workId,
+    status: "queued",
+    progress: 0,
     visuals: await getVisualBundle(env, workId),
-  }, generated.length || !failures.length ? 200 : 502);
+  }, 202);
+}
+
+async function generateWorkVisuals(
+  request: Request,
+  env: Env,
+  workId: string,
+  ctx: ExecutionContext,
+) {
+  let body: Record<string, unknown> = {};
+  try { body = await request.json() as Record<string, unknown>; } catch { /* optional body */ }
+  const type = String(body.type ?? "all") as VisualGenerationTarget["type"];
+  const sceneId = String(body.sceneId ?? body.scene_id ?? "").trim() || undefined;
+  return createVisualGenerationJob(env, workId, {
+    type,
+    sceneId,
+    includePlan: body.includePlan === true || body.include_plan === true,
+  }, ctx);
+}
+
+async function getVisualGenerationJob(env: Env, jobId: string, ctx: ExecutionContext) {
+  const job = await first<Row>(env.DB.prepare(
+    "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+  ).bind(jobId, VISUAL_GENERATION_JOB_TYPE));
+  if (!job) return apiError(404, "VISUAL_JOB_NOT_FOUND", "找不到视觉生成任务。");
+  if (!VISUAL_TERMINAL_STATUSES.has(String(job.status))) {
+    ctx.waitUntil(runVisualGenerationJob(env, jobId));
+  }
+  const output = parseJson<Record<string, unknown>>(job.output_json as string | null);
+  return json({
+    visual_job_id: job.id,
+    work_id: job.work_id,
+    status: job.status,
+    progress: Number(job.progress ?? 0),
+    target: parseJson<VisualGenerationTarget>(job.input_json as string | null),
+    generated_asset_ids: output?.generated_asset_ids ?? [],
+    failures: output?.failures ?? [],
+    error: job.error_code ? { code: job.error_code, message: job.error_message } : undefined,
+    visuals: await getVisualBundle(env, String(job.work_id)),
+  });
 }
 
 async function uploadVisualReplacement(request: Request, env: Env, workId: string) {
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
   if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  const conflict = await rejectWhileVisualGenerationIsActive(env, workId);
+  if (conflict) return conflict;
   let form: FormData;
   try { form = await request.formData(); } catch { return apiError(400, "INVALID_MULTIPART", "图片必须使用文件上传表单。"); }
   const file = form.get("file");
@@ -2214,25 +2654,24 @@ async function patchVisualAsset(request: Request, env: Env, visualId: string) {
   return json({ visuals: await getVisualBundle(env, String(asset.work_id)) });
 }
 
-async function regenerateVisualAsset(request: Request, env: Env, visualId: string) {
+async function regenerateVisualAsset(
+  env: Env,
+  visualId: string,
+  ctx: ExecutionContext,
+) {
   const asset = await first<Row>(env.DB.prepare("SELECT * FROM visual_assets WHERE id = ?").bind(visualId));
   if (!asset) return apiError(404, "VISUAL_ASSET_NOT_FOUND", "找不到视觉资产。");
-  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(asset.work_id));
   const spec = await first<Row>(env.DB.prepare(
     `SELECT * FROM visual_specs
       WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ? AND is_active = 1
       ORDER BY version DESC LIMIT 1`,
   ).bind(asset.work_id, asset.kind, asset.scene_id ?? ""));
-  if (!work || !spec) return apiError(409, "VISUAL_SPEC_REQUIRED", "该图片缺少可重生成的视觉方案。");
-  try {
-    await generateOneVisual(env, work, spec);
-  } catch (error) {
-    const status = error instanceof ImageGenerationError ? error.status : 502;
-    return apiError(status, "IMAGE_GENERATION_FAILED", error instanceof Error ? error.message : String(error), {
-      visuals: await getVisualBundle(env, String(asset.work_id)),
-    });
-  }
-  return json({ visuals: await getVisualBundle(env, String(asset.work_id)) });
+  if (!spec) return apiError(409, "VISUAL_SPEC_REQUIRED", "该图片缺少可重生成的视觉方案。");
+  return createVisualGenerationJob(env, String(asset.work_id), {
+    type: String(asset.kind) as "hero" | "scene",
+    sceneId: asset.scene_id == null ? undefined : String(asset.scene_id),
+    includePlan: false,
+  }, ctx);
 }
 
 async function serveAsset(request: Request, env: Env, assetId: string) {
@@ -2265,7 +2704,7 @@ async function serveAsset(request: Request, env: Env, assetId: string) {
   return new Response(object.body, { status, headers });
 }
 
-async function api(request: Request, env: Env): Promise<Response | null> {
+async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return null;
   if (url.pathname === "/api/health" && request.method === "GET") {
@@ -2317,6 +2756,10 @@ async function api(request: Request, env: Env): Promise<Response | null> {
   }
   const jobMatch = url.pathname.match(/^\/api\/analysis-jobs\/([^/]+)$/);
   if (jobMatch && request.method === "GET") return getAnalysisJob(env, jobMatch[1]);
+  const visualJobMatch = url.pathname.match(/^\/api\/visual-jobs\/([^/]+)$/);
+  if (visualJobMatch && request.method === "GET") {
+    return getVisualGenerationJob(env, visualJobMatch[1], ctx);
+  }
   const inputMatch = url.pathname.match(/^\/api\/internal\/analysis-jobs\/([^/]+)\/input$/);
   if (inputMatch && request.method === "GET") return getAnalysisInput(request, env, inputMatch[1]);
   const analysisAudioMatch = url.pathname.match(/^\/api\/internal\/analysis-jobs\/([^/]+)\/audio$/);
@@ -2336,13 +2779,17 @@ async function api(request: Request, env: Env): Promise<Response | null> {
   const visualPlanMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visuals\/plan$/);
   if (visualPlanMatch && request.method === "POST") return planWorkVisuals(env, visualPlanMatch[1]);
   const visualGenerateMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visuals\/generate$/);
-  if (visualGenerateMatch && request.method === "POST") return generateWorkVisuals(request, env, visualGenerateMatch[1]);
+  if (visualGenerateMatch && request.method === "POST") {
+    return generateWorkVisuals(request, env, visualGenerateMatch[1], ctx);
+  }
   const visualUploadMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/visual-assets\/upload$/);
   if (visualUploadMatch && request.method === "POST") return uploadVisualReplacement(request, env, visualUploadMatch[1]);
   const visualAssetMatch = url.pathname.match(/^\/api\/visual-assets\/([^/]+)$/);
   if (visualAssetMatch && request.method === "PATCH") return patchVisualAsset(request, env, visualAssetMatch[1]);
   const visualRegenerateMatch = url.pathname.match(/^\/api\/visual-assets\/([^/]+)\/regenerate$/);
-  if (visualRegenerateMatch && request.method === "POST") return regenerateVisualAsset(request, env, visualRegenerateMatch[1]);
+  if (visualRegenerateMatch && request.method === "POST") {
+    return regenerateVisualAsset(env, visualRegenerateMatch[1], ctx);
+  }
   const workMatch = url.pathname.match(/^\/api\/works\/([^/]+)$/);
   if (workMatch && request.method === "GET") {
     const work = await getWorkPayload(env, workMatch[1], url.searchParams.get("published") === "1");
@@ -2359,7 +2806,7 @@ async function api(request: Request, env: Env): Promise<Response | null> {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      const apiResponse = await api(request, env);
+      const apiResponse = await api(request, env, ctx);
       if (apiResponse) return apiResponse;
       const url = new URL(request.url);
       if (url.pathname === "/_vinext/image") {
