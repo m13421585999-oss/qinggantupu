@@ -98,14 +98,25 @@ def test_settings_default_to_production_openai_compatible_gateway(
     assert settings.llm_model == "gpt-5.6-sol"
 
 
-def test_visual_director_always_uses_the_same_llm_model(
+def test_stale_deepseek_model_is_normalized_after_provider_migration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "openai_compatible")
     monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")
     monkeypatch.delenv("VISUAL_LLM_MODEL", raising=False)
-    assert configured_visual_model() == "deepseek-v4-pro"
+    assert configured_visual_model() == "gpt-5.6-sol"
     monkeypatch.setenv("VISUAL_LLM_MODEL", "deepseek-visual-director")
+    assert configured_visual_model() == "gpt-5.6-sol"
+
+
+def test_deepseek_rollback_preserves_its_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")
+
     assert configured_visual_model() == "deepseek-v4-pro"
 
 

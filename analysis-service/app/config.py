@@ -55,10 +55,21 @@ def configured_base_url(provider: str | None = None) -> str:
 
 
 def configured_model(provider: str | None = None) -> str:
+    resolved_provider = provider or configured_provider()
     model = os.getenv("LLM_MODEL", "").strip()
     if model:
+        # Production previously pinned the DeepSeek default in LLM_MODEL. Once
+        # the provider has been migrated, do not let that stale cross-provider
+        # value silently route the OpenAI-compatible adapter back to DeepSeek.
+        # Explicit DeepSeek rollback remains available through
+        # LLM_PROVIDER=deepseek, where the same model value is preserved.
+        if (
+            resolved_provider == OPENAI_COMPATIBLE_PROVIDER
+            and model == DEEPSEEK_DEFAULT_MODEL
+        ):
+            return OPENAI_COMPATIBLE_DEFAULT_MODEL
         return model
-    if (provider or configured_provider()) == DEEPSEEK_PROVIDER:
+    if resolved_provider == DEEPSEEK_PROVIDER:
         return DEEPSEEK_DEFAULT_MODEL
     return OPENAI_COMPATIBLE_DEFAULT_MODEL
 
