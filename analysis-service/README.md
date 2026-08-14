@@ -36,7 +36,7 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 - `IMAGE_PROVIDER`：当前固定为 `openai_compatible`；
 - `IMAGE_BASE_URL`：可选的图片生成专用网关根地址；未设置时依次回退到 `AI_BASE_URL`、旧 `LLM_BASE_URL`；
 - `IMAGE_API_KEY`：可选的图片生成专用服务端 Key；未设置时依次回退到 `AI_API_KEY`、旧 `LLM_API_KEY`；
-- `IMAGE_MODEL`：图片生成模型，当前默认 `image2.0`；
+- `IMAGE_MODEL`：图片生成模型；以网关 `/v1/models` 返回的真实 ID 为准，当前生产配置为 `gpt-image-2`；
 - `IMAGE_OCR_MODEL`：可选的 Hero 文字核对模型；未设置时自动使用 `LLM_MODEL`。
 
 `openai_compatible` 会优先调用 Responses API，并用各自独立的 JSON Schema 约束朗诵解释与 Visual Director；只有网关明确不提供 Responses endpoint 时，才回退到同一网关的 Chat Completions。两类请求共用 Provider 和模型，但 prompt 与 schema 完全独立。
