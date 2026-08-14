@@ -116,6 +116,11 @@ export interface WorkVisualBundle {
   provider?: VisualProviderStatus;
 }
 
+export interface VisualSentenceReference {
+  id: string;
+  text: string;
+}
+
 type VisualResponse = { visuals: WorkVisualBundle } | WorkVisualBundle;
 
 interface VisualGenerationResponse {
@@ -217,6 +222,135 @@ function unwrapVisuals(payload: VisualResponse): WorkVisualBundle {
     heroAsset: explicitHero ? normalizeAsset(explicitHero) : undefined,
     sceneAssets: explicitScenes.map(normalizeAsset),
   };
+}
+
+function normalizedSourceText(value: string) {
+  return value.normalize("NFKC").replace(/\s+/gu, "");
+}
+
+function orderedSceneSpecs(sceneSpecs: SceneVisualSpec[]) {
+  return sceneSpecs
+    .map((scene, index) => ({ scene, index }))
+    .sort((left, right) => {
+      const leftNumber = /^scene-(\d+)$/u.exec(left.scene.sceneId)?.[1];
+      const rightNumber = /^scene-(\d+)$/u.exec(right.scene.sceneId)?.[1];
+      if (leftNumber && rightNumber) return Number(leftNumber) - Number(rightNumber);
+      return left.index - right.index;
+    })
+    .map(({ scene }) => scene);
+}
+
+/**
+ * Build the complete Scene-to-sentence relationship in source order.
+ * The cursor keeps repeated paragraphs attached to their corresponding Scene.
+ */
+export function mapSceneSpecsToSentences(
+  sceneSpecs: SceneVisualSpec[],
+  sentences: VisualSentenceReference[],
+) {
+  const result = new Map<string, SceneVisualSpec>();
+  const sentenceIndexById = new Map(sentences.map((sentence, index) => [sentence.id, index]));
+  let sentenceCursor = 0;
+
+  for (const scene of orderedSceneSpecs(sceneSpecs)) {
+    const explicitIndexes = scene.sourceSentenceIds
+      .map((sentenceId) => sentenceIndexById.get(sentenceId))
+      .filter((index): index is number => index !== undefined);
+    if (explicitIndexes.length) {
+      for (const sentenceId of scene.sourceSentenceIds) {
+        if (sentenceIndexById.has(sentenceId)) result.set(sentenceId, scene);
+      }
+      sentenceCursor = Math.max(sentenceCursor, Math.max(...explicitIndexes) + 1);
+      continue;
+    }
+
+    const directIndex = sentenceIndexById.get(scene.sceneId);
+    if (directIndex !== undefined) {
+      result.set(scene.sceneId, scene);
+      sentenceCursor = Math.max(sentenceCursor, directIndex + 1);
+      continue;
+    }
+
+    const sceneText = normalizedSourceText(scene.sourceText);
+    if (!sceneText) continue;
+    let sceneOffset = 0;
+    let matched = false;
+    for (let index = sentenceCursor; index < sentences.length; index += 1) {
+      const sentence = sentences[index];
+      const sentenceText = normalizedSourceText(sentence.text);
+      if (!sentenceText) continue;
+      const position = sceneText.indexOf(sentenceText, sceneOffset);
+      if (position >= 0) {
+        result.set(sentence.id, scene);
+        sceneOffset = position + sentenceText.length;
+        sentenceCursor = index + 1;
+        matched = true;
+        continue;
+      }
+      if (!matched && sentenceText.includes(sceneText)) {
+        result.set(sentence.id, scene);
+        sentenceCursor = index + 1;
+        matched = true;
+      }
+      if (matched) break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Resolve a persisted Scene back to a graph sentence.
+ *
+ * Visual generation may intentionally start before acoustic analysis. In that
+ * case there are no control-spec sentence ids yet, so sourceSentenceIds is
+ * empty even though sourceText is authoritative. Keep the id lookup as the
+ * primary path and fall back to the original source text instead of leaving a
+ * generated image detached from the manuscript.
+ */
+export function findSceneSpecForSentence(
+  sceneSpecs: SceneVisualSpec[],
+  sentence: VisualSentenceReference,
+) {
+  return mapSceneSpecsToSentences(sceneSpecs, [sentence]).get(sentence.id);
+}
+
+export function mapSceneAssetsToSentences(
+  visuals: WorkVisualBundle | undefined,
+  sentences: VisualSentenceReference[],
+) {
+  const result = new Map<string, VisualAsset>();
+  if (!visuals) return result;
+  const sceneBySentenceId = mapSceneSpecsToSentences(visuals.sceneSpecs ?? [], sentences);
+  const candidates = [...(visuals.sceneAssets?.length
+    ? visuals.sceneAssets
+    : visuals.assets.filter((asset) => asset.kind === "scene"))]
+    .filter((asset) => (
+      Boolean(asset.url)
+      && asset.status === "ready"
+      && asset.isVisible !== false
+      && asset.isActive !== false
+    ))
+    .sort((left, right) => right.version - left.version);
+  const assetBySceneId = new Map<string, VisualAsset>();
+  for (const asset of candidates) {
+    if (asset.sceneId && !assetBySceneId.has(asset.sceneId)) {
+      assetBySceneId.set(asset.sceneId, asset);
+    }
+  }
+  for (const sentence of sentences) {
+    const asset = assetBySceneId.get(sentence.id)
+      ?? assetBySceneId.get(sceneBySentenceId.get(sentence.id)?.sceneId ?? "");
+    if (asset) result.set(sentence.id, asset);
+  }
+  return result;
+}
+
+export function findSceneAssetForSentence(
+  visuals: WorkVisualBundle | undefined,
+  sentence: VisualSentenceReference,
+) {
+  return mapSceneAssetsToSentences(visuals, [sentence]).get(sentence.id);
 }
 
 async function visualRequest(url: string, init?: RequestInit) {

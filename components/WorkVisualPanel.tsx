@@ -274,9 +274,14 @@ export function WorkVisualPanel({
   const [error, setError] = useState<string>();
   const [cropDraft, setCropDraft] = useState<CropDraft>();
   const cropPreviewUrlRef = useRef<string | undefined>(undefined);
+  const onVisualsChangeRef = useRef(onVisualsChange);
   const savedWork = Boolean(workId && !workId.startsWith("draft-"));
   const loading = savedWork && loadedWorkId !== workId;
   const visuals = savedWork && loadedWorkId === workId ? loadedVisuals : emptyVisuals;
+
+  useEffect(() => {
+    onVisualsChangeRef.current = onVisualsChange;
+  }, [onVisualsChange]);
 
   useEffect(() => {
     if (!savedWork) return;
@@ -286,6 +291,10 @@ export function WorkVisualPanel({
       setVisuals(bundle);
       setError(undefined);
       setLoadedWorkId(workId);
+      // The visual job can finish while the editor is showing an older work
+      // snapshot. Loading the fresh bundle must also refresh the manuscript,
+      // not only the image-management sheet.
+      onVisualsChangeRef.current?.(bundle);
     }).catch((requestError: unknown) => {
       if (cancelled) return;
       setVisuals(emptyVisuals);

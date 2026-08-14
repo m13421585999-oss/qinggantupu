@@ -47,7 +47,8 @@ import {
 } from "@/lib/recitation-schema";
 import {
   generateWorkVisualAssets,
-  type VisualAsset,
+  mapSceneAssetsToSentences,
+  mapSceneSpecsToSentences,
   type VisualAssetKind,
   type WorkVisualBundle,
 } from "@/lib/visual-assets";
@@ -1585,13 +1586,8 @@ function EditorStage({
   const heroAsset = work.visuals?.heroAsset?.url ? work.visuals.heroAsset : undefined;
   const showHeroImage = Boolean(heroAsset?.url && heroAsset.url !== failedHeroImageUrl);
   const sceneSpecs = work.visuals?.sceneSpecs ?? [];
-  const sceneAssets = work.visuals?.sceneAssets ?? [];
-  const sceneAssetForSentence = (sentenceId: string) => sceneAssets.find((asset) => {
-    if (!asset.url || asset.status && asset.status !== "ready") return false;
-    if (asset.isVisible === false || asset.isActive === false) return false;
-    const sceneSpec = sceneSpecs.find((candidate) => candidate.sceneId === asset.sceneId);
-    return asset.sceneId === sentenceId || sceneSpec?.sourceSentenceIds.includes(sentenceId);
-  });
+  const sceneSpecsBySentenceId = mapSceneSpecsToSentences(sceneSpecs, spec.sentences);
+  const sceneAssetsBySentenceId = mapSceneAssetsToSentences(work.visuals, spec.sentences);
   const sentenceFor = (sentence: RecitationSentence) => curveDrafts[sentence.id] ?? sentence;
   const selectedSentence = tokenEditor
     ? curveDrafts[tokenEditor.sentenceId]
@@ -1764,9 +1760,8 @@ function EditorStage({
                 {spec.sentences.map((sentence, sentenceIndex) => {
                   const displaySentence = sentenceFor(sentence);
                   const isActive = active?.id === sentence.id && currentMs > 0;
-                  const sceneAsset = sceneAssetForSentence(sentence.id);
-                  const sceneSpec = sceneSpecs.find((candidate) => candidate.sourceSentenceIds.includes(sentence.id)
-                    || candidate.sceneId === sentence.id);
+                  const sceneAsset = sceneAssetsBySentenceId.get(sentence.id);
+                  const sceneSpec = sceneSpecsBySentenceId.get(sentence.id);
                   return (
                     <div className="viewer-sentence-wrap" key={sentence.id}>
                       <GraphSentence
@@ -2370,14 +2365,7 @@ function ViewerView({
   }
   const active = activeSentenceAt(spec.sentences, standardAudio.timeline, currentMs);
   const visuals = work.visuals;
-  const sceneSpecs = visuals?.sceneSpecs ?? [];
-  const sceneAssets = visuals?.sceneAssets ?? [];
-  const sceneAssetForSentence = (sentenceId: string): VisualAsset | undefined => sceneAssets.find((asset) => {
-    if (!asset.url || asset.status && asset.status !== "ready") return false;
-    if (asset.isVisible === false || asset.isActive === false) return false;
-    const sceneSpec = sceneSpecs.find((candidate) => candidate.sceneId === asset.sceneId);
-    return asset.sceneId === sentenceId || sceneSpec?.sourceSentenceIds.includes(sentenceId);
-  });
+  const sceneAssetsBySentenceId = mapSceneAssetsToSentences(visuals, spec.sentences);
   const activeSentenceIndex = Math.max(0, spec.sentences.findIndex((sentence) => sentence.id === active?.id));
 
   return (
@@ -2448,7 +2436,7 @@ function ViewerView({
         <div className="viewer-graph-list">
           {spec.sentences.map((sentence, sentenceIndex) => {
             const isActive = active?.id === sentence.id && currentMs > 0;
-            const sceneAsset = sceneAssetForSentence(sentence.id);
+            const sceneAsset = sceneAssetsBySentenceId.get(sentence.id);
             return (
               <div className="viewer-sentence-wrap" key={sentence.id}>
                 <GraphSentence

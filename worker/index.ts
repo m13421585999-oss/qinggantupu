@@ -15,6 +15,7 @@ import {
 } from "@/lib/hero-production-prompt";
 import { withDynamicTimingProfile } from "@/lib/timing-profile";
 import { requestVisualDirection, VisualDirectorRequestError } from "@/lib/visual-director";
+import { sameVisualGenerationTarget } from "@/lib/visual-job-target";
 import {
   buildSceneUnits,
   summarizeControlSpec,
@@ -2527,7 +2528,7 @@ async function createVisualGenerationJob(
   const activeRows = await activeVisualGenerationJobs(env, workId);
   const active = activeRows.find((row) => {
     const input = parseJson<VisualGenerationTarget>(row.input_json as string | null);
-    return input && visualTargetKey(input) === visualTargetKey(normalizedTarget);
+    return input && sameVisualGenerationTarget(input, normalizedTarget);
   });
   if (active) {
     return json({
