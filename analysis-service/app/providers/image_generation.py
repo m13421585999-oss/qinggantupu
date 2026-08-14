@@ -194,6 +194,14 @@ def _images_endpoint_is_unavailable(response: httpx.Response) -> bool:
     )
 
 
+def _should_probe_responses(response: httpx.Response) -> bool:
+    # Some compatible gateways expose a model only through the Responses
+    # image-generation tool. A 403 from /images/generations can therefore be
+    # path/model-scope specific rather than proof that the shared key is
+    # invalid. Probe Responses once, while keeping both failures if it fails.
+    return response.status_code == 403 or _images_endpoint_is_unavailable(response)
+
+
 def _response_image(payload: dict[str, Any]) -> dict[str, Any] | None:
     data = payload.get("data")
     if isinstance(data, list) and data and isinstance(data[0], dict):
@@ -247,6 +255,7 @@ async def generate_image(
         "size": f"{width}x{height}",
         "n": 1,
     }
+    images_failure: httpx.Response | None = None
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds, connect=30)
@@ -260,7 +269,8 @@ async def generate_image(
                 json=body,
             )
             resolved_endpoint = "images/generations"
-            if response.status_code >= 400 and _images_endpoint_is_unavailable(response):
+            if response.status_code >= 400 and _should_probe_responses(response):
+                images_failure = response
                 response = await client.post(
                     _responses_endpoint(base_url),
                     headers={
@@ -288,6 +298,14 @@ async def generate_image(
         raise ImageGenerationError("Unable to call the image generation service") from exc
 
     if response.status_code >= 400:
+        if images_failure is not None:
+            raise ImageGenerationError(
+                "Image generation failed after endpoint probe: "
+                f"images/generations HTTP {images_failure.status_code} "
+                f"({_safe_detail(images_failure, api_key)}); "
+                f"responses HTTP {response.status_code} "
+                f"({_safe_detail(response, api_key)})"
+            )
         raise ImageGenerationError(
             f"Image generation failed (HTTP {response.status_code}): "
             f"{_safe_detail(response, api_key)}"

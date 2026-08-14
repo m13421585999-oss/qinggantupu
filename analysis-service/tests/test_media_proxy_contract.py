@@ -138,8 +138,10 @@ def test_image_proxy_reports_dimensions_from_returned_bytes(
     assert response.json()["data"][0]["height"] == 768
 
 
-def test_image_proxy_falls_back_to_responses_when_images_path_is_absent(
+@pytest.mark.parametrize("images_status", [403, 404])
+def test_image_proxy_probes_responses_when_images_path_cannot_generate(
     monkeypatch: pytest.MonkeyPatch,
+    images_status: int,
 ) -> None:
     _environment(monkeypatch)
     requests: list[tuple[str, dict[str, object]]] = []
@@ -148,7 +150,7 @@ def test_image_proxy_falls_back_to_responses_when_images_path_is_absent(
         body = json.loads(request.content)
         requests.append((request.url.path, body))
         if request.url.path.endswith("/images/generations"):
-            return httpx.Response(404, text="unknown endpoint")
+            return httpx.Response(images_status, text="cannot generate on this path")
         return httpx.Response(
             200,
             json={
@@ -185,6 +187,83 @@ def test_image_proxy_falls_back_to_responses_when_images_path_is_absent(
     assert requests[1][1]["tools"] == [
         {"type": "image_generation", "size": "1536x1024"}
     ]
+
+
+def test_image_proxy_preserves_both_permission_failures_after_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _environment(monkeypatch)
+    paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/images/generations"):
+            return httpx.Response(
+                403,
+                text="images permission denied for provider-test-key",
+            )
+        return httpx.Response(
+            403,
+            text="responses permission denied for provider-test-key",
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch("app.providers.image_generation.httpx.AsyncClient", side_effect=factory):
+        response = TestClient(app).post(
+            "/v1/image-generation",
+            headers={"authorization": "Bearer service-test"},
+            json={
+                "kind": "scene",
+                "prompt": "海面晨光",
+                "width": 768,
+                "height": 576,
+            },
+        )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "images/generations HTTP 403" in detail
+    assert "responses HTTP 403" in detail
+    assert "provider-test-key" not in detail
+    assert paths == ["/v1/images/generations", "/v1/responses"]
+
+
+def test_image_proxy_does_not_probe_responses_for_invalid_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _environment(monkeypatch)
+    paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(401, text="invalid credentials")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch("app.providers.image_generation.httpx.AsyncClient", side_effect=factory):
+        response = TestClient(app).post(
+            "/v1/image-generation",
+            headers={"authorization": "Bearer service-test"},
+            json={
+                "kind": "scene",
+                "prompt": "海面晨光",
+                "width": 768,
+                "height": 576,
+            },
+        )
+
+    assert response.status_code == 502
+    assert "HTTP 401" in response.json()["detail"]
+    assert paths == ["/v1/images/generations"]
 
 
 def test_image_provider_error_redacts_key() -> None:
