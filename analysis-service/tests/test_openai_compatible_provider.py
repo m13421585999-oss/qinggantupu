@@ -169,6 +169,52 @@ def test_openai_compatible_falls_back_when_responses_endpoint_is_absent() -> Non
     assert fallback["reasoning_effort"] == "high"
 
 
+def test_latency_sensitive_request_starts_with_chat_json_mode() -> None:
+    requests: list[tuple[str, dict[str, object]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append((request.url.path, body))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok":true}'}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch(
+        "app.providers.openai_compatible.httpx.AsyncClient",
+        side_effect=client_factory,
+    ):
+        result = asyncio.run(generate_structured_result(
+            provider="openai_compatible",
+            api_key="provider-test-key",
+            base_url="https://gateway.example/v1",
+            model="provider/model",
+            system_prompt="system prompt",
+            user_prompt="user prompt",
+            schema_name="independent_schema",
+            schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            thinking="enabled",
+            reasoning_effort="low",
+            temperature=0.1,
+            timeout_seconds=30,
+            prefer_chat_json=True,
+        ))
+
+    assert result.data == {"ok": True}
+    assert result.endpoint == "chat/completions"
+    assert result.output_mode == "json_object"
+    assert result.request_count == 1
+    assert [path for path, _ in requests] == ["/v1/chat/completions"]
+    assert requests[0][1]["response_format"] == {"type": "json_object"}
+    assert requests[0][1]["reasoning_effort"] == "low"
+
+
 @pytest.mark.parametrize(
     "status_code",
     [408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
@@ -176,10 +222,10 @@ def test_openai_compatible_falls_back_when_responses_endpoint_is_absent() -> Non
 def test_responses_transient_failure_falls_back_to_chat(
     status_code: int,
 ) -> None:
-    requests: list[str] = []
+    requests: list[tuple[str, dict[str, object]]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request.url.path)
+        requests.append((request.url.path, json.loads(request.content)))
         if request.url.path.endswith("/responses"):
             return httpx.Response(status_code, text="temporary gateway failure")
         return httpx.Response(
@@ -214,8 +260,167 @@ def test_responses_transient_failure_falls_back_to_chat(
 
     assert result.data == {"ok": True}
     assert result.endpoint == "chat/completions"
+    assert result.output_mode == "json_object"
     assert result.request_count == 2
-    assert requests == ["/v1/responses", "/v1/chat/completions"]
+    assert [path for path, _ in requests] == [
+        "/v1/responses",
+        "/v1/chat/completions",
+    ]
+    assert requests[-1][1]["response_format"] == {"type": "json_object"}
+    assert requests[-1][1]["reasoning_effort"] == (
+        "medium" if status_code >= 500 else "high"
+    )
+
+
+def test_chat_transient_failure_retries_json_mode_within_request_limit() -> None:
+    requests: list[tuple[str, dict[str, object]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append((request.url.path, body))
+        if request.url.path.endswith("/responses"):
+            return httpx.Response(524, text="cloudflare timeout")
+        if len(requests) == 2:
+            return httpx.Response(524, text="cloudflare timeout")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok":true}'}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch(
+        "app.providers.openai_compatible.httpx.AsyncClient",
+        side_effect=client_factory,
+    ):
+        result = asyncio.run(generate_structured_result(
+            provider="openai_compatible",
+            api_key="provider-test-key",
+            base_url="https://gateway.example/v1",
+            model="provider/model",
+            system_prompt="system prompt",
+            user_prompt="user prompt",
+            schema_name="independent_schema",
+            schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            thinking="enabled",
+            reasoning_effort="high",
+            temperature=0.1,
+            timeout_seconds=30,
+        ))
+
+    assert result.data == {"ok": True}
+    assert result.endpoint == "chat/completions"
+    assert result.output_mode == "json_object"
+    assert result.request_count == 3
+    assert [path for path, _ in requests] == [
+        "/v1/responses",
+        "/v1/chat/completions",
+        "/v1/chat/completions",
+    ]
+    assert all(
+        body["response_format"] == {"type": "json_object"}
+        for path, body in requests
+        if path.endswith("/chat/completions")
+    )
+    assert all(
+        body["reasoning_effort"] == "medium"
+        for path, body in requests
+        if path.endswith("/chat/completions")
+    )
+
+
+def test_chat_json_retry_downgrades_effort_only_after_chat_5xx() -> None:
+    requests: list[tuple[str, dict[str, object]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append((request.url.path, body))
+        if request.url.path.endswith("/responses"):
+            return httpx.Response(404, text="unknown endpoint")
+        if len(requests) == 2:
+            return httpx.Response(524, text="cloudflare timeout")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok":true}'}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch(
+        "app.providers.openai_compatible.httpx.AsyncClient",
+        side_effect=client_factory,
+    ):
+        result = asyncio.run(generate_structured_result(
+            provider="openai_compatible",
+            api_key="provider-test-key",
+            base_url="https://gateway.example/v1",
+            model="provider/model",
+            system_prompt="system prompt",
+            user_prompt="user prompt",
+            schema_name="independent_schema",
+            schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            thinking="enabled",
+            reasoning_effort="high",
+            temperature=0.1,
+            timeout_seconds=30,
+        ))
+
+    assert result.data == {"ok": True}
+    assert result.output_mode == "json_object"
+    chat_requests = [
+        body for path, body in requests if path.endswith("/chat/completions")
+    ]
+    assert [body["response_format"]["type"] for body in chat_requests] == [
+        "json_schema",
+        "json_object",
+    ]
+    assert [body["reasoning_effort"] for body in chat_requests] == [
+        "high",
+        "medium",
+    ]
+
+
+def test_exhausted_transient_failures_hide_cloudflare_html() -> None:
+    requests: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(
+            524,
+            text="<!DOCTYPE html><html>very long cloudflare diagnostic</html>",
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)
+
+    with patch(
+        "app.providers.openai_compatible.httpx.AsyncClient",
+        side_effect=client_factory,
+    ), pytest.raises(StructuredLlmError) as captured:
+        _run(provider="openai_compatible")
+
+    message = str(captured.value)
+    assert message == (
+        "LLM provider is temporarily unavailable after 3 attempts "
+        "(last HTTP 524)"
+    )
+    assert "<!DOCTYPE" not in message
+    assert requests == [
+        "/v1/responses",
+        "/v1/chat/completions",
+        "/v1/chat/completions",
+    ]
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 403, 422])

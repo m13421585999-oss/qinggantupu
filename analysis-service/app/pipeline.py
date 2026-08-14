@@ -258,12 +258,12 @@ async def analyze_job(
     }
     control_spec = await interpret_control_spec(
         analysis_package=analysis_package,
-        provider=settings.llm_provider,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        model=settings.llm_model,
+        provider=settings.recitation_llm_provider,
+        api_key=settings.recitation_llm_api_key,
+        base_url=settings.recitation_llm_base_url,
+        model=settings.recitation_llm_model,
         thinking=settings.llm_thinking,
-        reasoning_effort=settings.llm_reasoning_effort,
+        reasoning_effort=settings.recitation_reasoning_effort,
         timeout_seconds=settings.request_timeout_seconds,
     )
     # Focus can contextualize, but never create, a prolongation. Build timing

@@ -45,7 +45,12 @@ import {
   type RecitationWork,
   type TimedToken,
 } from "@/lib/recitation-schema";
-import type { VisualAsset, VisualAssetKind, WorkVisualBundle } from "@/lib/visual-assets";
+import {
+  generateWorkVisualAssets,
+  type VisualAsset,
+  type VisualAssetKind,
+  type WorkVisualBundle,
+} from "@/lib/visual-assets";
 
 type ProductMode = "studio" | "viewer";
 type WorkflowStep = 1 | 2 | 3;
@@ -462,6 +467,7 @@ function AcousticProsodyCurve({
     x: metrics.tokenCenters[point.tokenIndex],
     y: height - verticalPadding - point.visualLevel * visualStep,
   }));
+  const neutralFallback = rowPoints.every((point) => point.isNeutralFallback);
   const baselineY = height - verticalPadding - ((PROSODY_VISUAL_LEVEL_COUNT - 1) / 2) * visualStep;
   const label = sentence.prosody.length
     ? sentence.prosody.map((event) => PROSODY_LABELS[event.type]).join("、")
@@ -503,10 +509,11 @@ function AcousticProsodyCurve({
     <svg
       ref={svgRef}
       className={`prosody-curve acoustic-prosody-curve ${editing ? "editing" : ""}`}
+      data-prosody-source={neutralFallback ? "neutral-fallback" : "acoustic"}
       viewBox={`0 0 ${metrics.width} ${height}`}
       preserveAspectRatio="none"
       role={editing ? "group" : "img"}
-      aria-label={`${label}；每字宏观语势曲线`}
+      aria-label={`${label}；每字宏观语势曲线${neutralFallback ? "；当前为中性后备路径" : ""}`}
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -1016,7 +1023,7 @@ function IndexedGraphTrack({
                   key={row.key}
                   style={{ top: `${row.top}px`, height: `${row.height}px` }}
                 >
-                  {sentence.macroProsodyPath?.points.length ? (
+                  {teachingProsodyPoints.length ? (
                     <AcousticProsodyCurve
                       sentence={sentence}
                       metrics={row}
@@ -2972,6 +2979,20 @@ export function RecitationStudio() {
       savedUpdatedAtRef.current = saved.updatedAt;
       savedReferenceIdRef.current = saved.referenceAudioOriginal?.id ?? saved.referenceAudio?.id;
       savedHasDerivedAssetsRef.current = Boolean(saved.standardAiAudio || saved.aiDemoAudio || saved.controlSpec);
+
+      // Visual planning and image generation are independent of the acoustic
+      // pipeline. Start them before awaiting the analysis request so the two
+      // long-running jobs make progress in parallel. The visual flow is
+      // versioned: failed attempts keep the currently active Hero/Scene assets.
+      void generateWorkVisualAssets(saved.id, { type: "all" })
+        .then((visuals) => {
+          setWork((current) => current.id === saved.id ? { ...current, visuals } : current);
+          showToast("作品视觉已同步生成");
+        })
+        .catch((visualError) => {
+          const message = visualError instanceof Error ? visualError.message : String(visualError);
+          showToast(`声音分析继续；作品视觉生成未完成：${message}`);
+        });
 
       const created = await apiJson<AnalysisJobPayload>(
         await fetch(`/api/works/${encodeURIComponent(saved.id)}/analysis-jobs`, {

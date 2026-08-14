@@ -494,6 +494,32 @@ def _is_transient_provider_failure(response: httpx.Response) -> bool:
     return response.status_code in {408, 429} or 500 <= response.status_code < 600
 
 
+def _transient_failure_message(
+    response: httpx.Response,
+    *,
+    request_count: int,
+) -> str:
+    """Return a short, user-safe description for exhausted transient errors.
+
+    Cloudflare error pages can be hundreds of lines long and do not add any
+    actionable provider detail. Keep only the status and bounded attempt count
+    once every compatible request shape has failed.
+    """
+
+    return (
+        "LLM provider is temporarily unavailable after "
+        f"{request_count} attempts (last HTTP {response.status_code})"
+    )
+
+
+def _timeout_fallback_reasoning_effort(reasoning_effort: str) -> str:
+    """Reduce expensive reasoning after a gateway 5xx without ever raising it."""
+
+    if reasoning_effort in {"high", "xhigh", "max"}:
+        return "medium"
+    return reasoning_effort
+
+
 def _strict_schema_is_unavailable(response: httpx.Response) -> bool:
     if response.status_code not in {400, 404, 405, 422, 501}:
         return False
@@ -581,12 +607,14 @@ async def generate_structured_result(
     temperature: float,
     timeout_seconds: float,
     validator: Callable[[dict[str, Any]], Any] | None = None,
+    prefer_chat_json: bool = False,
 ) -> StructuredGenerationResult:
     """Generate one schema-bound JSON object.
 
-    Generic OpenAI-compatible gateways use Responses first and fall back to
-    Chat Completions when that endpoint is absent, unsupported, or transiently
-    unavailable. DeepSeek remains a separate Chat adapter for rollback.
+    Generic OpenAI-compatible gateways normally use Responses first and fall
+    back to Chat Completions. Latency-sensitive callers may start directly in
+    Chat JSON mode; local validation still enforces the exact schema. DeepSeek
+    remains a separate Chat adapter for rollback.
     """
 
     if provider not in {OPENAI_COMPATIBLE_PROVIDER, DEEPSEEK_PROVIDER}:
@@ -594,6 +622,7 @@ async def generate_structured_result(
 
     request_count = 0
     request_limit = 3 if provider == OPENAI_COMPATIBLE_PROVIDER else 2
+    chat_fallback_reasoning_effort = reasoning_effort
 
     async def post_with_budget(
         client: httpx.AsyncClient,
@@ -620,9 +649,12 @@ async def generate_structured_result(
         async with asyncio.timeout(timeout_seconds), httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds, connect=min(30, timeout_seconds))
         ) as client:
-            if provider == OPENAI_COMPATIBLE_PROVIDER:
+            chat_repair_content: str | None = None
+            chat_repair_error: str | None = None
+            if provider == OPENAI_COMPATIBLE_PROVIDER and not prefer_chat_json:
                 responses_available = True
                 responses_json_unavailable = False
+                responses_transient_failure = False
                 responses_repair_content: str | None = None
                 responses_repair_error: str | None = None
                 response = await post_with_budget(
@@ -658,6 +690,15 @@ async def generate_structured_result(
                     _responses_is_unavailable(response)
                     or _is_transient_provider_failure(response)
                 ):
+                    responses_transient_failure = _is_transient_provider_failure(
+                        response
+                    )
+                    if response.status_code >= 500:
+                        chat_fallback_reasoning_effort = (
+                            _timeout_fallback_reasoning_effort(
+                                chat_fallback_reasoning_effort
+                            )
+                        )
                     responses_available = False
                 elif not _strict_schema_is_unavailable(response):
                     raise StructuredLlmError(
@@ -697,6 +738,15 @@ async def generate_structured_result(
                                 or _json_mode_is_unavailable(response)
                                 or _is_transient_provider_failure(response)
                             ):
+                                responses_transient_failure = (
+                                    _is_transient_provider_failure(response)
+                                )
+                                if response.status_code >= 500:
+                                    chat_fallback_reasoning_effort = (
+                                        _timeout_fallback_reasoning_effort(
+                                            chat_fallback_reasoning_effort
+                                        )
+                                    )
                                 responses_json_unavailable = True
                                 break
                             raise StructuredLlmError(
@@ -729,8 +779,16 @@ async def generate_structured_result(
                             f"{responses_repair_error or 'missing JSON output'}"
                         )
 
-                chat_repair_content: str | None = None
-                chat_repair_error: str | None = None
+                # A gateway timeout on /responses is an availability signal,
+                # not evidence that strict schema is unsupported. Replaying
+                # the same large strict schema through Chat often hits the
+                # same Cloudflare deadline. JSON Object mode is smaller and
+                # remains fully guarded by the caller's Pydantic validator.
+                initial_chat_output_mode = (
+                    "json_object"
+                    if responses_transient_failure
+                    else "json_schema"
+                )
                 response = await post_with_budget(
                     client,
                     _openai_endpoint(base_url, "chat/completions"),
@@ -742,9 +800,9 @@ async def generate_structured_result(
                         schema_name=schema_name,
                         schema=schema,
                         thinking=thinking,
-                        reasoning_effort=reasoning_effort,
+                        reasoning_effort=chat_fallback_reasoning_effort,
                         temperature=temperature,
-                        output_mode="json_schema",
+                        output_mode=initial_chat_output_mode,
                     ),
                 )
                 if 200 <= response.status_code < 300:
@@ -759,12 +817,40 @@ async def generate_structured_result(
                         return StructuredGenerationResult(
                             data=value,
                             endpoint="chat/completions",
-                            output_mode="json_schema",
+                            output_mode=initial_chat_output_mode,
                             request_count=request_count,
                         )
-                elif not _strict_schema_is_unavailable(response):
+                elif _is_transient_provider_failure(response):
+                    chat_repair_error = (
+                        f"temporary upstream failure (HTTP {response.status_code})"
+                    )
+                    if response.status_code >= 500:
+                        chat_fallback_reasoning_effort = (
+                            _timeout_fallback_reasoning_effort(
+                                chat_fallback_reasoning_effort
+                            )
+                        )
+                    if request_count >= request_limit:
+                        raise StructuredLlmError(
+                            _transient_failure_message(
+                                response,
+                                request_count=request_count,
+                            )
+                        )
+                elif (
+                    initial_chat_output_mode == "json_schema"
+                    and _strict_schema_is_unavailable(response)
+                ):
+                    pass
+                else:
+                    request_kind = (
+                        "structured"
+                        if initial_chat_output_mode == "json_schema"
+                        else "JSON"
+                    )
                     raise StructuredLlmError(
-                        f"Chat structured request failed (HTTP {response.status_code}): "
+                        f"Chat {request_kind} request failed "
+                        f"(HTTP {response.status_code}): "
                         f"{_safe_detail(response, api_key)}"
                     )
 
@@ -796,7 +882,7 @@ async def generate_structured_result(
                         schema_name=schema_name,
                         schema=schema,
                         thinking=thinking,
-                        reasoning_effort=reasoning_effort,
+                        reasoning_effort=chat_fallback_reasoning_effort,
                         temperature=temperature,
                         output_mode="json_object",
                         repair_content=repair_content,
@@ -804,6 +890,27 @@ async def generate_structured_result(
                     ),
                 )
                 if response.status_code >= 400:
+                    if _is_transient_provider_failure(response):
+                        repair_error = (
+                            f"temporary upstream failure (HTTP {response.status_code})"
+                        )
+                        if (
+                            provider == OPENAI_COMPATIBLE_PROVIDER
+                            and response.status_code >= 500
+                        ):
+                            chat_fallback_reasoning_effort = (
+                                _timeout_fallback_reasoning_effort(
+                                    chat_fallback_reasoning_effort
+                                )
+                            )
+                        if request_count < request_limit:
+                            continue
+                        raise StructuredLlmError(
+                            _transient_failure_message(
+                                response,
+                                request_count=request_count,
+                            )
+                        )
                     raise StructuredLlmError(
                         f"LLM JSON request failed (HTTP {response.status_code}): "
                         f"{_safe_detail(response, api_key)}"
@@ -851,6 +958,7 @@ async def generate_structured_json(
     temperature: float,
     timeout_seconds: float,
     validator: Callable[[dict[str, Any]], Any] | None = None,
+    prefer_chat_json: bool = False,
 ) -> dict[str, Any]:
     """Compatibility wrapper for callers that only need the JSON object."""
 
@@ -868,5 +976,6 @@ async def generate_structured_json(
         temperature=temperature,
         timeout_seconds=timeout_seconds,
         validator=validator,
+        prefer_chat_json=prefer_chat_json,
     )
     return result.data

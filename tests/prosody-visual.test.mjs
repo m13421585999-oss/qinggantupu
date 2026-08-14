@@ -27,6 +27,31 @@ test("teaching prosody creates exactly one anchor for every spoken token index",
   assert.equal(points.length, 4, "punctuation index 2 never creates an anchor");
 });
 
+test("a sentence with no usable acoustic F0 keeps one neutral editable anchor per spoken token", () => {
+  const points = buildTeachingProsodyPoints([34, 35, 36, 37], []);
+  const edited = applyProsodyPointOverrides(points, [
+    { tokenIndex: 36, visualLevel: 7, source: "human" },
+  ]);
+
+  assert.deepEqual(points.map((point) => point.tokenIndex), [34, 35, 36, 37]);
+  assert.deepEqual(points.map((point) => point.visualLevel), [4, 4, 4, 4]);
+  assert.ok(points.every((point) => point.isNeutralFallback));
+  assert.ok(points.every((point) => point.sourceLevel === 0 && point.smoothedLevel === 0));
+  assert.equal(edited[2].visualLevel, 7, "creator dragging remains available on a neutral fallback");
+  assert.equal(edited[2].isNeutralFallback, true, "the override stays traceable to missing acoustics");
+});
+
+test("out-of-range acoustic points cannot suppress the current sentence curve", () => {
+  const points = buildTeachingProsodyPoints(
+    [340, 341, 342],
+    [{ tokenIndex: 33, normalizedLevel: 1.2 }],
+  );
+
+  assert.equal(points.length, 3);
+  assert.ok(points.every((point) => point.visualLevel === 4));
+  assert.ok(points.every((point) => point.isNeutralFallback));
+});
+
 test("five-token smoothing and nine-level quantization suppress tiny pitch jitter", () => {
   const source = [0, 0.16, -0.12, 0.18, -0.09, 0.15, 0.02].map((level, tokenIndex) => ({
     tokenIndex,

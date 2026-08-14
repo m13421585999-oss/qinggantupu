@@ -176,6 +176,9 @@ test("graph decorations stay attached while sentence playback waits for seek com
   assert.match(studio, /data-marker="prolongation"/);
   assert.match(studio, /data-marker="ending-intonation"/);
   assert.match(studio, /buildTeachingProsodyPoints/);
+  assert.match(studio, /\{teachingProsodyPoints\.length \? \(/);
+  assert.doesNotMatch(studio, /\{sentence\.macroProsodyPath\?\.points\.length \? \(/);
+  assert.match(studio, /data-prosody-source=\{neutralFallback \? "neutral-fallback" : "acoustic"\}/);
   assert.match(studio, /extendProsodyCurveToTokenEdges\([\s\S]*?points,[\s\S]*?metrics\.trackStart,[\s\S]*?metrics\.trackEnd,[\s\S]*?verticalPadding,[\s\S]*?height - verticalPadding,[\s\S]*?\)/);
   assert.match(studio, /trackStart:\s*localX\(firstRect\.left - trackRect\.left\)/);
   assert.match(studio, /trackEnd:\s*localX\(lastRect\.right - trackRect\.left\)/);

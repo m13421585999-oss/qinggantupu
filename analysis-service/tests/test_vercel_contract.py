@@ -42,6 +42,11 @@ def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "IMAGE_OCR_MODEL",
         "VISUAL_LLM_MODEL",
         "LLM_REASONING_EFFORT",
+        "RECITATION_LLM_PROVIDER",
+        "RECITATION_LLM_BASE_URL",
+        "RECITATION_LLM_MODEL",
+        "RECITATION_LLM_API_KEY",
+        "RECITATION_REASONING_EFFORT",
         "REQUEST_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -79,6 +84,10 @@ def test_settings_read_canonical_openai_compatible_environment(monkeypatch: pyte
     assert settings.llm_model == "provider/model"
     assert settings.llm_thinking == "enabled"
     assert settings.llm_reasoning_effort == "high"
+    assert settings.recitation_llm_provider == "deepseek"
+    assert settings.recitation_llm_base_url == "https://api.deepseek.com"
+    assert settings.recitation_llm_model == "deepseek-v4-pro"
+    assert settings.recitation_reasoning_effort == "high"
     assert settings.image_api_key == "gateway-test"
     assert settings.image_base_url == "https://gateway.example/v1"
 
@@ -171,6 +180,20 @@ def test_reasoning_effort_can_be_raised_to_max(monkeypatch: pytest.MonkeyPatch) 
     assert settings.llm_reasoning_effort == "max"
 
 
+def test_recitation_reasoning_effort_is_independently_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _base_environment(monkeypatch)
+    monkeypatch.setenv("AI_API_KEY", "gateway-test")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "high")
+    monkeypatch.setenv("RECITATION_REASONING_EFFORT", "low")
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_reasoning_effort == "high"
+    assert settings.recitation_reasoning_effort == "low"
+
+
 def test_invalid_reasoning_effort_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_environment(monkeypatch)
     monkeypatch.setenv("LLM_API_KEY", "deepseek-test")
@@ -246,6 +269,15 @@ def test_health_reports_openai_compatible_gateway_and_shared_visual_model(
         "chat/completions",
     ]
     assert result["visual_director"]["model"] == "provider/model"
+    assert result["visual_director"]["reasoning_effort"] == "high"
+    assert result["recitation_interpreter"]["provider"] == "deepseek"
+    assert result["recitation_interpreter"]["base_url"] == "https://api.deepseek.com"
+    assert result["recitation_interpreter"]["model"] == "deepseek-v4-pro"
+    assert result["recitation_interpreter"]["reasoning_effort"] == "high"
+    assert result["recitation_interpreter"]["endpoint_preference"] == [
+        "chat/completions"
+    ]
+    assert result["recitation_interpreter"]["output_mode"] == "json_object"
 
 
 def test_health_reports_image_configuration_as_booleans_without_keys(

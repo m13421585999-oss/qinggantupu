@@ -33,6 +33,9 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 - `AI_API_KEY`：当前 LLM Provider 的服务端 Key；
 - `LLM_MODEL`：朗诵解释和 Visual Director 共用的模型名；
 - `LLM_REASONING_EFFORT`：可选，默认 `high`，复杂作品可临时改为 `max` 后重新分析。
+- `RECITATION_LLM_PROVIDER / BASE_URL / MODEL`：仅用于朗诵解释，默认恢复为 DeepSeek 官方 API、`deepseek-v4-pro`；Visual Director 继续使用通用 LLM 配置。
+- `RECITATION_LLM_API_KEY`：可选；未设置时优先复用旧 `LLM_API_KEY`，用于保留原 DeepSeek Key。
+- `RECITATION_REASONING_EFFORT`：仅用于完整朗诵解释请求，默认 `high`。
 - `IMAGE_PROVIDER`：当前固定为 `openai_compatible`；
 - `IMAGE_BASE_URL`：可选的图片生成专用网关根地址；未设置时依次回退到 `AI_BASE_URL`、旧 `LLM_BASE_URL`；
 - `IMAGE_API_KEY`：可选的图片生成专用服务端 Key；未设置时依次回退到 `AI_API_KEY`、旧 `LLM_API_KEY`；
@@ -48,6 +51,10 @@ LLM_PROVIDER=openai_compatible
 AI_BASE_URL=https://api2.65535.space
 LLM_MODEL=gpt-5.6-sol
 LLM_REASONING_EFFORT=high
+RECITATION_LLM_PROVIDER=deepseek
+RECITATION_LLM_BASE_URL=https://api.deepseek.com
+RECITATION_LLM_MODEL=deepseek-v4-pro
+RECITATION_REASONING_EFFORT=high
 ```
 
 保留的 DeepSeek 回滚配置为：

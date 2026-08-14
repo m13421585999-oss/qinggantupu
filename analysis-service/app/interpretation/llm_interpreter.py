@@ -335,6 +335,7 @@ async def interpret_control_spec(
             temperature=0.1,
             timeout_seconds=timeout_seconds,
             validator=LlmInterpretation.model_validate,
+            prefer_chat_json=provider == "openai_compatible",
         )
     except StructuredLlmError as exc:
         raise InterpretationError(f"LLM interpretation failed: {exc}") from exc

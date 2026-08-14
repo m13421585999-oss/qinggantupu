@@ -22,6 +22,10 @@ from app.config import (
     configured_image_provider,
     configured_model,
     configured_provider,
+    configured_recitation_base_url,
+    configured_recitation_model,
+    configured_recitation_provider,
+    configured_recitation_reasoning_effort,
 )
 from app.interpretation.visual_director import VisualDirectorError, direct_work_visuals
 from app.pipeline import PIPELINE_VERSION, analyze_job
@@ -163,10 +167,10 @@ async def _run_job(job: JobRequest, settings: Settings) -> str:
                     "standard_ai_audio_asset_id": analysis_package.get(
                         "standard_ai_audio_asset_id"
                     ),
-                    "language_model_provider": settings.llm_provider,
-                    "language_model": settings.llm_model,
+                    "language_model_provider": settings.recitation_llm_provider,
+                    "language_model": settings.recitation_llm_model,
                     "thinking": settings.llm_thinking,
-                    "reasoning_effort": settings.llm_reasoning_effort,
+                    "reasoning_effort": settings.recitation_reasoning_effort,
                     "knowledge_base": "recitation-expression-v1.0",
                 },
             },
@@ -211,6 +215,11 @@ async def health() -> dict[str, Any]:
         os.getenv("AI_API_KEY", "").strip()
         or os.getenv("LLM_API_KEY", "").strip()
     )
+    configured["RECITATION_LLM_AUTH"] = bool(
+        os.getenv("RECITATION_LLM_API_KEY", "").strip()
+        or os.getenv("LLM_API_KEY", "").strip()
+        or os.getenv("AI_API_KEY", "").strip()
+    )
     configured["IMAGE_AUTH"] = bool(
         os.getenv("IMAGE_API_KEY", "").strip()
         or os.getenv("AI_API_KEY", "").strip()
@@ -218,6 +227,12 @@ async def health() -> dict[str, Any]:
     )
     reasoning_effort = os.getenv("LLM_REASONING_EFFORT", "high").strip().lower()
     configured["LLM_REASONING_EFFORT"] = reasoning_effort in LLM_REASONING_EFFORTS
+    recitation_reasoning_effort = os.getenv(
+        "RECITATION_REASONING_EFFORT", "high"
+    ).strip().lower()
+    configured["RECITATION_REASONING_EFFORT"] = (
+        recitation_reasoning_effort in LLM_REASONING_EFFORTS
+    )
     try:
         provider = configured_provider()
         base_url = configured_base_url(provider)
@@ -226,9 +241,18 @@ async def health() -> dict[str, Any]:
         image_base_url = configured_image_base_url()
         image_model = configured_image_model()
         image_ocr_model = configured_image_ocr_model(provider)
+        recitation_provider = configured_recitation_provider()
+        recitation_base_url = configured_recitation_base_url(
+            recitation_provider
+        )
+        recitation_model = configured_recitation_model(recitation_provider)
+        recitation_reasoning_effort = configured_recitation_reasoning_effort()
         configured["LLM_PROVIDER"] = True
         configured["AI_BASE_URL"] = bool(base_url)
         configured["LLM_MODEL"] = bool(model)
+        configured["RECITATION_LLM_PROVIDER"] = True
+        configured["RECITATION_LLM_BASE_URL"] = bool(recitation_base_url)
+        configured["RECITATION_LLM_MODEL"] = bool(recitation_model)
         configured["IMAGE_PROVIDER"] = True
         configured["IMAGE_BASE_URL"] = bool(image_base_url)
         configured["IMAGE_MODEL"] = bool(image_model)
@@ -241,9 +265,20 @@ async def health() -> dict[str, Any]:
         image_base_url = configured_image_base_url()
         image_model = os.getenv("IMAGE_MODEL", "").strip()
         image_ocr_model = os.getenv("IMAGE_OCR_MODEL", "").strip()
+        recitation_provider = (
+            os.getenv("RECITATION_LLM_PROVIDER", "").strip().lower()
+            or "invalid"
+        )
+        recitation_base_url = os.getenv(
+            "RECITATION_LLM_BASE_URL", ""
+        ).strip()
+        recitation_model = os.getenv("RECITATION_LLM_MODEL", "").strip()
         configured["LLM_PROVIDER"] = False
         configured["AI_BASE_URL"] = False
         configured["LLM_MODEL"] = False
+        configured["RECITATION_LLM_PROVIDER"] = False
+        configured["RECITATION_LLM_BASE_URL"] = False
+        configured["RECITATION_LLM_MODEL"] = False
         configured["IMAGE_PROVIDER"] = False
         configured["IMAGE_BASE_URL"] = False
         configured["IMAGE_MODEL"] = False
@@ -274,6 +309,16 @@ async def health() -> dict[str, Any]:
                 if provider == "openai_compatible"
                 else ["chat/completions"]
             ),
+        },
+        "recitation_interpreter": {
+            "provider": recitation_provider,
+            "base_url": recitation_base_url,
+            "model": recitation_model,
+            "thinking": DEEPSEEK_THINKING,
+            "reasoning_effort": recitation_reasoning_effort,
+            "timeout_fallback_reasoning_effort": recitation_reasoning_effort,
+            "endpoint_preference": ["chat/completions"],
+            "output_mode": "json_object",
         },
         "image_generation": {
             "provider": image_provider,

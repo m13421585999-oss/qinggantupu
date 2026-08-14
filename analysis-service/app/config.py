@@ -75,19 +75,58 @@ def configured_model(provider: str | None = None) -> str:
 
 
 def configured_visual_model() -> str:
-    # Both interpretation flows use the same deployed model. Their prompts and
-    # schemas stay independent in their respective modules.
+    # Visual planning and OCR stay on the general LLM connection.
     return configured_model()
 
 
-def configured_reasoning_effort() -> str:
-    effort = os.getenv("LLM_REASONING_EFFORT", "high").strip().lower()
+def configured_recitation_provider() -> str:
+    provider = os.getenv(
+        "RECITATION_LLM_PROVIDER", DEEPSEEK_PROVIDER
+    ).strip().lower().replace("-", "_")
+    if provider not in SUPPORTED_LLM_PROVIDERS:
+        allowed = ", ".join(sorted(SUPPORTED_LLM_PROVIDERS))
+        raise ConfigurationError(
+            f"RECITATION_LLM_PROVIDER must be one of: {allowed}"
+        )
+    return provider
+
+
+def configured_recitation_base_url(provider: str | None = None) -> str:
+    resolved_provider = provider or configured_recitation_provider()
+    configured = os.getenv("RECITATION_LLM_BASE_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    if resolved_provider == DEEPSEEK_PROVIDER:
+        return DEEPSEEK_BASE_URL
+    return configured_base_url(OPENAI_COMPATIBLE_PROVIDER)
+
+
+def configured_recitation_model(provider: str | None = None) -> str:
+    resolved_provider = provider or configured_recitation_provider()
+    configured = os.getenv("RECITATION_LLM_MODEL", "").strip()
+    if configured:
+        return configured
+    if resolved_provider == DEEPSEEK_PROVIDER:
+        return DEEPSEEK_DEFAULT_MODEL
+    return OPENAI_COMPATIBLE_DEFAULT_MODEL
+
+
+def _configured_reasoning_effort(name: str, default: str) -> str:
+    effort = os.getenv(name, default).strip().lower()
     if effort not in LLM_REASONING_EFFORTS:
         allowed = ", ".join(sorted(LLM_REASONING_EFFORTS))
         raise ConfigurationError(
-            f"LLM_REASONING_EFFORT must be one of: {allowed}"
+            f"{name} must be one of: {allowed}"
         )
     return effort
+
+
+def configured_reasoning_effort() -> str:
+    return _configured_reasoning_effort("LLM_REASONING_EFFORT", "high")
+
+
+def configured_recitation_reasoning_effort() -> str:
+    return _configured_reasoning_effort("RECITATION_REASONING_EFFORT", "high")
 
 
 def configured_image_provider() -> str:
@@ -130,6 +169,12 @@ class Settings:
     llm_thinking: str
     llm_reasoning_effort: str
     request_timeout_seconds: float
+    recitation_llm_api_key: str = ""
+    recitation_llm_auth_source: str = ""
+    recitation_llm_provider: str = DEEPSEEK_PROVIDER
+    recitation_llm_base_url: str = DEEPSEEK_BASE_URL
+    recitation_llm_model: str = DEEPSEEK_DEFAULT_MODEL
+    recitation_reasoning_effort: str = "high"
     image_api_key: str = ""
     image_base_url: str = OPENAI_COMPATIBLE_BASE_URL
     image_provider: str = DEFAULT_IMAGE_PROVIDER
@@ -141,6 +186,19 @@ class Settings:
         ai_api_key = os.getenv("AI_API_KEY", "").strip()
         legacy_llm_api_key = os.getenv("LLM_API_KEY", "").strip()
         llm_api_key = ai_api_key or legacy_llm_api_key
+        recitation_provider = configured_recitation_provider()
+        dedicated_recitation_api_key = os.getenv(
+            "RECITATION_LLM_API_KEY", ""
+        ).strip()
+        recitation_llm_api_key = (
+            dedicated_recitation_api_key
+            or (
+                legacy_llm_api_key
+                if recitation_provider == DEEPSEEK_PROVIDER
+                else llm_api_key
+            )
+            or ai_api_key
+        )
         image_api_key = os.getenv("IMAGE_API_KEY", "").strip() or llm_api_key
         required = {
             "ELEVENLABS_API_KEY": os.getenv("ELEVENLABS_API_KEY", "").strip(),
@@ -151,6 +209,10 @@ class Settings:
         missing = [name for name, value in required.items() if not value]
         if not llm_api_key:
             missing.append("AI_API_KEY (or legacy LLM_API_KEY)")
+        if not recitation_llm_api_key:
+            missing.append(
+                "RECITATION_LLM_API_KEY (or legacy LLM_API_KEY/AI_API_KEY)"
+            )
         if missing:
             raise ConfigurationError(f"Missing required environment variables: {', '.join(missing)}")
         provider = configured_provider()
@@ -167,6 +229,25 @@ class Settings:
             llm_thinking=DEEPSEEK_THINKING,
             llm_reasoning_effort=configured_reasoning_effort(),
             request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "270")),
+            recitation_llm_api_key=recitation_llm_api_key,
+            recitation_llm_auth_source=(
+                "recitation_llm_api_key"
+                if dedicated_recitation_api_key
+                else (
+                    "llm_api_key_legacy"
+                    if recitation_provider == DEEPSEEK_PROVIDER
+                    and legacy_llm_api_key
+                    else "ai_api_key"
+                )
+            ),
+            recitation_llm_provider=recitation_provider,
+            recitation_llm_base_url=configured_recitation_base_url(
+                recitation_provider
+            ),
+            recitation_llm_model=configured_recitation_model(
+                recitation_provider
+            ),
+            recitation_reasoning_effort=configured_recitation_reasoning_effort(),
             image_api_key=image_api_key,
             image_base_url=configured_image_base_url(),
             image_provider=configured_image_provider(),

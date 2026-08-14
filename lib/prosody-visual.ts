@@ -10,6 +10,8 @@ export interface TeachingProsodyPoint {
   sourceLevel: number;
   smoothedLevel: number;
   visualLevel: number;
+  /** True when this sentence had no usable acoustic pitch at any spoken token. */
+  isNeutralFallback?: boolean;
   /** True only when the teaching display height was explicitly adjusted by a creator. */
   isOverridden?: boolean;
 }
@@ -124,7 +126,13 @@ function interpolateMissingLevels(
     const value = sourceByToken.get(tokenIndex);
     return value === undefined ? [] : [{ position, value }];
   });
-  if (!known.length) return [];
+  // Forced-alignment windows can occasionally contain no usable voiced F0
+  // (for example when repeated source text cannot be matched to the audio).
+  // A missing acoustic observation must not remove the manuscript's teaching
+  // layer altogether. Use a deliberately neutral zero contour in that case:
+  // it creates no invented rise/fall, while keeping one editable anchor per
+  // spoken token until a fresh acoustic analysis or a human override exists.
+  if (!known.length) return tokenIndexes.map(() => 0);
 
   return tokenIndexes.map((_, position) => {
     const exact = known.find((point) => point.position === position);
@@ -152,8 +160,12 @@ export function buildTeachingProsodyPoints(
   visualLevelCount = PROSODY_VISUAL_LEVEL_COUNT,
 ): TeachingProsodyPoint[] {
   const orderedIndexes = [...new Set(tokenIndexes)];
+  if (!orderedIndexes.length) return [];
+  const orderedIndexSet = new Set(orderedIndexes);
+  const hasAcousticSource = sourcePoints.some((point) => (
+    orderedIndexSet.has(point.tokenIndex) && Number.isFinite(pointSourceLevel(point))
+  ));
   const sourceLevels = interpolateMissingLevels(orderedIndexes, sourcePoints);
-  if (!sourceLevels.length) return [];
 
   const radius = sourceLevels.length >= PROSODY_SMOOTHING_WINDOW ? 2 : 1;
   const smoothedLevels = sourceLevels.map((sourceLevel, position) => {
@@ -182,6 +194,7 @@ export function buildTeachingProsodyPoints(
       0,
       Math.min(levelCount - 1, Math.round((smoothedLevels[position] - center) / quantizationStep + middleLevel)),
     ),
+    ...(!hasAcousticSource ? { isNeutralFallback: true } : {}),
   }));
 }
 
