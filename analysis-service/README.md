@@ -1,13 +1,20 @@
 # 声图云端朗诵分析服务
 
-这个 FastAPI 服务只处理一条正式链路：当前作品正文和 R2 `standard_ai_audio` → ElevenLabs Forced Alignment → FFmpeg/Praat-Parselmouth 声学证据 → 内置《朗诵表达分析规则 v1.0》+ 结构化 LLM → 当前作品 `control_spec`。真人原始参考音频只作为来源证据保留，不进入新任务的对齐或声学分析。
+这个 FastAPI 服务处理两项彼此独立的能力：
+
+- `tts-director-knowledge`：作品正文 → GPT-5.6 Sol 朗诵导演方案与 Eleven v3 执行脚本；
+- `acoustic-analysis-knowledge`：R2 中最终真实 `analysisAudio` → Forced Alignment → FFmpeg/Praat-Parselmouth 声学证据 → DeepSeek 结构化解释 → 当前作品 `control_spec`。
+
+GPT-5.6 Sol 只设计朗诵，不直接生成图谱。真人原始参考音频只作为来源证据保留，不进入标准声音任务的对齐或声学分析。
 
 任何步骤失败都会通过回调把任务标为 `failed`，绝不返回 Demo 控制谱。
 
 ## 接口与执行方式
 
 - `GET /health`：检查必需 Secret 是否齐全，不返回 Secret 内容。
+- `POST /v1/tts-director`：使用通用 GPT 配置生成结构化 `performancePlan` 与 `ttsText`；程序删除 Audio Tags 和控制标点后与原文逐字比对，不一致时只自动修复一次。
 - `POST /v1/jobs`：由网站 Worker 使用 `ANALYSIS_SERVICE_TOKEN` 调用。请求只包含 `job_id`、签名的 `input_url`、签名的 `audio_url` 和 `callback_url`，音频不会进入 Vercel 请求体。
+- `POST /v1/interpretation-jobs`：复用上次已经保存的 `analysis_package`，只重新执行图谱 Interpretation，不重新对齐、分析或生成 TTS。
 - `POST /v1/visual-director`：独立生成作品视觉方案，不修改朗诵 control_spec。
 - `POST /v1/image-generation`：受同一 Bearer token 保护的图片生成代理，只转发生成请求并返回 `b64_json` 或临时 URL；不处理 R2/D1。
 - `POST /v1/hero-text-validation`：受同一 Bearer token 保护的 Hero 标题/作者 OCR 核对，只返回 `matched`、`mismatch` 或 `failed` 安全结果。
@@ -31,9 +38,10 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 - `LLM_PROVIDER`：`openai_compatible` 或回滚用的 `deepseek`；
 - `AI_BASE_URL`：OpenAI 兼容网关根地址；DeepSeek 回滚可使用 `https://api.deepseek.com`；
 - `AI_API_KEY`：当前 LLM Provider 的服务端 Key；
-- `LLM_MODEL`：朗诵解释和 Visual Director 共用的模型名；
+- `LLM_MODEL`：TTS Director 和 Visual Director 共用的通用 GPT 模型名；
 - `LLM_REASONING_EFFORT`：可选，默认 `high`，复杂作品可临时改为 `max` 后重新分析。
 - `VISUAL_REASONING_EFFORT`：仅用于视觉导演，默认 `low`；长作品会按最多 8 个 Scene 分批规划，单批超时会使用安全的本地视觉方案，不再让整次生图因 524 失败。
+- `TTS_DIRECTOR_REASONING_EFFORT`：仅用于 TTS 朗诵导演，默认 `medium`；
 - `RECITATION_LLM_PROVIDER / BASE_URL / MODEL`：仅用于朗诵解释，默认恢复为 DeepSeek 官方 API、`deepseek-v4-pro`；Visual Director 继续使用通用 LLM 配置。
 - `RECITATION_LLM_API_KEY`：可选；未设置时优先复用旧 `LLM_API_KEY`，用于保留原 DeepSeek Key。
 - `RECITATION_REASONING_EFFORT`：仅用于完整朗诵解释请求，默认 `high`。
@@ -43,7 +51,7 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 - `IMAGE_MODEL`：图片生成模型；以网关 `/v1/models` 返回的真实 ID 为准，当前生产配置为 `gpt-image-2`；
 - `IMAGE_OCR_MODEL`：可选的 Hero 文字核对模型；未设置时自动使用 `LLM_MODEL`。
 
-`openai_compatible` 会优先调用 Responses API，并用各自独立的 JSON Schema 约束朗诵解释与 Visual Director；只有网关明确不提供 Responses endpoint 时，才回退到同一网关的 Chat Completions。两类请求共用 Provider 和模型，但 prompt 与 schema 完全独立。
+Visual Director 会按通用 OpenAI-compatible 降级策略调用；TTS Director 为降低长请求超时，优先使用 Chat Completions JSON mode，并始终由 Pydantic 严格校验结果。两者共用 Provider、Key 和模型，但 prompt 与 schema 完全独立。声学 Interpretation 使用单独的 `RECITATION_LLM_*` DeepSeek 配置。
 
 当前非敏感默认值为：
 
@@ -53,6 +61,7 @@ AI_BASE_URL=https://api2.65535.space
 LLM_MODEL=gpt-5.6-sol
 LLM_REASONING_EFFORT=high
 VISUAL_REASONING_EFFORT=low
+TTS_DIRECTOR_REASONING_EFFORT=medium
 RECITATION_LLM_PROVIDER=deepseek
 RECITATION_LLM_BASE_URL=https://api.deepseek.com
 RECITATION_LLM_MODEL=deepseek-v4-pro

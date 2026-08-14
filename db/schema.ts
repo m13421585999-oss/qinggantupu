@@ -17,6 +17,7 @@ export const works = sqliteTable(
     language: text("language").notNull().default("zh-CN"),
     sourceText: text("source_text").notNull(),
     status: text("status").notNull().default("draft"),
+    audioSourceType: text("audio_source_type").notNull().default("human_reference"),
     audioSyncStatus: text("audio_sync_status").notNull().default("pending"),
     currentSpecVersionId: text("current_spec_version_id"),
     publishedRevisionId: text("published_revision_id"),

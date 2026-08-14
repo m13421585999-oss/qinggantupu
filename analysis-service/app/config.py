@@ -132,6 +132,10 @@ def configured_visual_reasoning_effort() -> str:
     return _configured_reasoning_effort("VISUAL_REASONING_EFFORT", "low")
 
 
+def configured_tts_reasoning_effort() -> str:
+    return _configured_reasoning_effort("TTS_DIRECTOR_REASONING_EFFORT", "medium")
+
+
 def configured_recitation_reasoning_effort() -> str:
     return _configured_reasoning_effort("RECITATION_REASONING_EFFORT", "high")
 
@@ -177,6 +181,7 @@ class Settings:
     llm_reasoning_effort: str
     request_timeout_seconds: float
     visual_reasoning_effort: str = "low"
+    tts_director_reasoning_effort: str = "medium"
     recitation_llm_api_key: str = ""
     recitation_llm_auth_source: str = ""
     recitation_llm_provider: str = DEEPSEEK_PROVIDER
@@ -238,6 +243,7 @@ class Settings:
             llm_reasoning_effort=configured_reasoning_effort(),
             request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "270")),
             visual_reasoning_effort=configured_visual_reasoning_effort(),
+            tts_director_reasoning_effort=configured_tts_reasoning_effort(),
             recitation_llm_api_key=recitation_llm_api_key,
             recitation_llm_auth_source=(
                 "recitation_llm_api_key"

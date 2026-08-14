@@ -7,6 +7,7 @@ const schemaUrl = new URL("../db/schema.ts", import.meta.url);
 const migrationUrl = new URL("../drizzle/0000_unusual_wendell_rand.sql", import.meta.url);
 const promptTraceMigrationUrl = new URL("../drizzle/0001_long_agent_brand.sql", import.meta.url);
 const standardAudioMigrationUrl = new URL("../drizzle/0002_loud_toad.sql", import.meta.url);
+const audioSourceMigrationUrl = new URL("../drizzle/0004_pink_kree.sql", import.meta.url);
 
 test("worker exposes the production standard-audio analysis contract", async () => {
   const worker = await readFile(workerUrl, "utf8");
@@ -37,7 +38,19 @@ test("worker exposes the production standard-audio analysis contract", async () 
   assert.match(worker, /audio_sha256|checksum/);
   assert.match(worker, /status = 'succeeded'/);
   assert.doesNotMatch(worker, /ai-demo-prompt|eleven_tts_request|final_eleven_text/);
-  assert.doesNotMatch(worker, /\/v1\/text-to-speech\//);
+  assert.match(worker, /\/v1\/text-to-speech\//);
+  assert.match(worker, /ELEVEN_TTS_MODEL_ID = "eleven_v3"/);
+  assert.match(worker, /AI_TTS_GENERATION_JOB_TYPE/);
+  assert.match(worker, /AI_TTS_ANALYSIS_JOB_TYPE/);
+  assert.match(worker, /validateTtsText/);
+  assert.match(worker, /tts_plan_generating/);
+  assert.match(worker, /tts_audio_ready/);
+  assert.match(worker, /audio_analyzing/);
+  assert.match(worker, /graph_ready/);
+  assert.match(worker, /retry-audio/);
+  assert.match(worker, /retry-analysis/);
+  assert.match(worker, /retry-interpretation/);
+  assert.match(worker, /\/v1\/interpretation-jobs/);
   assert.doesNotMatch(worker, /DEMO_CONTROL_SPEC|createDemoControlSpec|月光下的中国/);
 
   assert.match(worker, /interface Env/);
@@ -68,12 +81,13 @@ test("worker exposes a searchable work library with optimistic concurrency", asy
   assert.match(worker, /AUDIO_BUCKET\.delete\((?:exactStorageKeys|storageKeys)/);
 });
 
-test("D1 schema and migrations retain analysis data and legacy audio metadata", async () => {
-  const [schema, migration, promptTraceMigration, standardAudioMigration] = await Promise.all([
+test("D1 schema and migrations retain both reference-audio production paths", async () => {
+  const [schema, migration, promptTraceMigration, standardAudioMigration, audioSourceMigration] = await Promise.all([
     readFile(schemaUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
     readFile(promptTraceMigrationUrl, "utf8"),
     readFile(standardAudioMigrationUrl, "utf8"),
+    readFile(audioSourceMigrationUrl, "utf8"),
   ]);
 
   assert.match(schema, /export const assets/);
@@ -84,6 +98,7 @@ test("D1 schema and migrations retain analysis data and legacy audio metadata", 
   assert.match(schema, /export const controlSpecVersions/);
   assert.match(schema, /promptTraceJson: text\("prompt_trace_json"\)/);
   assert.match(schema, /audioSyncStatus: text\("audio_sync_status"\)/);
+  assert.match(schema, /audioSourceType: text\("audio_source_type"\)/);
   assert.match(schema, /sourceAssetId: text\("source_asset_id"\)/);
   assert.match(schema, /metadataJson: text\("metadata_json"\)/);
   assert.match(migration, /CREATE TABLE `assets`/);
@@ -93,4 +108,5 @@ test("D1 schema and migrations retain analysis data and legacy audio metadata", 
   assert.match(standardAudioMigration, /ALTER TABLE `assets` ADD `source_asset_id` text/);
   assert.match(standardAudioMigration, /ALTER TABLE `assets` ADD `metadata_json` text/);
   assert.match(standardAudioMigration, /ALTER TABLE `works` ADD `audio_sync_status` text/);
+  assert.match(audioSourceMigration, /ALTER TABLE `works` ADD `audio_source_type` text/);
 });

@@ -1,0 +1,1 @@
+ALTER TABLE `works` ADD `audio_source_type` text DEFAULT 'human_reference' NOT NULL;

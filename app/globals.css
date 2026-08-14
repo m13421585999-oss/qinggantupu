@@ -576,6 +576,75 @@ p {
   gap: 22px;
 }
 
+.reference-source-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: -4px 0 18px;
+}
+
+.reference-source-choice button {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  align-items: center;
+  min-height: 78px;
+  padding: 13px 16px;
+  border: 1px solid rgba(114, 91, 67, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.72);
+  color: var(--ink-soft);
+  text-align: left;
+  transition: 160ms ease;
+}
+
+.reference-source-choice button > span {
+  grid-row: 1 / 3;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: #eee8df;
+  color: var(--red-dark);
+  font-family: "Songti SC", STSong, serif;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.reference-source-choice strong,
+.reference-source-choice small {
+  display: block;
+}
+
+.reference-source-choice strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.reference-source-choice small {
+  color: var(--ink-faint);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.reference-source-choice button.active {
+  border-color: rgba(185, 64, 46, 0.42);
+  background: #fff8f0;
+  box-shadow: 0 8px 22px rgba(120, 69, 45, 0.08);
+}
+
+.reference-source-choice button.active > span {
+  background: var(--red);
+  color: white;
+}
+
+.reference-source-choice button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .paper-card {
   border: 1px solid rgba(114, 91, 67, 0.14);
   border-radius: var(--radius-lg);
@@ -2113,6 +2182,84 @@ p {
   border-radius: 15px;
   background: #f2f7f3;
 }
+
+.ai-reference-placeholder {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  min-height: 96px;
+  padding: 17px;
+  border: 1px dashed #cdbba7;
+  border-radius: 15px;
+  background: linear-gradient(145deg, #faf6ef, #f6f0e7);
+}
+
+.ai-reference-placeholder > span {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 50%;
+  background: #efe1d3;
+  color: var(--red-dark);
+  font-family: "Songti SC", STSong, serif;
+  font-size: 18px;
+}
+
+.ai-reference-placeholder strong,
+.ai-reference-placeholder small {
+  display: block;
+}
+
+.ai-reference-placeholder strong { font-size: 12px; }
+
+.ai-reference-placeholder small {
+  margin-top: 5px;
+  color: var(--ink-faint);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.ai-audio-ready .upload-icon {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.ai-stage-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 14px;
+  list-style: none;
+}
+
+.ai-stage-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink-faint);
+  font-size: 9px;
+}
+
+.ai-stage-list li > span {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: #eee8df;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.ai-stage-list li.active { color: var(--red-dark); }
+.ai-stage-list li.active > span { background: var(--red-soft); color: var(--red-dark); }
+.ai-stage-list li.complete { color: var(--green); }
+.ai-stage-list li.complete > span { background: #e1eee5; color: var(--green); }
 
 .audio-file-row {
   display: grid;
@@ -3871,6 +4018,7 @@ button.annotation-char:hover {
   }
 
   .two-fields,
+  .reference-source-choice,
   .split-controls,
   .publish-actions {
     grid-template-columns: 1fr;

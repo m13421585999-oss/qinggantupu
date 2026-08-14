@@ -34,6 +34,7 @@ interface Env {
   ANALYSIS_CALLBACK_TOKEN?: string;
   ELEVENLABS_API_KEY?: string;
   ELEVENLABS_VOICE_ID?: string;
+  ELEVENLABS_TTS_MODEL?: string;
   AI_API_KEY?: string;
   AI_BASE_URL?: string;
   IMAGE_PROVIDER?: string;
@@ -63,6 +64,8 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const ANALYSIS_JOB_TIMEOUT_MS = 12 * 60 * 1000;
 const STANDARD_ANALYSIS_JOB_TYPE = "standard_audio_analysis";
 const LEGACY_ANALYSIS_JOB_TYPE = "reference_analysis";
+const AI_TTS_ANALYSIS_JOB_TYPE = "ai_tts_audio_analysis";
+const AI_TTS_GENERATION_JOB_TYPE = "ai_tts_generation";
 const VISUAL_GENERATION_JOB_TYPE = "visual_generation";
 const VISUAL_SCENE_CONCURRENCY = 3;
 const VISUAL_GENERATION_RETRY_LIMIT = 1;
@@ -70,6 +73,27 @@ const VISUAL_JOB_LEASE_MS = 5 * 60 * 1000;
 const VISUAL_TERMINAL_STATUSES = new Set(["completed", "succeeded", "partial_failed", "failed"]);
 const VOICE_CHANGER_MODEL_ID = "eleven_multilingual_sts_v2";
 const VOICE_CHANGER_OUTPUT_FORMAT = "mp3_44100_128";
+const ELEVEN_TTS_MODEL_ID = "eleven_v3";
+const ELEVEN_TTS_OUTPUT_FORMAT = "mp3_44100_128";
+const AI_TTS_JOB_LEASE_MS = 4 * 60 * 1000;
+const AI_TTS_TERMINAL_STATUSES = new Set(["graph_ready", "error"]);
+
+type AudioSourceType = "human_reference" | "ai_tts";
+
+interface AiTtsJobOutput {
+  performancePlan?: Record<string, unknown>;
+  ttsText?: string;
+  validation?: Record<string, unknown>;
+  director?: Record<string, unknown>;
+  audio?: {
+    assetId: string;
+    model: string;
+    voiceId: string;
+    createdAt: string;
+  };
+  analysisJobId?: string;
+  retryInterpretation?: boolean;
+}
 
 function json(data: unknown, status = 200, headers?: HeadersInit) {
   return new Response(JSON.stringify(data), {
@@ -121,6 +145,28 @@ function parseJson<T>(value: string | null | undefined): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function normalizeAudioSourceType(value: unknown): AudioSourceType {
+  return value === "ai_tts" ? "ai_tts" : "human_reference";
+}
+
+function semanticText(value: string, stripAudioTags = false) {
+  const withoutTags = stripAudioTags
+    ? value.replace(/\[[^[\]\r\n]{1,160}\]/gu, "")
+    : value;
+  return Array.from(withoutTags.normalize("NFKC"))
+    .filter((character) => /[\p{Letter}\p{Number}]/u.test(character))
+    .join("");
+}
+
+function validateTtsText(originalText: string, ttsText: string) {
+  const expected = semanticText(originalText);
+  const actual = semanticText(ttsText, true);
+  if (!expected || expected !== actual) {
+    throw new Error("TTS 脚本与原文不一致");
+  }
+  return { matched: true, normalizedCharacterCount: expected.length };
 }
 
 function safeVisualErrorMessage(env: Env, error: unknown) {
@@ -335,7 +381,9 @@ async function getVisualBundle(env: Env, workId: string, published = false) {
 }
 
 function isAnalysisJobType(value: unknown) {
-  return value === STANDARD_ANALYSIS_JOB_TYPE || value === LEGACY_ANALYSIS_JOB_TYPE;
+  return value === STANDARD_ANALYSIS_JOB_TYPE
+    || value === LEGACY_ANALYSIS_JOB_TYPE
+    || value === AI_TTS_ANALYSIS_JOB_TYPE;
 }
 
 async function first<T extends Row>(statement: D1PreparedStatement): Promise<T | null> {
@@ -412,9 +460,9 @@ async function latestAnalysisPackage(
   const row = await first<Row>(env.DB.prepare(
     `SELECT output_json
        FROM processing_jobs
-      WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
+      WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis', 'ai_tts_audio_analysis')
         AND status = 'succeeded'
-      ORDER BY CASE WHEN type = 'standard_audio_analysis' THEN 0 ELSE 1 END,
+      ORDER BY CASE WHEN type IN ('standard_audio_analysis', 'ai_tts_audio_analysis') THEN 0 ELSE 1 END,
                created_at DESC LIMIT 1`,
   ).bind(workId));
   const output = parseJson<Record<string, unknown>>(row?.output_json as string | null);
@@ -454,12 +502,21 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
       "SELECT * FROM assets WHERE work_id = ? AND kind = 'standard_ai_audio' ORDER BY created_at DESC LIMIT 1",
     ).bind(workId))
     : null;
+  const latestAiTtsJob = !published
+    ? await first<Row>(env.DB.prepare(
+      `SELECT id, status, progress, output_json, error_code, error_message, created_at, updated_at
+         FROM processing_jobs
+        WHERE work_id = ? AND type = ?
+        ORDER BY created_at DESC LIMIT 1`,
+    ).bind(workId, AI_TTS_GENERATION_JOB_TYPE))
+    : null;
+  const aiTtsOutput = parseJson<AiTtsJobOutput>(latestAiTtsJob?.output_json as string | null);
   const latestAnalysisJob = !published
     ? await first<Row>(env.DB.prepare(
       `SELECT id, type, status, progress, input_json, output_json, error_code, error_message
          FROM processing_jobs
-        WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
-        ORDER BY CASE WHEN type = 'standard_audio_analysis' THEN 0 ELSE 1 END,
+        WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis', 'ai_tts_audio_analysis')
+        ORDER BY CASE WHEN type IN ('standard_audio_analysis', 'ai_tts_audio_analysis') THEN 0 ELSE 1 END,
                  created_at DESC LIMIT 1`,
     ).bind(workId))
     : null;
@@ -518,6 +575,7 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
     ? audioVersion
     : null;
   const currentStandard = publishedStandard ?? standardAsset;
+  const standardMetadata = parseJson<Record<string, unknown>>(currentStandard?.metadata_json as string | null);
   const standardTimeline = published
     ? parseJson(audioVersion?.timeline_json as string | null)
     : analysisPackage
@@ -536,7 +594,9 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
       ?? 0,
     ),
     provider: "eleven" as const,
-    label: "Eleven Voice Changer 标准 AI 朗诵",
+    label: standardMetadata?.generation_mode === "ai_tts"
+      ? "AI 参考朗诵"
+      : "Eleven Voice Changer 标准 AI 朗诵",
     timeline: standardTimeline,
   } : undefined;
   const legacyDemoTrack = audioVersion
@@ -559,6 +619,7 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
     genre: work.genre,
     language: work.language,
     sourceText: work.source_text,
+    audioSourceType: normalizeAudioSourceType(work.audio_source_type),
     status: published ? "published" : work.status,
     audioSyncStatus: work.audio_sync_status ?? (standardTrack ? "synced" : "pending"),
     currentSpecVersionId: selectedSpecVersionId ?? undefined,
@@ -570,6 +631,26 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
     referenceAudioOriginal: referenceTrack,
     aiDemoAudio: legacyDemoTrack,
     standardAiAudio: standardTrack,
+    aiTts: latestAiTtsJob || standardMetadata?.generation_mode === "ai_tts" ? {
+      jobId: latestAiTtsJob?.id == null ? undefined : String(latestAiTtsJob.id),
+      status: latestAiTtsJob?.status == null ? "tts_audio_ready" : String(latestAiTtsJob.status),
+      progress: Number(latestAiTtsJob?.progress ?? 0),
+      performancePlan: aiTtsOutput?.performancePlan,
+      ttsText: aiTtsOutput?.ttsText,
+      model: String(aiTtsOutput?.audio?.model ?? standardMetadata?.model_id ?? ELEVEN_TTS_MODEL_ID),
+      voiceId: String(aiTtsOutput?.audio?.voiceId ?? standardMetadata?.voice_id ?? ""),
+      audioAssetId: aiTtsOutput?.audio?.assetId ?? (standardMetadata?.generation_mode === "ai_tts"
+        ? String(currentStandard?.audio_asset_id ?? currentStandard?.id ?? "")
+        : undefined),
+      audioUrl: standardMetadata?.generation_mode === "ai_tts" && standardTrack
+        ? standardTrack.url
+        : undefined,
+      createdAt: String(aiTtsOutput?.audio?.createdAt ?? standardMetadata?.generated_at ?? latestAiTtsJob?.created_at ?? ""),
+      error: latestAiTtsJob?.error_code ? {
+        code: String(latestAiTtsJob.error_code),
+        message: String(latestAiTtsJob.error_message ?? "AI 参考朗诵生成失败。"),
+      } : undefined,
+    } : undefined,
     controlSpec,
     visuals: await getVisualBundle(env, workId, published),
     createdAt: work.created_at,
@@ -655,6 +736,7 @@ async function createWork(request: Request, env: Env) {
   const title = String(body.title ?? "").trim();
   const author = String(body.author ?? "").trim();
   const fullText = String(body.full_text ?? "");
+  const audioSourceType = normalizeAudioSourceType(body.audio_source_type ?? body.audioSourceType);
   const requestedWorkId = String(body.work_id ?? "").trim();
   const expectedUpdatedAt = String(body.expected_updated_at ?? body.expectedUpdatedAt ?? "").trim();
   if (!title || !fullText.trim()) {
@@ -681,13 +763,15 @@ async function createWork(request: Request, env: Env) {
       const results = await env.DB.batch([
         env.DB.prepare(
           `UPDATE works
-              SET title = ?, author = ?, source_text = ?, status = 'draft', audio_sync_status = 'pending',
+              SET title = ?, author = ?, source_text = ?, audio_source_type = ?,
+                  status = 'draft', audio_sync_status = 'pending',
                   current_spec_version_id = NULL, published_revision_id = NULL, updated_at = ?
             WHERE id = ?${expectedUpdatedAt ? " AND updated_at = ?" : ""}`,
         ).bind(
           title,
           author || null,
           fullText,
+          audioSourceType,
           savedAt,
           requestedWorkId,
           ...expectedUpdatedAt ? [expectedUpdatedAt] : [],
@@ -711,10 +795,17 @@ async function createWork(request: Request, env: Env) {
           `UPDATE processing_jobs
               SET status = 'failed', progress = 0, error_code = 'WORK_SOURCE_CHANGED',
                   error_message = '作品正文已更新，请重新上传匹配的参考朗诵并发起分析。', updated_at = ?
-            WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
+            WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis', 'ai_tts_audio_analysis')
               AND status IN ('queued', 'processing')
               AND EXISTS (SELECT 1 FROM works WHERE id = ? AND updated_at = ?)`,
         ).bind(savedAt, requestedWorkId, requestedWorkId, savedAt),
+        env.DB.prepare(
+          `UPDATE processing_jobs
+              SET status = 'error', progress = 0, error_code = 'WORK_SOURCE_CHANGED',
+                  error_message = '作品正文已更新，请重新生成 AI 参考朗诵。', updated_at = ?
+            WHERE work_id = ? AND type = ?
+              AND status NOT IN ('graph_ready', 'error')`,
+        ).bind(savedAt, requestedWorkId, AI_TTS_GENERATION_JOB_TYPE),
         env.DB.prepare(
           "UPDATE visual_assets SET is_visible = 0, is_active = 0 WHERE work_id = ?",
         ).bind(requestedWorkId),
@@ -734,11 +825,12 @@ async function createWork(request: Request, env: Env) {
       }
     } else {
       const updateWork = env.DB.prepare(
-        `UPDATE works SET title = ?, author = ?, updated_at = ?
+        `UPDATE works SET title = ?, author = ?, audio_source_type = ?, updated_at = ?
           WHERE id = ?${expectedUpdatedAt ? " AND updated_at = ?" : ""}`,
       ).bind(
         title,
         author || null,
+        audioSourceType,
         savedAt,
         requestedWorkId,
         ...expectedUpdatedAt ? [expectedUpdatedAt] : [],
@@ -766,9 +858,9 @@ async function createWork(request: Request, env: Env) {
   const savedAt = now();
   await env.DB.prepare(
     `INSERT INTO works
-       (id, slug, title, author, genre, language, source_text, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'other', 'zh-CN', ?, 'draft', ?, ?)`,
-  ).bind(workId, slugFor(title, workId), title, author || null, fullText, savedAt, savedAt).run();
+       (id, slug, title, author, genre, language, source_text, audio_source_type, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'other', 'zh-CN', ?, ?, 'draft', ?, ?)`,
+  ).bind(workId, slugFor(title, workId), title, author || null, fullText, audioSourceType, savedAt, savedAt).run();
   return json({ work: await getWorkPayload(env, workId) }, 201);
 }
 
@@ -960,12 +1052,18 @@ async function uploadReferenceAudio(request: Request, env: Env, workId: string) 
         `UPDATE processing_jobs
             SET status = 'failed', progress = 0, error_code = 'REFERENCE_AUDIO_REPLACED',
                 error_message = '参考朗诵已被替换，请重新发起分析。', updated_at = ?
-          WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
+          WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis', 'ai_tts_audio_analysis')
             AND status IN ('queued', 'processing')`,
       ).bind(uploadedAt, workId),
       env.DB.prepare(
+        `UPDATE processing_jobs
+            SET status = 'error', progress = 0, error_code = 'AUDIO_SOURCE_CHANGED',
+                error_message = '参考朗诵来源已切换为真人音频。', updated_at = ?
+          WHERE work_id = ? AND type = ? AND status NOT IN ('graph_ready', 'error')`,
+      ).bind(uploadedAt, workId, AI_TTS_GENERATION_JOB_TYPE),
+      env.DB.prepare(
         `UPDATE works
-            SET status = 'draft', audio_sync_status = 'pending',
+            SET status = 'draft', audio_source_type = 'human_reference', audio_sync_status = 'pending',
                 current_spec_version_id = NULL, published_revision_id = NULL, updated_at = ?
           WHERE id = ?`,
       ).bind(uploadedAt, workId),
@@ -1003,12 +1101,13 @@ async function deleteReferenceAudio(request: Request, env: Env, workId: string) 
     );
   }
   const deletedAt = nextUpdatedAt(String(work.updated_at));
-  await env.DB.batch([
+  const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       "UPDATE assets SET kind = 'reference_audio_archived' WHERE work_id = ? AND kind = 'reference_audio'",
     ).bind(workId),
     env.DB.prepare(
-      "UPDATE assets SET kind = 'standard_ai_audio_archived' WHERE work_id = ? AND kind = 'standard_ai_audio'",
+      `UPDATE assets SET kind = 'standard_ai_audio_archived'
+        WHERE work_id = ? AND kind = 'standard_ai_audio' AND source_asset_id IS NOT NULL`,
     ).bind(workId),
     env.DB.prepare(
       `UPDATE processing_jobs
@@ -1017,16 +1116,25 @@ async function deleteReferenceAudio(request: Request, env: Env, workId: string) 
         WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')
           AND status IN ('queued', 'processing')`,
     ).bind(deletedAt, workId),
-    env.DB.prepare(
-      `UPDATE works
-          SET status = 'draft', audio_sync_status = 'pending', current_spec_version_id = NULL,
-              published_revision_id = NULL, updated_at = ?
-        WHERE id = ?`,
-    ).bind(deletedAt, workId),
-    env.DB.prepare(
-      "UPDATE publications SET state = 'withdrawn', withdrawn_at = ? WHERE work_id = ? AND state = 'published'",
-    ).bind(deletedAt, workId),
-  ]);
+  ];
+  if (normalizeAudioSourceType(work.audio_source_type) === "ai_tts") {
+    statements.push(
+      env.DB.prepare("UPDATE works SET updated_at = ? WHERE id = ?").bind(deletedAt, workId),
+    );
+  } else {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE works
+            SET status = 'draft', audio_sync_status = 'pending', current_spec_version_id = NULL,
+                published_revision_id = NULL, updated_at = ?
+          WHERE id = ?`,
+      ).bind(deletedAt, workId),
+      env.DB.prepare(
+        "UPDATE publications SET state = 'withdrawn', withdrawn_at = ? WHERE work_id = ? AND state = 'published'",
+      ).bind(deletedAt, workId),
+    );
+  }
+  await env.DB.batch(statements);
   return json({ ok: true, work: await getWorkPayload(env, workId) });
 }
 
@@ -1154,7 +1262,7 @@ async function jobContext(env: Env, jobId: string) {
       `SELECT j.*, w.title, w.author, w.source_text
        FROM processing_jobs j
        JOIN works w ON w.id = j.work_id
-      WHERE j.id = ? AND j.type IN ('standard_audio_analysis', 'reference_analysis')`,
+      WHERE j.id = ? AND j.type IN ('standard_audio_analysis', 'reference_analysis', 'ai_tts_audio_analysis')`,
   ).bind(jobId));
   if (!job) return null;
   const input = parseJson<{
@@ -1207,7 +1315,7 @@ async function failActiveAnalysisJob(
   message: string,
 ) {
   const job = await first<Row>(env.DB.prepare(
-    "SELECT id, work_id FROM processing_jobs WHERE id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')",
+    "SELECT id, work_id FROM processing_jobs WHERE id = ? AND type IN ('standard_audio_analysis', 'reference_analysis', 'ai_tts_audio_analysis')",
   ).bind(jobId));
   if (!job) return;
   const failedAt = now();
@@ -1297,10 +1405,46 @@ async function dispatchAnalysisJob(env: Env, origin: string, jobId: string) {
     throw new Error("分析服务没有返回与当前任务匹配的终态。");
   }
   const stored = await first<Row>(env.DB.prepare(
-    "SELECT status FROM processing_jobs WHERE id = ? AND type IN ('standard_audio_analysis', 'reference_analysis')",
+    "SELECT status FROM processing_jobs WHERE id = ? AND type IN ('standard_audio_analysis', 'reference_analysis', 'ai_tts_audio_analysis')",
   ).bind(jobId));
   if (!stored || ["queued", "processing"].includes(String(stored.status))) {
     throw new Error("分析服务已结束，但终态回调没有写入网站。");
+  }
+}
+
+async function dispatchInterpretationJob(env: Env, origin: string, jobId: string) {
+  const serviceUrl = env.ANALYSIS_SERVICE_URL?.replace(/\/$/, "");
+  if (!serviceUrl || !env.ANALYSIS_SERVICE_TOKEN) {
+    throw new Error("ANALYSIS_SERVICE_URL or ANALYSIS_SERVICE_TOKEN is not configured");
+  }
+  const job = await first<Row>(env.DB.prepare(
+    "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+  ).bind(jobId, AI_TTS_ANALYSIS_JOB_TYPE));
+  if (!job) throw new Error("找不到需要重新解析的声音分析任务。");
+  const partial = parseJson<Record<string, unknown>>(job.output_json as string | null);
+  const analysisPackage = partial?.analysis_package;
+  if (!analysisPackage || typeof analysisPackage !== "object" || Array.isArray(analysisPackage)) {
+    throw new Error("上次分析没有保留可复用的声学数据，请改用重新分析。");
+  }
+  await env.DB.prepare(
+    "UPDATE processing_jobs SET status = 'processing', progress = 78, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ? AND status = 'queued'",
+  ).bind(now(), jobId).run();
+  const response = await fetch(`${serviceUrl}/v1/interpretation-jobs`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.ANALYSIS_SERVICE_TOKEN}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      job_id: jobId,
+      callback_url: `${origin}/api/internal/analysis-jobs/${encodeURIComponent(jobId)}/callback`,
+      analysis_package: analysisPackage,
+    }),
+  });
+  if (response.status === 524) return;
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 600);
+    throw new Error(`图谱解析服务拒绝任务（HTTP ${response.status}）：${detail}`);
   }
 }
 
@@ -1431,6 +1575,546 @@ async function getAnalysisJob(env: Env, jobId: string) {
   return json(payload);
 }
 
+async function requestTtsDirection(env: Env, work: Row) {
+  const serviceUrl = env.ANALYSIS_SERVICE_URL?.replace(/\/$/, "");
+  if (!serviceUrl || !env.ANALYSIS_SERVICE_TOKEN) {
+    throw new Error("朗诵导演服务尚未完成服务端配置。");
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${serviceUrl}/v1/tts-director`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.ANALYSIS_SERVICE_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: String(work.title),
+        author: String(work.author ?? ""),
+        original_text: String(work.source_text),
+      }),
+      signal: AbortSignal.timeout(180_000),
+    });
+  } catch (error) {
+    throw new Error(`朗诵方案生成失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+  const rawBody = await response.text();
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(rawBody);
+    payload = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    payload = { detail: rawBody.slice(0, 700) };
+  }
+  if (!response.ok) {
+    throw new Error(String(payload.detail ?? `朗诵方案生成失败（HTTP ${response.status}）`));
+  }
+  const performancePlan = payload.performancePlan;
+  const ttsText = String(payload.ttsText ?? "");
+  if (!performancePlan || typeof performancePlan !== "object" || Array.isArray(performancePlan) || !ttsText) {
+    throw new Error("朗诵导演没有返回完整的 performancePlan 与 ttsText。");
+  }
+  const validation = validateTtsText(String(work.source_text), ttsText);
+  return {
+    performancePlan: performancePlan as Record<string, unknown>,
+    ttsText,
+    validation: {
+      ...(payload.validation && typeof payload.validation === "object"
+        ? payload.validation as Record<string, unknown>
+        : {}),
+      ...validation,
+    },
+    director: payload._meta && typeof payload._meta === "object"
+      ? payload._meta as Record<string, unknown>
+      : {},
+  };
+}
+
+async function generateElevenTts(env: Env, ttsText: string) {
+  const apiKey = env.ELEVENLABS_API_KEY?.trim();
+  const voiceId = env.ELEVENLABS_VOICE_ID?.trim();
+  if (!apiKey || !voiceId) {
+    throw new Error("请先在网站服务端配置 ElevenLabs 标准朗诵声音。");
+  }
+  const model = env.ELEVENLABS_TTS_MODEL?.trim() || ELEVEN_TTS_MODEL_ID;
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=${ELEVEN_TTS_OUTPUT_FORMAT}`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": apiKey,
+          "content-type": "application/json",
+          accept: "audio/mpeg",
+        },
+        body: JSON.stringify({
+          text: ttsText,
+          model_id: model,
+        }),
+        signal: AbortSignal.timeout(240_000),
+      },
+    );
+  } catch (error) {
+    throw new Error(`无法连接 ElevenLabs TTS：${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 700);
+    throw new Error(`AI 参考声音生成失败（HTTP ${response.status}）：${detail}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.byteLength) throw new Error("ElevenLabs TTS 返回了空音频。");
+  if (bytes.byteLength > 150 * 1024 * 1024) throw new Error("AI 参考音频超过 150 MB，不能保存。");
+  return { bytes, model, voiceId };
+}
+
+function aiTtsAssetId(jobId: string) {
+  return `asset_ai_tts_${jobId.replace(/^ai_tts_job_/, "")}`;
+}
+
+async function storeAiTtsAudio(
+  env: Env,
+  work: Row,
+  job: Row,
+  output: AiTtsJobOutput,
+  generated: { bytes: Uint8Array; model: string; voiceId: string },
+) {
+  if (!output.ttsText) throw new Error("朗诵方案尚未保存，不能生成声音。");
+  const assetId = aiTtsAssetId(String(job.id));
+  const createdAt = nextUpdatedAt(String(work.updated_at));
+  const checksum = await sha256Hex(generated.bytes.slice().buffer);
+  const storageKey = `works/${work.id}/ai-tts/${job.id}.mp3`;
+  const metadata = {
+    generation_mode: "ai_tts",
+    voice_id: generated.voiceId,
+    model_id: generated.model,
+    output_format: ELEVEN_TTS_OUTPUT_FORMAT,
+    generated_at: createdAt,
+    tts_job_id: job.id,
+  };
+  await env.AUDIO_BUCKET.put(storageKey, generated.bytes, {
+    httpMetadata: { contentType: "audio/mpeg" },
+    customMetadata: {
+      workId: String(work.id),
+      assetId,
+      checksum,
+      kind: "standard_ai_audio",
+      generationMode: "ai_tts",
+      voiceId: generated.voiceId,
+      model: generated.model,
+    },
+  });
+  const nextOutput: AiTtsJobOutput = {
+    ...output,
+    audio: {
+      assetId,
+      model: generated.model,
+      voiceId: generated.voiceId,
+      createdAt,
+    },
+  };
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE assets SET kind = 'standard_ai_audio_archived' WHERE work_id = ? AND kind = 'standard_ai_audio' AND id != ?",
+      ).bind(work.id, assetId),
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO assets
+          (id, work_id, kind, storage_key, filename, mime_type, byte_size, duration_ms,
+           checksum, provider, source_asset_id, metadata_json, created_at)
+         VALUES (?, ?, 'standard_ai_audio', ?, ?, 'audio/mpeg', ?, NULL, ?, 'eleven', NULL, ?, ?)`,
+      ).bind(
+        assetId,
+        work.id,
+        storageKey,
+        `${String(work.slug)}-ai-reference.mp3`,
+        generated.bytes.byteLength,
+        checksum,
+        JSON.stringify(metadata),
+        createdAt,
+      ),
+      env.DB.prepare(
+        `UPDATE assets SET kind = 'standard_ai_audio', storage_key = ?, filename = ?,
+          mime_type = 'audio/mpeg', byte_size = ?, checksum = ?, provider = 'eleven',
+          source_asset_id = NULL, metadata_json = ?, created_at = ?
+          WHERE id = ? AND work_id = ?`,
+      ).bind(
+        storageKey,
+        `${String(work.slug)}-ai-reference.mp3`,
+        generated.bytes.byteLength,
+        checksum,
+        JSON.stringify(metadata),
+        createdAt,
+        assetId,
+        work.id,
+      ),
+      env.DB.prepare(
+        `UPDATE processing_jobs
+            SET status = 'failed', progress = 0, error_code = 'ANALYSIS_AUDIO_REPLACED',
+                error_message = '分析音频已被新的 AI 参考朗诵替换。', updated_at = ?
+          WHERE work_id = ? AND type IN ('standard_audio_analysis', 'reference_analysis', 'ai_tts_audio_analysis')
+            AND status IN ('queued', 'processing')`,
+      ).bind(createdAt, work.id),
+      env.DB.prepare(
+        `UPDATE works SET audio_source_type = 'ai_tts', status = 'analyzing',
+          audio_sync_status = 'pending', current_spec_version_id = NULL,
+          published_revision_id = NULL, updated_at = ? WHERE id = ?`,
+      ).bind(createdAt, work.id),
+      env.DB.prepare(
+        "UPDATE publications SET state = 'withdrawn', withdrawn_at = ? WHERE work_id = ? AND state = 'published'",
+      ).bind(createdAt, work.id),
+      env.DB.prepare(
+        `UPDATE processing_jobs SET status = 'tts_audio_ready', progress = 50,
+          output_json = ?, error_code = NULL, error_message = NULL, updated_at = ?
+          WHERE id = ? AND type = ?`,
+      ).bind(JSON.stringify(nextOutput), createdAt, job.id, AI_TTS_GENERATION_JOB_TYPE),
+    ]);
+  } catch (error) {
+    await env.AUDIO_BUCKET.delete(storageKey).catch(() => undefined);
+    throw error;
+  }
+  return nextOutput;
+}
+
+async function enqueueAiTtsAnalysisJob(env: Env, work: Row, asset: Row) {
+  const existing = await env.DB.prepare(
+    `SELECT * FROM processing_jobs WHERE work_id = ? AND type = ? ORDER BY created_at DESC LIMIT 8`,
+  ).bind(work.id, AI_TTS_ANALYSIS_JOB_TYPE).all<Row>();
+  const matching = (existing.results ?? []).find((row) => {
+    const input = parseJson<{ assetId?: string }>(row.input_json as string | null);
+    return input?.assetId === asset.id && ["queued", "processing", "succeeded"].includes(String(row.status));
+  });
+  if (matching) return String(matching.id);
+  const jobId = id("job");
+  const createdAt = nextUpdatedAt(String(work.updated_at));
+  const handoffExpiresAt = Math.floor(Date.now() / 1000) + 6 * 60 * 60;
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO processing_jobs
+        (id, work_id, type, status, progress, idempotency_key, input_json, created_at, updated_at)
+       VALUES (?, ?, ?, 'queued', 0, ?, ?, ?, ?)`,
+    ).bind(
+      jobId,
+      work.id,
+      AI_TTS_ANALYSIS_JOB_TYPE,
+      `ai-tts-audio-analysis:${work.id}:${String(asset.checksum)}:${jobId}`,
+      JSON.stringify({
+        assetId: asset.id,
+        standardAudioAssetId: asset.id,
+        audioSha256: asset.checksum,
+        handoffExpiresAt,
+      }),
+      createdAt,
+      createdAt,
+    ),
+    env.DB.prepare(
+      "UPDATE works SET audio_source_type = 'ai_tts', status = 'analyzing', updated_at = ? WHERE id = ?",
+    ).bind(createdAt, work.id),
+  ]);
+  return jobId;
+}
+
+async function failAiTtsJob(env: Env, jobId: string, code: string, message: string) {
+  await env.DB.prepare(
+    `UPDATE processing_jobs SET status = 'error', progress = 100, error_code = ?,
+      error_message = ?, updated_at = ? WHERE id = ? AND type = ?`,
+  ).bind(code, message.slice(0, 1_200), now(), jobId, AI_TTS_GENERATION_JOB_TYPE).run();
+}
+
+async function runAiTtsJobStage(env: Env, origin: string, jobId: string) {
+  let job = await first<Row>(env.DB.prepare(
+    "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+  ).bind(jobId, AI_TTS_GENERATION_JOB_TYPE));
+  if (!job || AI_TTS_TERMINAL_STATUSES.has(String(job.status))) return;
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(job.work_id));
+  if (!work) {
+    await failAiTtsJob(env, jobId, "WORK_NOT_FOUND", "AI 参考朗诵对应的作品不存在。");
+    return;
+  }
+  const output = parseJson<AiTtsJobOutput>(job.output_json as string | null) ?? {};
+  const leaseExpired = Date.now() - Date.parse(String(job.updated_at)) >= AI_TTS_JOB_LEASE_MS;
+  try {
+    if (job.status === "queued" || (job.status === "tts_plan_generating" && leaseExpired)) {
+      const claim = await env.DB.prepare(
+        `UPDATE processing_jobs SET status = 'tts_plan_generating', progress = 8, updated_at = ?
+          WHERE id = ? AND type = ? AND status = ? AND updated_at = ?`,
+      ).bind(now(), jobId, AI_TTS_GENERATION_JOB_TYPE, job.status, job.updated_at).run();
+      if (!Number(claim.meta.changes ?? 0)) return;
+      let direction: Awaited<ReturnType<typeof requestTtsDirection>>;
+      try {
+        direction = await requestTtsDirection(env, work);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await failAiTtsJob(
+          env,
+          jobId,
+          message.includes("TTS 脚本与原文不一致") ? "TTS_TEXT_MISMATCH" : "TTS_PLAN_GENERATION_FAILED",
+          message.includes("TTS 脚本与原文不一致") ? "TTS 脚本与原文不一致" : message,
+        );
+        return;
+      }
+      await env.DB.prepare(
+        `UPDATE processing_jobs SET status = 'tts_plan_ready', progress = 25, output_json = ?,
+          error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ? AND type = ?`,
+      ).bind(JSON.stringify(direction), now(), jobId, AI_TTS_GENERATION_JOB_TYPE).run();
+      return;
+    }
+
+    if (job.status === "tts_plan_ready" || (job.status === "tts_audio_generating" && leaseExpired)) {
+      const claim = await env.DB.prepare(
+        `UPDATE processing_jobs SET status = 'tts_audio_generating', progress = 35, updated_at = ?
+          WHERE id = ? AND type = ? AND status = ? AND updated_at = ?`,
+      ).bind(now(), jobId, AI_TTS_GENERATION_JOB_TYPE, job.status, job.updated_at).run();
+      if (!Number(claim.meta.changes ?? 0)) return;
+      try {
+        validateTtsText(String(work.source_text), String(output.ttsText ?? ""));
+        const generated = await generateElevenTts(env, String(output.ttsText));
+        job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
+        if (!job) throw new Error("AI 参考朗诵任务不存在。");
+        await storeAiTtsAudio(env, work, job, output, generated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await failAiTtsJob(
+          env,
+          jobId,
+          message.includes("TTS 脚本与原文不一致") ? "TTS_TEXT_MISMATCH" : "TTS_AUDIO_GENERATION_FAILED",
+          message,
+        );
+      }
+      return;
+    }
+
+    if (job.status === "tts_audio_ready") {
+      const assetId = output.audio?.assetId;
+      const asset = assetId
+        ? await first<Row>(env.DB.prepare(
+          "SELECT * FROM assets WHERE id = ? AND work_id = ? AND kind = 'standard_ai_audio'",
+        ).bind(assetId, work.id))
+        : null;
+      if (!asset) {
+        await failAiTtsJob(env, jobId, "TTS_AUDIO_MISSING", "AI 参考声音记录存在，但音频文件不可用。");
+        return;
+      }
+      const analysisJobId = await enqueueAiTtsAnalysisJob(env, work, asset);
+      await env.DB.prepare(
+        `UPDATE processing_jobs SET status = 'audio_analyzing', progress = 58,
+          output_json = ?, error_code = NULL, error_message = NULL, updated_at = ?
+          WHERE id = ? AND type = ?`,
+      ).bind(
+        JSON.stringify({ ...output, analysisJobId }),
+        now(),
+        jobId,
+        AI_TTS_GENERATION_JOB_TYPE,
+      ).run();
+      return;
+    }
+
+    if (job.status === "audio_analyzing" || job.status === "llm_interpreting") {
+      const analysisJobId = output.analysisJobId;
+      if (!analysisJobId) {
+        await env.DB.prepare(
+          `UPDATE processing_jobs SET status = 'tts_audio_ready', progress = 50, updated_at = ?
+            WHERE id = ? AND type = ?`,
+        ).bind(now(), jobId, AI_TTS_GENERATION_JOB_TYPE).run();
+        return;
+      }
+      let analysisJob = await first<Row>(env.DB.prepare(
+        "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+      ).bind(analysisJobId, AI_TTS_ANALYSIS_JOB_TYPE));
+      if (!analysisJob) {
+        await failAiTtsJob(env, jobId, "ANALYSIS_JOB_MISSING", "AI 参考声音已生成，但分析任务不存在。");
+        return;
+      }
+      if (analysisJob.status === "queued") {
+        try {
+          if (job.status === "llm_interpreting" && output.retryInterpretation) {
+            await dispatchInterpretationJob(env, origin, analysisJobId);
+          } else {
+            await dispatchAnalysisJob(env, origin, analysisJobId);
+          }
+        } catch (error) {
+          await failActiveAnalysisJob(
+            env,
+            analysisJobId,
+            "ANALYSIS_SUBMISSION_FAILED",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        analysisJob = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(analysisJobId));
+        if (!analysisJob) return;
+      }
+      if (analysisJob.status === "succeeded") {
+        await env.DB.prepare(
+          `UPDATE processing_jobs SET status = 'graph_ready', progress = 100,
+            error_code = NULL, error_message = NULL, updated_at = ?
+            WHERE id = ? AND type = ?`,
+        ).bind(now(), jobId, AI_TTS_GENERATION_JOB_TYPE).run();
+      } else if (analysisJob.status === "failed") {
+        await failAiTtsJob(
+          env,
+          jobId,
+          String(analysisJob.error_code ?? "AUDIO_ANALYSIS_FAILED"),
+          String(analysisJob.error_message ?? "AI 参考声音已经生成，但声学分析失败。"),
+        );
+      } else {
+        const rawProgress = Number(analysisJob.progress ?? 0);
+        const progress = Math.min(96, Math.max(58, 58 + rawProgress * 0.38));
+        await env.DB.prepare(
+          "UPDATE processing_jobs SET status = ?, progress = ?, updated_at = ? WHERE id = ? AND type = ?",
+        ).bind(
+          rawProgress >= 78 ? "llm_interpreting" : "audio_analyzing",
+          Math.round(progress),
+          now(),
+          jobId,
+          AI_TTS_GENERATION_JOB_TYPE,
+        ).run();
+      }
+    }
+  } catch (error) {
+    await failAiTtsJob(
+      env,
+      jobId,
+      "AI_TTS_JOB_FAILED",
+      safeVisualErrorMessage(env, error),
+    );
+  }
+}
+
+async function createAiTtsJob(env: Env, workId: string) {
+  if (!env.DB || !env.AUDIO_BUCKET) {
+    return apiError(503, "STORAGE_NOT_CONFIGURED", "D1 或 R2 尚未绑定，无法生成 AI 参考朗诵。");
+  }
+  if (!env.ANALYSIS_SERVICE_URL || !env.ANALYSIS_SERVICE_TOKEN) {
+    return apiError(503, "TTS_DIRECTOR_NOT_CONFIGURED", "GPT-5.6 Sol 朗诵导演服务尚未配置。");
+  }
+  if (!env.ELEVENLABS_API_KEY || !env.ELEVENLABS_VOICE_ID) {
+    return apiError(503, "ELEVEN_TTS_NOT_CONFIGURED", "ElevenLabs 标准朗诵声音尚未配置。");
+  }
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  if (!String(work.title).trim() || !String(work.source_text).trim()) {
+    return apiError(400, "WORK_TEXT_REQUIRED", "请先填写作品名称和完整正文。");
+  }
+  const active = await first<Row>(env.DB.prepare(
+    `SELECT * FROM processing_jobs WHERE work_id = ? AND type = ?
+      AND status NOT IN ('graph_ready', 'error') ORDER BY created_at DESC LIMIT 1`,
+  ).bind(workId, AI_TTS_GENERATION_JOB_TYPE));
+  if (active) {
+    return json({
+      ai_tts_job_id: active.id,
+      work_id: workId,
+      status: active.status,
+      progress: Number(active.progress ?? 0),
+    }, 202);
+  }
+  const jobId = id("ai_tts_job");
+  const createdAt = nextUpdatedAt(String(work.updated_at));
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO processing_jobs
+        (id, work_id, type, status, progress, idempotency_key, input_json, created_at, updated_at)
+       VALUES (?, ?, ?, 'queued', 0, ?, ?, ?, ?)`,
+    ).bind(
+      jobId,
+      workId,
+      AI_TTS_GENERATION_JOB_TYPE,
+      `ai-tts-generation:${workId}:${jobId}`,
+      JSON.stringify({ sourceTextChecksum: await sha256Hex(new TextEncoder().encode(String(work.source_text)).buffer) }),
+      createdAt,
+      createdAt,
+    ),
+    env.DB.prepare(
+      "UPDATE works SET audio_source_type = 'ai_tts', updated_at = ? WHERE id = ?",
+    ).bind(createdAt, workId),
+  ]);
+  return json({ ai_tts_job_id: jobId, work_id: workId, status: "queued", progress: 0 }, 202);
+}
+
+async function getAiTtsJob(env: Env, origin: string, jobId: string) {
+  let job = await first<Row>(env.DB.prepare(
+    "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+  ).bind(jobId, AI_TTS_GENERATION_JOB_TYPE));
+  if (!job) return apiError(404, "AI_TTS_JOB_NOT_FOUND", "找不到 AI 参考朗诵任务。");
+  if (!AI_TTS_TERMINAL_STATUSES.has(String(job.status))) {
+    await runAiTtsJobStage(env, origin, jobId);
+    job = await first<Row>(env.DB.prepare(
+      "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+    ).bind(jobId, AI_TTS_GENERATION_JOB_TYPE));
+    if (!job) return apiError(404, "AI_TTS_JOB_NOT_FOUND", "找不到 AI 参考朗诵任务。");
+  }
+  const output = parseJson<AiTtsJobOutput>(job.output_json as string | null) ?? {};
+  return json({
+    ai_tts_job_id: job.id,
+    work_id: job.work_id,
+    status: job.status,
+    progress: Number(job.progress ?? 0),
+    performance_plan: output.performancePlan,
+    tts_text: output.ttsText,
+    audio_asset_id: output.audio?.assetId,
+    analysis_job_id: output.analysisJobId,
+    error: job.error_code ? { code: job.error_code, message: job.error_message } : undefined,
+    work: await getWorkPayload(env, String(job.work_id)),
+  });
+}
+
+async function retryAiTtsJob(
+  env: Env,
+  jobId: string,
+  stage: "audio" | "analysis" | "interpretation",
+) {
+  const job = await first<Row>(env.DB.prepare(
+    "SELECT * FROM processing_jobs WHERE id = ? AND type = ?",
+  ).bind(jobId, AI_TTS_GENERATION_JOB_TYPE));
+  if (!job) return apiError(404, "AI_TTS_JOB_NOT_FOUND", "找不到 AI 参考朗诵任务。");
+  const output = parseJson<AiTtsJobOutput>(job.output_json as string | null) ?? {};
+  if (stage === "audio" && !output.ttsText) {
+    return apiError(409, "TTS_PLAN_REQUIRED", "朗诵方案尚未生成，不能单独重试声音。");
+  }
+  if ((stage === "analysis" || stage === "interpretation") && !output.audio?.assetId) {
+    return apiError(409, "TTS_AUDIO_REQUIRED", "AI 参考声音尚未生成，不能单独重新分析。");
+  }
+  if (stage === "interpretation") {
+    const analysisJobId = output.analysisJobId;
+    if (!analysisJobId) {
+      return apiError(409, "ANALYSIS_JOB_REQUIRED", "没有可复用的声音分析任务，请改用重新分析。");
+    }
+    const analysisJob = await first<Row>(env.DB.prepare(
+      "SELECT output_json FROM processing_jobs WHERE id = ? AND type = ?",
+    ).bind(analysisJobId, AI_TTS_ANALYSIS_JOB_TYPE));
+    const partial = parseJson<Record<string, unknown>>(analysisJob?.output_json as string | null);
+    if (!partial?.analysis_package) {
+      return apiError(409, "ACOUSTIC_DATA_REQUIRED", "上次任务没有保留声学数据，请改用重新分析。");
+    }
+    await env.DB.prepare(
+      `UPDATE processing_jobs SET status = 'queued', progress = 72,
+        error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ? AND type = ?`,
+    ).bind(now(), analysisJobId, AI_TTS_ANALYSIS_JOB_TYPE).run();
+  }
+  const nextOutput = stage === "analysis"
+    ? { ...output, analysisJobId: undefined, retryInterpretation: undefined }
+    : stage === "interpretation"
+      ? { ...output, retryInterpretation: true }
+      : output;
+  const nextStatus = stage === "analysis"
+    ? "tts_audio_ready"
+    : stage === "interpretation" ? "llm_interpreting" : "tts_plan_ready";
+  const nextProgress = stage === "analysis" ? 50 : stage === "interpretation" ? 78 : 25;
+  await env.DB.prepare(
+    `UPDATE processing_jobs SET status = ?, progress = ?, output_json = ?,
+      error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ? AND type = ?`,
+  ).bind(
+    nextStatus,
+    nextProgress,
+    JSON.stringify(nextOutput),
+    now(),
+    jobId,
+    AI_TTS_GENERATION_JOB_TYPE,
+  ).run();
+  return json({ ai_tts_job_id: jobId, work_id: job.work_id, status: nextStatus, progress: nextProgress }, 202);
+}
+
 async function getAnalysisInput(request: Request, env: Env, jobId: string) {
   const context = await jobContext(env, jobId);
   if (!context) return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务或参考素材。");
@@ -1540,11 +2224,15 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
   }
   if (body.status === "failed") {
     const error = body.error && typeof body.error === "object" ? body.error as Record<string, unknown> : body;
+    const partialOutput = body.analysis_package && typeof body.analysis_package === "object"
+      ? { analysis_package: body.analysis_package, stage: body.stage ?? "audio_analyzing" }
+      : undefined;
     await failAnalysisCallback(
       env,
       job,
       String(error.code ?? error.error_code ?? "ANALYSIS_FAILED"),
       String(error.message ?? error.error_message ?? "声音分析失败。"),
+      partialOutput,
     );
     return json({ ok: true });
   }
@@ -1578,13 +2266,20 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
   const currentStandard = await first<Row>(env.DB.prepare(
     "SELECT id, source_asset_id FROM assets WHERE work_id = ? AND kind = 'standard_ai_audio' ORDER BY created_at DESC LIMIT 1",
   ).bind(work.id));
-  const usesStandardAudio = job.type === STANDARD_ANALYSIS_JOB_TYPE;
-  const staleInput = usesStandardAudio
+  const usesAiTts = job.type === AI_TTS_ANALYSIS_JOB_TYPE;
+  const usesStandardAudio = job.type === STANDARD_ANALYSIS_JOB_TYPE || usesAiTts;
+  const analysisAssetMetadata = parseJson<Record<string, unknown>>(analysisAsset?.metadata_json as string | null);
+  const staleInput = usesAiTts
     ? !analysisAsset
       || analysisAsset.kind !== "standard_ai_audio"
       || currentStandard?.id !== input.assetId
-      || currentReference?.id !== input.referenceAudioAssetId
-      || currentStandard.source_asset_id !== input.referenceAudioAssetId
+      || analysisAssetMetadata?.generation_mode !== "ai_tts"
+    : usesStandardAudio
+      ? !analysisAsset
+        || analysisAsset.kind !== "standard_ai_audio"
+        || currentStandard?.id !== input.assetId
+        || currentReference?.id !== input.referenceAudioAssetId
+        || currentStandard.source_asset_id !== input.referenceAudioAssetId
     : currentReference?.id !== input.assetId;
   if (staleInput) {
     const message = "本次分析使用的声音素材已被替换，旧结果不会写入当前作品。";
@@ -1642,17 +2337,23 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
       source: "ai",
       analysisProvenance: {
         ...provenance,
-        referenceAudioAssetId: usesStandardAudio
+        referenceAudioAssetId: usesAiTts
+          ? undefined
+          : usesStandardAudio
           ? input.referenceAudioAssetId
           : input.assetId,
-        referenceAudioOriginalAssetId: usesStandardAudio
+        referenceAudioOriginalAssetId: usesAiTts
+          ? undefined
+          : usesStandardAudio
           ? input.referenceAudioAssetId
           : undefined,
         standardAiAudioAssetId: usesStandardAudio ? input.assetId : undefined,
         analyzedAudioRole: usesStandardAudio ? "standard_ai_audio" : "reference_audio",
         pipelineVersion: String(
           pipeline.version
-          ?? (usesStandardAudio ? "recitation-analysis-2.0-standard-audio" : "recitation-analysis-1.0"),
+          ?? (usesAiTts
+            ? "recitation-analysis-2.1-ai-tts-audio"
+            : usesStandardAudio ? "recitation-analysis-2.0-standard-audio" : "recitation-analysis-1.0"),
         ),
         alignmentModel: pipeline.alignment ? String(pipeline.alignment) : provenance.alignmentModel,
         acousticModel: pipeline.acoustics ? String(pipeline.acoustics) : provenance.acousticModel,
@@ -1707,6 +2408,18 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
   if (usesStandardAudio && analysisAsset) {
     const audioVersionId = id("audio");
     const voiceMetadata = parseJson<Record<string, unknown>>(analysisAsset.metadata_json as string | null);
+    const aiTtsJob = usesAiTts
+      ? await first<Row>(env.DB.prepare(
+        `SELECT output_json FROM processing_jobs
+          WHERE work_id = ? AND type = ? ORDER BY created_at DESC LIMIT 1`,
+      ).bind(work.id, AI_TTS_GENERATION_JOB_TYPE))
+      : null;
+    const aiTtsOutput = parseJson<AiTtsJobOutput>(aiTtsJob?.output_json as string | null);
+    const promptTrace = usesAiTts ? {
+      performancePlan: aiTtsOutput?.performancePlan,
+      validation: aiTtsOutput?.validation,
+      director: aiTtsOutput?.director,
+    } : undefined;
     statements.push(
       env.DB.prepare(
         `UPDATE audio_versions SET candidate_state = 'superseded'
@@ -1718,7 +2431,7 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
         `INSERT INTO audio_versions
           (id, work_id, control_spec_version_id, audio_asset_id, provider, model, voice_id,
            prompt_text, prompt_trace_json, timeline_json, duration_ms, candidate_state, created_at)
-         VALUES (?, ?, ?, ?, 'eleven', ?, ?, '', NULL, ?, ?, 'candidate', ?)`,
+         VALUES (?, ?, ?, ?, 'eleven', ?, ?, ?, ?, ?, ?, 'candidate', ?)`,
       ).bind(
         audioVersionId,
         work.id,
@@ -1726,6 +2439,8 @@ async function analysisCallback(request: Request, env: Env, jobId: string) {
         input.assetId,
         String(voiceMetadata?.model_id ?? VOICE_CHANGER_MODEL_ID),
         String(voiceMetadata?.voice_id ?? env.ELEVENLABS_VOICE_ID ?? ""),
+        usesAiTts ? String(aiTtsOutput?.ttsText ?? "") : "",
+        promptTrace ? JSON.stringify(promptTrace) : null,
         JSON.stringify(analysisTimeline(analysisPackage)),
         Math.max(0, Math.round(durationMs)),
         completedAt,
@@ -2745,7 +3460,7 @@ async function serveAsset(request: Request, env: Env, assetId: string) {
   return new Response(object.body, { status, headers });
 }
 
-async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<Response | null> {
+async function api(request: Request, env: Env): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return null;
   if (url.pathname === "/api/health" && request.method === "GET") {
@@ -2769,6 +3484,17 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
       voice_changer: {
         configured: Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID),
         model_id: VOICE_CHANGER_MODEL_ID,
+        voice_id_configured: Boolean(env.ELEVENLABS_VOICE_ID),
+      },
+      ai_reference_recitation: {
+        configured: Boolean(
+          env.ANALYSIS_SERVICE_URL
+          && env.ANALYSIS_SERVICE_TOKEN
+          && env.ELEVENLABS_API_KEY
+          && env.ELEVENLABS_VOICE_ID,
+        ),
+        director_endpoint: "/v1/tts-director",
+        tts_model: env.ELEVENLABS_TTS_MODEL?.trim() || ELEVEN_TTS_MODEL_ID,
         voice_id_configured: Boolean(env.ELEVENLABS_VOICE_ID),
       },
       visual_director: {
@@ -2797,6 +3523,26 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
   }
   const jobMatch = url.pathname.match(/^\/api\/analysis-jobs\/([^/]+)$/);
   if (jobMatch && request.method === "GET") return getAnalysisJob(env, jobMatch[1]);
+  const createAiTtsJobMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/ai-tts-jobs$/);
+  if (createAiTtsJobMatch && request.method === "POST") {
+    return createAiTtsJob(env, createAiTtsJobMatch[1]);
+  }
+  const retryAiTtsAudioMatch = url.pathname.match(/^\/api\/ai-tts-jobs\/([^/]+)\/retry-audio$/);
+  if (retryAiTtsAudioMatch && request.method === "POST") {
+    return retryAiTtsJob(env, retryAiTtsAudioMatch[1], "audio");
+  }
+  const retryAiTtsAnalysisMatch = url.pathname.match(/^\/api\/ai-tts-jobs\/([^/]+)\/retry-analysis$/);
+  if (retryAiTtsAnalysisMatch && request.method === "POST") {
+    return retryAiTtsJob(env, retryAiTtsAnalysisMatch[1], "analysis");
+  }
+  const retryAiTtsInterpretationMatch = url.pathname.match(/^\/api\/ai-tts-jobs\/([^/]+)\/retry-interpretation$/);
+  if (retryAiTtsInterpretationMatch && request.method === "POST") {
+    return retryAiTtsJob(env, retryAiTtsInterpretationMatch[1], "interpretation");
+  }
+  const aiTtsJobMatch = url.pathname.match(/^\/api\/ai-tts-jobs\/([^/]+)$/);
+  if (aiTtsJobMatch && request.method === "GET") {
+    return getAiTtsJob(env, url.origin, aiTtsJobMatch[1]);
+  }
   const visualJobMatch = url.pathname.match(/^\/api\/visual-jobs\/([^/]+)$/);
   if (visualJobMatch && request.method === "GET") {
     return getVisualGenerationJob(env, visualJobMatch[1]);
@@ -2847,7 +3593,7 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      const apiResponse = await api(request, env, ctx);
+      const apiResponse = await api(request, env);
       if (apiResponse) return apiResponse;
       const url = new URL(request.url);
       if (url.pathname === "/_vinext/image") {

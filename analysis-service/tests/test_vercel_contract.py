@@ -16,8 +16,8 @@ from app.interpretation.llm_interpreter import (
     _response_format_for_provider,
     interpret_control_spec,
 )
-from app.main import _callback, app, create_job, health
-from app.pipeline import _sites_headers
+from app.main import _callback, _run_job, app, create_job, health
+from app.pipeline import PipelineStageError, _sites_headers
 from app.schemas.control_spec import JobRequest
 from server import app as vercel_app
 
@@ -388,6 +388,88 @@ def test_job_request_waits_for_pipeline_instead_of_background_task() -> None:
 
     runner.assert_awaited_once_with(job, settings)
     assert response == {"job_id": "job-test", "status": "succeeded"}
+
+
+def test_run_job_reports_progress_without_reading_exception_state() -> None:
+    job = JobRequest(
+        job_id="job-progress",
+        input_url="https://example.test/input",
+        audio_url="https://example.test/audio",
+        callback_url="https://example.test/callback",
+    )
+    settings = Settings(
+        elevenlabs_api_key="eleven",
+        llm_api_key="gateway",
+        llm_auth_source="ai_api_key",
+        llm_provider="openai_compatible",
+        analysis_service_token="service",
+        analysis_callback_token="callback",
+        sites_bypass_token="sites",
+        llm_base_url="https://gateway.example",
+        llm_model="gpt-5.6-sol",
+        llm_thinking="enabled",
+        llm_reasoning_effort="high",
+        request_timeout_seconds=180,
+    )
+    callback = AsyncMock()
+
+    async def analyzer(**kwargs):
+        await kwargs["progress_callback"]("audio_analyzing", 38)
+        return ({"analyzed_audio_role": "standard_ai_audio"}, {"tokens": []})
+
+    with patch("app.main._callback", callback), patch(
+        "app.main.analyze_job", side_effect=analyzer
+    ):
+        result = asyncio.run(_run_job(job, settings))
+
+    assert result == "succeeded"
+    progress_bodies = [call.kwargs["body"] for call in callback.await_args_list]
+    assert {"job_id": "job-progress", "status": "processing", "stage": "audio_analyzing", "progress": 38} in progress_bodies
+    assert progress_bodies[-1]["status"] == "succeeded"
+
+
+def test_run_job_preserves_acoustic_package_when_interpretation_fails() -> None:
+    job = JobRequest(
+        job_id="job-interpretation-failure",
+        input_url="https://example.test/input",
+        audio_url="https://example.test/audio",
+        callback_url="https://example.test/callback",
+    )
+    settings = Settings(
+        elevenlabs_api_key="eleven",
+        llm_api_key="gateway",
+        llm_auth_source="ai_api_key",
+        llm_provider="openai_compatible",
+        analysis_service_token="service",
+        analysis_callback_token="callback",
+        sites_bypass_token="sites",
+        llm_base_url="https://gateway.example",
+        llm_model="gpt-5.6-sol",
+        llm_thinking="enabled",
+        llm_reasoning_effort="high",
+        request_timeout_seconds=180,
+    )
+    callback = AsyncMock()
+    analysis_package = {"work": {"full_text": "测试"}, "tokens": []}
+
+    with patch("app.main._callback", callback), patch(
+        "app.main.analyze_job",
+        new=AsyncMock(
+            side_effect=PipelineStageError(
+                "upstream timeout",
+                stage="llm_interpreting",
+                analysis_package=analysis_package,
+            )
+        ),
+    ):
+        result = asyncio.run(_run_job(job, settings))
+
+    assert result == "failed"
+    failure = callback.await_args_list[-1].kwargs["body"]
+    assert failure["status"] == "failed"
+    assert failure["error_code"] == "LLM_INTERPRETATION_FAILED"
+    assert failure["stage"] == "llm_interpreting"
+    assert failure["analysis_package"] == analysis_package
 
 
 def test_sites_handoff_header_uses_owner_bypass_token() -> None:

@@ -68,6 +68,8 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(schema, /referenceAudio/);
   assert.match(schema, /aiDemoAudio/);
   assert.match(schema, /standardAiAudio/);
+  assert.match(schema, /audioSourceType/);
+  assert.match(schema, /AiTtsProduction/);
   assert.match(schema, /audioSyncStatus/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(studio, /cloneDemoWork|createDemoControlSpec|createDemoAiAudio|demo-recitation/);
@@ -96,6 +98,8 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(studio, /mode === "studio" \? \(\s*<WorkLibrary/);
   assert.match(studio, /\/reference-audio/);
   assert.match(studio, /\/api\/analysis-jobs/);
+  assert.match(studio, /生成 AI 参考朗诵并分析/);
+  assert.match(studio, /\/api\/ai-tts-jobs/);
   assert.match(studio, /type="file"/);
   assert.match(worker, /ANALYSIS_SERVICE_URL/);
   assert.match(worker, /ANALYSIS_CALLBACK_TOKEN/);
@@ -106,13 +110,17 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(worker, /body\.full_text/);
   assert.match(worker, /AUDIO_BUCKET/);
   assert.match(worker, /speech-to-speech/);
+  assert.match(worker, /\/v1\/text-to-speech\//);
+  assert.match(worker, /\/v1\/tts-director/);
+  assert.match(worker, /eleven_v3/);
   assert.match(worker, /standard_ai_audio/);
-  assert.doesNotMatch(worker, /with-timestamps|ai-demo-prompt|\/v1\/text-to-speech\//);
+  assert.doesNotMatch(worker, /with-timestamps|ai-demo-prompt/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
   await access(new URL("../analysis-service/app/acoustics/parselmouth_analyzer.py", import.meta.url));
   await access(new URL("../analysis-service/app/providers/eleven_alignment.py", import.meta.url));
   await access(new URL("../analysis-service/app/interpretation/llm_interpreter.py", import.meta.url));
   await access(new URL("../analysis-service/app/rules/recitation_expression_v1.md", import.meta.url));
+  await access(new URL("../analysis-service/app/tts_director/system_prompt.py", import.meta.url));
   await assert.rejects(access(new URL("../public/demo-recitation.m4a", import.meta.url)));
   await assert.rejects(access(new URL("../local-analyzer/analyzer.py", import.meta.url)));
   await access(new URL("../drizzle/0000_unusual_wendell_rand.sql", import.meta.url));

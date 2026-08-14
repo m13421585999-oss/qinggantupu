@@ -26,10 +26,12 @@ from app.config import (
     configured_recitation_model,
     configured_recitation_provider,
     configured_recitation_reasoning_effort,
+    configured_tts_reasoning_effort,
     configured_visual_reasoning_effort,
 )
 from app.interpretation.visual_director import VisualDirectorError, direct_work_visuals
-from app.pipeline import PIPELINE_VERSION, analyze_job
+from app.interpretation.llm_interpreter import InterpretationError, interpret_control_spec
+from app.pipeline import PIPELINE_VERSION, PipelineStageError, analyze_job
 from app.providers.image_generation import ImageGenerationError, generate_image
 from app.providers.hero_text_validation import (
     HeroTextValidationError,
@@ -37,6 +39,12 @@ from app.providers.hero_text_validation import (
 )
 from app.schemas.control_spec import JobRequest
 from app.schemas.visual import VisualDirectorRequest
+from app.tts_director import (
+    TtsDirectorError,
+    TtsDirectorRequest,
+    TtsDirectorTextMismatch,
+    generate_tts_performance_plan,
+)
 
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -72,6 +80,14 @@ class HeroTextValidationRequest(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     author: str = Field(default="", max_length=500)
     model: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class InterpretationJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=1, max_length=500)
+    callback_url: str = Field(min_length=1, max_length=4_000)
+    analysis_package: dict[str, Any]
 
 
 def _settings() -> Settings:
@@ -145,10 +161,25 @@ async def _run_job(job: JobRequest, settings: Settings) -> str:
             body={"job_id": job.job_id, "status": "processing", "progress": 5},
             timeout_seconds=settings.request_timeout_seconds,
         )
+        async def report_progress(stage_name: str, progress: int) -> None:
+            await _callback(
+                url=job.callback_url,
+                token=settings.analysis_callback_token,
+                sites_bypass_token=settings.sites_bypass_token,
+                body={
+                    "job_id": job.job_id,
+                    "status": "processing",
+                    "stage": stage_name,
+                    "progress": progress,
+                },
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+
         analysis_package, control_spec = await analyze_job(
             input_url=job.input_url,
             audio_url=job.audio_url,
             settings=settings,
+            progress_callback=report_progress,
         )
         await _callback(
             url=job.callback_url,
@@ -181,18 +212,27 @@ async def _run_job(job: JobRequest, settings: Settings) -> str:
         return "succeeded"
     except Exception as exc:  # Every production failure becomes an explicit failed job.
         logger.exception("analysis job %s failed", job.job_id)
+        failure_body: dict[str, Any] = {
+            "job_id": job.job_id,
+            "status": "failed",
+            "error_code": (
+                "LLM_INTERPRETATION_FAILED"
+                if isinstance(exc, PipelineStageError)
+                and exc.stage == "llm_interpreting"
+                else exc.__class__.__name__.upper()
+            ),
+            "error_message": str(exc)[:1200] or "Analysis failed",
+        }
+        if isinstance(exc, PipelineStageError):
+            failure_body["stage"] = exc.stage
+            if exc.analysis_package is not None:
+                failure_body["analysis_package"] = exc.analysis_package
         try:
             await _callback(
                 url=job.callback_url,
                 token=settings.analysis_callback_token,
                 sites_bypass_token=settings.sites_bypass_token,
-                body={
-                    "job_id": job.job_id,
-                    "status": "failed",
-                    "progress": 100,
-                    "error_code": exc.__class__.__name__.upper(),
-                    "error_message": str(exc)[:1200] or "Analysis failed",
-                },
+                body={**failure_body, "progress": 100},
                 timeout_seconds=settings.request_timeout_seconds,
             )
         except Exception as callback_error:
@@ -234,6 +274,12 @@ async def health() -> dict[str, Any]:
     configured["VISUAL_REASONING_EFFORT"] = (
         visual_reasoning_effort in LLM_REASONING_EFFORTS
     )
+    tts_reasoning_effort = os.getenv(
+        "TTS_DIRECTOR_REASONING_EFFORT", "medium"
+    ).strip().lower()
+    configured["TTS_DIRECTOR_REASONING_EFFORT"] = (
+        tts_reasoning_effort in LLM_REASONING_EFFORTS
+    )
     recitation_reasoning_effort = os.getenv(
         "RECITATION_REASONING_EFFORT", "high"
     ).strip().lower()
@@ -255,6 +301,7 @@ async def health() -> dict[str, Any]:
         recitation_model = configured_recitation_model(recitation_provider)
         recitation_reasoning_effort = configured_recitation_reasoning_effort()
         visual_reasoning_effort = configured_visual_reasoning_effort()
+        tts_reasoning_effort = configured_tts_reasoning_effort()
         configured["LLM_PROVIDER"] = True
         configured["AI_BASE_URL"] = bool(base_url)
         configured["LLM_MODEL"] = bool(model)
@@ -317,6 +364,15 @@ async def health() -> dict[str, Any]:
             "scene_batch_size": 8,
             "fallback": "deterministic_visual_plan",
         },
+        "tts_director": {
+            "provider": provider,
+            "model": model,
+            "thinking": DEEPSEEK_THINKING,
+            "reasoning_effort": tts_reasoning_effort,
+            "endpoint_preference": ["chat/completions", "responses"],
+            "output_mode": "structured_json",
+            "text_validation": "programmatic_exact_semantic_sequence",
+        },
         "recitation_interpreter": {
             "provider": recitation_provider,
             "base_url": recitation_base_url,
@@ -338,6 +394,114 @@ async def health() -> dict[str, Any]:
             "endpoint_preference": ["responses", "chat/completions"],
         },
     }
+
+
+@app.post("/v1/tts-director", status_code=status.HTTP_200_OK)
+async def create_tts_performance_plan(
+    request: TtsDirectorRequest,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    try:
+        result = await generate_tts_performance_plan(
+            request=request,
+            provider=settings.llm_provider,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            thinking=settings.llm_thinking,
+            reasoning_effort=settings.tts_director_reasoning_effort,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except TtsDirectorTextMismatch as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TtsDirectorError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    generation_meta = result.pop("_meta", {})
+    generation_meta = generation_meta if isinstance(generation_meta, dict) else {}
+    return {
+        **result,
+        "_meta": {
+            "provider": settings.llm_provider,
+            "model": settings.llm_model,
+            "reasoning_effort": settings.tts_director_reasoning_effort,
+            **generation_meta,
+        },
+    }
+
+
+@app.post("/v1/interpretation-jobs", status_code=status.HTTP_200_OK)
+async def retry_control_spec_interpretation(
+    request: InterpretationJobRequest,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, str]:
+    await _callback(
+        url=request.callback_url,
+        token=settings.analysis_callback_token,
+        sites_bypass_token=settings.sites_bypass_token,
+        body={
+            "job_id": request.job_id,
+            "status": "processing",
+            "stage": "llm_interpreting",
+            "progress": 80,
+        },
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    try:
+        control_spec = await interpret_control_spec(
+            analysis_package=request.analysis_package,
+            provider=settings.recitation_llm_provider,
+            api_key=settings.recitation_llm_api_key,
+            base_url=settings.recitation_llm_base_url,
+            model=settings.recitation_llm_model,
+            thinking=settings.llm_thinking,
+            reasoning_effort=settings.recitation_reasoning_effort,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+        await _callback(
+            url=request.callback_url,
+            token=settings.analysis_callback_token,
+            sites_bypass_token=settings.sites_bypass_token,
+            body={
+                "job_id": request.job_id,
+                "status": "succeeded",
+                "progress": 100,
+                "analysis_package": request.analysis_package,
+                "control_spec": control_spec,
+                "pipeline": {
+                    "version": PIPELINE_VERSION,
+                    "alignment": "elevenlabs-forced-alignment",
+                    "acoustics": "parselmouth",
+                    "analyzed_audio_role": request.analysis_package.get("analyzed_audio_role"),
+                    "standard_ai_audio_asset_id": request.analysis_package.get(
+                        "standard_ai_audio_asset_id"
+                    ),
+                    "language_model_provider": settings.recitation_llm_provider,
+                    "language_model": settings.recitation_llm_model,
+                    "thinking": settings.llm_thinking,
+                    "reasoning_effort": settings.recitation_reasoning_effort,
+                    "knowledge_base": "recitation-expression-v1.0",
+                },
+            },
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+        return {"job_id": request.job_id, "status": "succeeded"}
+    except InterpretationError as exc:
+        await _callback(
+            url=request.callback_url,
+            token=settings.analysis_callback_token,
+            sites_bypass_token=settings.sites_bypass_token,
+            body={
+                "job_id": request.job_id,
+                "status": "failed",
+                "progress": 100,
+                "stage": "llm_interpreting",
+                "analysis_package": request.analysis_package,
+                "error_code": "LLM_INTERPRETATION_FAILED",
+                "error_message": str(exc)[:1200] or "图谱解析失败",
+            },
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+        return {"job_id": request.job_id, "status": "failed"}
 
 
 @app.post("/v1/visual-director", status_code=status.HTTP_200_OK)

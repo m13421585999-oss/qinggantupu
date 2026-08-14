@@ -327,6 +327,47 @@ export interface AudioTrack {
   timeline?: AudioTimeline;
 }
 
+export type AudioSourceType = "human_reference" | "ai_tts";
+
+export interface TtsPerformanceArcStage {
+  stage: number;
+  description: string;
+  delivery: string;
+}
+
+export interface TtsPerformancePlan {
+  genre: string;
+  theme: string;
+  overallTone: string;
+  narratorState: string;
+  emotionalArc: TtsPerformanceArcStage[];
+  climax: string;
+  ending: string;
+}
+
+export interface AiTtsProduction {
+  jobId?: string;
+  status:
+    | "queued"
+    | "tts_plan_generating"
+    | "tts_plan_ready"
+    | "tts_audio_generating"
+    | "tts_audio_ready"
+    | "audio_analyzing"
+    | "llm_interpreting"
+    | "graph_ready"
+    | "error";
+  progress?: number;
+  performancePlan?: TtsPerformancePlan;
+  ttsText?: string;
+  model?: string;
+  voiceId?: string;
+  audioAssetId?: string;
+  audioUrl?: string;
+  createdAt?: string;
+  error?: { code: string; message: string };
+}
+
 export interface RecitationWork {
   id: string;
   slug: string;
@@ -340,6 +381,7 @@ export interface RecitationWork {
     | "other";
   language: "zh-CN";
   sourceText: string;
+  audioSourceType?: AudioSourceType;
   status: WorkStatus;
   audioSyncStatus: AudioSyncStatus;
   currentSpecVersionId?: string;
@@ -348,6 +390,7 @@ export interface RecitationWork {
   referenceAudioOriginal?: AudioTrack;
   aiDemoAudio?: AudioTrack;
   standardAiAudio?: AudioTrack;
+  aiTts?: AiTtsProduction;
   analysisJobId?: string;
   analysisJobStatus?: "queued" | "processing" | "succeeded" | "failed";
   analysisPackage?: RecitationAnalysisPackage;

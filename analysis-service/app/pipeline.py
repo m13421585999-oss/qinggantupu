@@ -6,6 +6,7 @@ import re
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -19,7 +20,7 @@ from app.acoustics.parselmouth_analyzer import (
 )
 from app.acoustics.timing_profile import derive_timing_profile
 from app.config import Settings
-from app.interpretation.llm_interpreter import interpret_control_spec
+from app.interpretation.llm_interpreter import InterpretationError, interpret_control_spec
 from app.providers.eleven_alignment import (
     PUNCTUATION,
     forced_align,
@@ -30,6 +31,19 @@ from app.providers.eleven_alignment import (
 
 class PipelineError(RuntimeError):
     pass
+
+
+class PipelineStageError(PipelineError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage: str,
+        analysis_package: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.analysis_package = analysis_package
 
 
 PIPELINE_VERSION = "recitation-analysis-2.0-standard-audio"
@@ -133,11 +147,14 @@ async def analyze_job(
     input_url: str,
     audio_url: str,
     settings: Settings,
+    progress_callback: Callable[[str, int], Awaitable[None]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     input_payload = await _get_json(
         input_url, settings.request_timeout_seconds, settings.sites_bypass_token
     )
     work = _work_from_input(input_payload)
+    if progress_callback:
+        await progress_callback("audio_analyzing", 12)
     analysis_audio = _analysis_audio(input_payload)
     standard_audio = input_payload.get("standard_ai_audio")
     standard_audio = standard_audio if isinstance(standard_audio, dict) else {}
@@ -162,6 +179,8 @@ async def analyze_job(
             timeout_seconds=settings.request_timeout_seconds,
         )
         tokens, quality = map_to_source(work["full_text"], alignment)
+        if progress_callback:
+            await progress_callback("audio_analyzing", 38)
         await asyncio.to_thread(convert_to_mono_wav, audio_path, wav_path)
         acoustics = await asyncio.to_thread(
             analyze_wav,
@@ -169,6 +188,8 @@ async def analyze_job(
             tokens,
             split_sentence_ranges(work["full_text"]),
         )
+    if progress_callback:
+        await progress_callback("audio_analyzing", 72)
 
     acoustic_by_index = {
         int(item["token_index"]): item for item in acoustics["token_acoustics"]
@@ -256,16 +277,25 @@ async def analyze_job(
             "prolongation_candidates": acoustics["prolongation_candidates"],
         },
     }
-    control_spec = await interpret_control_spec(
-        analysis_package=analysis_package,
-        provider=settings.recitation_llm_provider,
-        api_key=settings.recitation_llm_api_key,
-        base_url=settings.recitation_llm_base_url,
-        model=settings.recitation_llm_model,
-        thinking=settings.llm_thinking,
-        reasoning_effort=settings.recitation_reasoning_effort,
-        timeout_seconds=settings.request_timeout_seconds,
-    )
+    if progress_callback:
+        await progress_callback("llm_interpreting", 80)
+    try:
+        control_spec = await interpret_control_spec(
+            analysis_package=analysis_package,
+            provider=settings.recitation_llm_provider,
+            api_key=settings.recitation_llm_api_key,
+            base_url=settings.recitation_llm_base_url,
+            model=settings.recitation_llm_model,
+            thinking=settings.llm_thinking,
+            reasoning_effort=settings.recitation_reasoning_effort,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except InterpretationError as exc:
+        raise PipelineStageError(
+            str(exc),
+            stage="llm_interpreting",
+            analysis_package=analysis_package,
+        ) from exc
     # Focus can contextualize, but never create, a prolongation. Build timing
     # only after the conservative acoustic classifier has produced final marks.
     timing_profile = derive_timing_profile(analysis_package)
