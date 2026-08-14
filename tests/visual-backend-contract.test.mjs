@@ -95,6 +95,11 @@ test("visual generation is resumable, bounded and reports partial failure", () =
   assert.match(worker, /activeVisualGenerationJobs/);
   assert.match(worker, /VISUAL_GENERATION_IN_PROGRESS/);
   assert.match(worker, /safeVisualErrorMessage/);
+  assert.match(worker, /LEFT JOIN assets a ON a\.id = va\.asset_id/);
+  assert.match(worker, /assetMetadata\?\.endpoint/);
+  assert.match(worker, /endpoint: generated\.endpoint/);
+  assert.match(worker, /director_endpoint: directorEndpoint/);
+  assert.match(worker, /directorEndpoint: rawProfile\._meta\?\.director_endpoint/);
   assert.doesNotMatch(worker, /director_model,\s*is_locked[\s\S]{0,120}'deepseek'/);
 });
 
@@ -112,4 +117,11 @@ test("visual director fields and Hero production ratio match the current viewer"
   assert.match(visualPanel, /\[1500, 280\]/);
   assert.match(visualPanel, /1500 × 280 Hero/);
   assert.match(visualPanelCss, /cropFrameHero \{ aspect-ratio: 1500 \/ 280; \}/);
+});
+
+test("compact empty visual state can generate the complete work in one action", () => {
+  assert.match(visualPanel, /!compactSpec[\s\S]*?generateWorkVisualAssets\(workId, \{ type: "all" \}\)[\s\S]*?作品视觉方案、主视觉和全部意境图已生成/);
+  assert.match(visualPanel, /!compactSpec[\s\S]*?一键生成作品视觉/);
+  assert.match(visualPanel, /!compactSpec[\s\S]*?uploadLabel\("hero"\)/);
+  assert.doesNotMatch(visualPanel, /!compactSpec[\s\S]*?先生成视觉方案[\s\S]*?compactSpec \?/);
 });

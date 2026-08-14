@@ -82,6 +82,14 @@ export interface VisualDirectorOutput {
   work_visual_profile: WorkVisualProfile;
   hero_visual_spec: HeroVisualSpec;
   scene_visual_specs: SceneVisualSpec[];
+  /** Transport metadata returned by the Visual Director service. */
+  _meta?: {
+    provider?: string;
+    model?: string;
+    endpoint?: string;
+    output_mode?: string;
+    request_count?: number;
+  };
 }
 
 export function buildSceneUnits(

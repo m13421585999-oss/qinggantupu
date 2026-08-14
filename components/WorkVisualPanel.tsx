@@ -443,11 +443,15 @@ export function WorkVisualPanel({
                 <button
                   type="button"
                   className={styles.button}
-                  disabled={globalDisabled}
-                  onClick={() => void run("plan", () => generateWorkVisualPlan(workId), "作品视觉方案已生成，可以继续制作图片")}
+                  disabled={globalDisabled || generationUnavailable}
+                  onClick={() => void run(
+                    "all",
+                    () => generateWorkVisualAssets(workId, { type: "all" }),
+                    "作品视觉方案、主视觉和全部意境图已生成",
+                  )}
                 >
-                  {busyKey === "plan" ? <span className={styles.busy} /> : null}
-                  先生成视觉方案
+                  {busyKey === "all" ? <span className={styles.busy} /> : null}
+                  一键生成作品视觉
                 </button>
                 {compactKind === "hero" ? uploadLabel("hero") : null}
                 {compactAsset ? (

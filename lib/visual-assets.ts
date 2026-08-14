@@ -29,6 +29,7 @@ export interface WorkVisualProfile {
   humanPresence: string;
   symbolicElements: string[];
   avoid: string[];
+  directorEndpoint?: string;
   isLocked?: boolean;
   version?: number;
 }
@@ -83,6 +84,7 @@ export interface VisualAsset {
   url?: string;
   provider: string;
   model: string;
+  endpoint?: string;
   status: VisualGenerationStatus;
   isVisible: boolean;
   isActive: boolean;

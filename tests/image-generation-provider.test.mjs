@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createImageGenerationProvider,
   detectImageDimensions,
+  detectImageMimeType,
   ImageGenerationError,
 } from "../lib/image-generation-provider.ts";
 
@@ -40,6 +41,18 @@ test("actual PNG, JPEG and WebP bytes determine persisted image dimensions", () 
   assert.deepEqual(detectImageDimensions(webp.buffer), { width: 768, height: 576 });
 });
 
+test("raw image signatures determine PNG, JPEG and WebP content types", () => {
+  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]);
+  const webp = new Uint8Array(12);
+  webp.set(new TextEncoder().encode("RIFF"), 0);
+  webp.set(new TextEncoder().encode("WEBP"), 8);
+  assert.equal(detectImageMimeType(png.buffer), "image/png");
+  assert.equal(detectImageMimeType(jpeg.buffer), "image/jpeg");
+  assert.equal(detectImageMimeType(webp.buffer), "image/webp");
+  assert.equal(detectImageMimeType(Uint8Array.from([1, 2, 3]).buffer), undefined);
+});
+
 test("openai_compatible uses the normalized /v1 images endpoint and decodes b64 output", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -63,6 +76,7 @@ test("openai_compatible uses the normalized /v1 images endpoint and decodes b64 
     assert.equal(body.model, "image2.0");
     assert.equal(body.size, "1500x280");
     assert.match(body.prompt, /必须避免：水印/);
+    assert.equal(generated.endpoint, "images/generations");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -90,6 +104,7 @@ test("auto mode falls back to Responses only for endpoint capability errors", as
       "https://img.example/v1/responses",
     ]);
     assert.deepEqual([...new Uint8Array(generated.bytes)], [4, 5, 6]);
+    assert.equal(generated.endpoint, "responses");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -127,9 +142,10 @@ test("analysis_service proxy returns underlying provider metadata and dimensions
   globalThis.fetch = async (url, init) => {
     request = { url: String(url), body: JSON.parse(String(init.body)) };
     return Response.json({
-      b64_json: "BwgJ",
+      b64_json: "/9j/4AAQ",
       provider: "openai_compatible",
       model: "image2.0",
+      endpoint: "responses",
       width: 1536,
       height: 1024,
     });
@@ -147,6 +163,8 @@ test("analysis_service proxy returns underlying provider metadata and dimensions
     assert.equal(request.body.height, 280);
     assert.equal(generated.provider, "openai_compatible");
     assert.equal(generated.model, "image2.0");
+    assert.equal(generated.endpoint, "responses");
+    assert.equal(generated.mimeType, "image/jpeg");
     assert.equal(generated.width, 1536);
     assert.equal(generated.height, 1024);
   } finally {

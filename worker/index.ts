@@ -225,6 +225,7 @@ function visualSpecPayload(row: Row) {
 
 function visualAssetPayload(row: Row) {
   const validation = parseJson<Record<string, unknown>>(row.text_validation_json as string | null);
+  const assetMetadata = parseJson<Record<string, unknown>>(row.asset_metadata_json as string | null);
   return {
     id: String(row.id),
     workId: String(row.work_id),
@@ -235,6 +236,7 @@ function visualAssetPayload(row: Row) {
     url: row.asset_id == null ? undefined : `/api/assets/${row.asset_id}`,
     provider: String(row.provider),
     model: String(row.model),
+    endpoint: assetMetadata?.endpoint == null ? undefined : String(assetMetadata.endpoint),
     prompt: String(row.prompt),
     negativePrompt: row.negative_prompt == null ? undefined : String(row.negative_prompt),
     width: Number(row.width),
@@ -267,14 +269,18 @@ async function getVisualBundle(env: Env, workId: string, published = false) {
       ORDER BY CASE WHEN kind = 'hero' THEN 0 ELSE 1 END, scene_id, version DESC`,
   ).bind(workId).all<Row>();
   const assetsResult = await env.DB.prepare(
-    `SELECT * FROM visual_assets
-      WHERE work_id = ?${published
-        ? " AND is_active = 1 AND is_visible = 1 AND generation_status = 'ready'"
+    `SELECT va.*, a.metadata_json AS asset_metadata_json
+       FROM visual_assets va
+       LEFT JOIN assets a ON a.id = va.asset_id
+      WHERE va.work_id = ?${published
+        ? " AND va.is_active = 1 AND va.is_visible = 1 AND va.generation_status = 'ready'"
         : ""}
-      ORDER BY CASE WHEN kind = 'hero' THEN 0 ELSE 1 END, scene_id, version DESC`,
+      ORDER BY CASE WHEN va.kind = 'hero' THEN 0 ELSE 1 END, va.scene_id, va.version DESC`,
   ).bind(workId).all<Row>();
   const rawProfile = profileRow
-    ? parseJson<WorkVisualProfile>(profileRow.profile_json as string | null)
+    ? parseJson<WorkVisualProfile & { _meta?: { director_endpoint?: unknown } }>(
+      profileRow.profile_json as string | null,
+    )
     : undefined;
   const specs = (specsResult.results ?? []).map(visualSpecPayload);
   const assets = (assetsResult.results ?? []).map(visualAssetPayload);
@@ -304,6 +310,9 @@ async function getVisualBundle(env: Env, workId: string, published = false) {
       isLocked: boolValue(profileRow?.is_locked),
       directorProvider: String(profileRow?.director_provider ?? "deepseek"),
       directorModel: String(profileRow?.director_model ?? ""),
+      directorEndpoint: rawProfile._meta?.director_endpoint == null
+        ? undefined
+        : String(rawProfile._meta.director_endpoint),
       createdAt: String(profileRow?.created_at),
       updatedAt: String(profileRow?.updated_at),
     } : undefined,
@@ -1874,6 +1883,13 @@ function visualDirectorProviderFromResult(response: Record<string, unknown>) {
     : "unknown";
 }
 
+function visualDirectorEndpointFromResult(response: Record<string, unknown>) {
+  const metadata = response._meta;
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? String((metadata as Record<string, unknown>).endpoint ?? "")
+    : "";
+}
+
 async function planWorkVisuals(env: Env, workId: string, activeJobId?: string) {
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
   if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
@@ -1928,6 +1944,13 @@ async function planWorkVisuals(env: Env, workId: string, activeJobId?: string) {
   ).bind(workId));
   const profileVersion = Number(latestProfile?.version ?? 0) + 1;
   const profileId = id("visual_profile");
+  const directorEndpoint = visualDirectorEndpointFromResult(
+    direction as unknown as Record<string, unknown>,
+  );
+  const persistedProfile = {
+    ...direction.work_visual_profile,
+    ...(directorEndpoint ? { _meta: { director_endpoint: directorEndpoint } } : {}),
+  };
   const statements: D1PreparedStatement[] = [
     env.DB.prepare("UPDATE work_visual_profiles SET is_active = 0 WHERE work_id = ?").bind(workId),
     env.DB.prepare("UPDATE visual_specs SET is_active = 0 WHERE work_id = ?").bind(workId),
@@ -1940,7 +1963,7 @@ async function planWorkVisuals(env: Env, workId: string, activeJobId?: string) {
       profileId,
       workId,
       profileVersion,
-      JSON.stringify(direction.work_visual_profile),
+      JSON.stringify(persistedProfile),
       visualDirectorProviderFromResult(direction as unknown as Record<string, unknown>),
       visualDirectorModelFromResult(direction as unknown as Record<string, unknown>),
       lockedProfile ? 1 : 0,
@@ -2089,6 +2112,7 @@ async function storeGeneratedVisual(
         generated.mimeType, generated.bytes.byteLength, checksum, generated.provider,
         JSON.stringify({
           model: generated.model,
+          endpoint: generated.endpoint,
           scene_id: sceneId,
           version,
           width: generatedWidth,

@@ -22,6 +22,8 @@ export interface GeneratedImage {
   mimeType: string;
   provider: string;
   model: string;
+  /** Actual upstream capability that produced the image. */
+  endpoint?: "images/generations" | "responses";
   width?: number;
   height?: number;
   seed?: string;
@@ -56,6 +58,25 @@ function positiveDimensions(width: number, height: number): ImageDimensions | un
   return Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0
     ? { width, height }
     : undefined;
+}
+
+/** Detects the persisted content type when an upstream returns unlabelled raw base64. */
+export function detectImageMimeType(bytes: ArrayBuffer): string | undefined {
+  const data = new Uint8Array(bytes);
+  if (
+    data.length >= 8
+    && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47
+    && data[4] === 0x0d && data[5] === 0x0a && data[6] === 0x1a && data[7] === 0x0a
+  ) return "image/png";
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    data.length >= 12
+    && String.fromCharCode(...data.subarray(0, 4)) === "RIFF"
+    && String.fromCharCode(...data.subarray(8, 12)) === "WEBP"
+  ) return "image/webp";
+  return undefined;
 }
 
 /** Reads dimensions from image bytes so stored metadata never trusts a planned size. */
@@ -174,6 +195,14 @@ function decodeBase64(value: string) {
   return bytes.buffer;
 }
 
+function decodedBase64Image(value: string) {
+  const bytes = decodeBase64(value);
+  return {
+    bytes,
+    mimeType: mimeTypeFromDataUrl(value) ?? detectImageMimeType(bytes) ?? "image/png",
+  };
+}
+
 function apiEndpoint(baseUrl: string, resource: "images/generations" | "responses") {
   const base = baseUrl.trim().replace(/\/+$/, "");
   if (base.endsWith(`/${resource}`)) return base;
@@ -187,7 +216,7 @@ function standardImageSize(width: number, height: number) {
 }
 
 function mimeTypeFromDataUrl(value: string) {
-  return value.match(/^data:([^;,]+)[;,]/u)?.[1] || "image/png";
+  return value.match(/^data:([^;,]+)[;,]/u)?.[1];
 }
 
 function imageFromResponseOutput(payload: Record<string, unknown>) {
@@ -197,7 +226,7 @@ function imageFromResponseOutput(payload: Record<string, unknown>) {
     const record = item as Record<string, unknown>;
     const direct = record.result ?? record.b64_json ?? record.image_base64;
     if (typeof direct === "string" && direct) {
-      return { encoded: direct, mimeType: mimeTypeFromDataUrl(direct), seed: record.seed };
+      return { encoded: direct, seed: record.seed };
     }
     const content = Array.isArray(record.content) ? record.content : [];
     for (const part of content) {
@@ -208,7 +237,7 @@ function imageFromResponseOutput(payload: Record<string, unknown>) {
         ?? contentRecord.image_base64
         ?? contentRecord.data;
       if (typeof encoded === "string" && encoded) {
-        return { encoded, mimeType: mimeTypeFromDataUrl(encoded), seed: record.seed };
+        return { encoded, seed: record.seed };
       }
     }
   }
@@ -311,15 +340,19 @@ class AnalysisServiceImageProvider implements ImageGenerationProvider {
     const seed = data.seed == null ? undefined : String(data.seed);
     const returnedModel = String(payload.model ?? data.model ?? this.model);
     const returnedProvider = String(payload.provider ?? data.provider ?? "openai-compatible");
+    const returnedEndpoint = String(payload.endpoint ?? data.endpoint ?? "").trim();
     const width = Number(payload.width ?? data.width ?? input.width);
     const height = Number(payload.height ?? data.height ?? input.height);
     const encoded = data.b64_json ?? data.image_base64 ?? data.result;
     if (typeof encoded === "string" && encoded) {
+      const image = decodedBase64Image(encoded);
       return {
-        bytes: decodeBase64(encoded),
-        mimeType: mimeTypeFromDataUrl(encoded),
+        ...image,
         provider: returnedProvider,
         model: returnedModel,
+        endpoint: returnedEndpoint === "images/generations" || returnedEndpoint === "responses"
+          ? returnedEndpoint
+          : undefined,
         width: Number.isFinite(width) ? width : input.width,
         height: Number.isFinite(height) ? height : input.height,
         seed,
@@ -332,6 +365,9 @@ class AnalysisServiceImageProvider implements ImageGenerationProvider {
         ...image,
         provider: returnedProvider,
         model: returnedModel,
+        endpoint: returnedEndpoint === "images/generations" || returnedEndpoint === "responses"
+          ? returnedEndpoint
+          : undefined,
         width: Number.isFinite(width) ? width : input.width,
         height: Number.isFinite(height) ? height : input.height,
         seed,
@@ -393,11 +429,12 @@ class OpenAiCompatibleImageProvider implements ImageGenerationProvider {
     if (!data) throw new ImageGenerationError("图片生成服务没有返回图片。", 502);
     const seed = data.seed == null ? undefined : String(data.seed);
     if (typeof data.b64_json === "string" && data.b64_json) {
+      const image = decodedBase64Image(data.b64_json);
       return {
-        bytes: decodeBase64(data.b64_json),
-        mimeType: "image/png",
+        ...image,
         provider: this.provider,
         model: this.model,
+        endpoint: "images/generations",
         width: generatedWidth,
         height: generatedHeight,
         seed,
@@ -410,6 +447,7 @@ class OpenAiCompatibleImageProvider implements ImageGenerationProvider {
         ...image,
         provider: this.provider,
         model: this.model,
+        endpoint: "images/generations",
         width: generatedWidth,
         height: generatedHeight,
         seed,
@@ -438,11 +476,12 @@ class OpenAiCompatibleImageProvider implements ImageGenerationProvider {
     const payload = await response.json() as Record<string, unknown>;
     const image = imageFromResponseOutput(payload);
     if (!image) throw new ImageGenerationError("Responses 图片生成响应中没有图片数据。", 502);
+    const decoded = decodedBase64Image(image.encoded);
     return {
-      bytes: decodeBase64(image.encoded),
-      mimeType: image.mimeType,
+      ...decoded,
       provider: this.provider,
       model: this.model,
+      endpoint: "responses",
       width: Number(standardImageSize(input.width, input.height).split("x")[0]),
       height: Number(standardImageSize(input.width, input.height).split("x")[1]),
       seed: image.seed == null ? undefined : String(image.seed),
