@@ -145,6 +145,18 @@ export interface PauseMark {
   source: "observed" | "inferred" | "human";
 }
 
+export type BreathMarkType = "breath_major" | "breath_minor";
+
+/** Creator-authored breathing boundary; it never changes the source manuscript. */
+export interface BreathMark {
+  id: string;
+  sourceControlRef?: string;
+  afterTokenId: string;
+  afterTokenIndex: number;
+  type: BreathMarkType;
+  source: "human";
+}
+
 export interface ProlongMark {
   id: string;
   sourceControlRef?: string;
@@ -230,6 +242,8 @@ export interface RecitationSentence {
     end: VoiceQuality;
   };
   pauses: PauseMark[];
+  /** Optional for compatibility with control specs saved before compact editing. */
+  breaths?: BreathMark[];
   prolongations: ProlongMark[];
   tokens: TimedToken[];
   teachingCue: string;

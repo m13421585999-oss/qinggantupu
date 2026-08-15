@@ -3,6 +3,101 @@ import test from "node:test";
 
 import { importControlSpec } from "../lib/control-spec-import.ts";
 
+function compactBreathFixture(breaths, field = "breaths") {
+  const sourceText = "我们。";
+  return {
+    sourceText,
+    raw: {
+      tokens: [
+        {
+          index: 0,
+          char: "我",
+          machine_pinyin: "wo3",
+          display_pinyin: "wǒ",
+          start_ms: 0,
+          end_ms: 120,
+        },
+        {
+          index: 1,
+          char: "们",
+          machine_pinyin: "men5",
+          display_pinyin: "men",
+          start_ms: 120,
+          end_ms: 240,
+        },
+        { index: 2, char: "。", start_ms: 240, end_ms: 240 },
+      ],
+      sentences: [{
+        text: sourceText,
+        start_index: 0,
+        end_index: 2,
+        focus: [],
+        pauses: [],
+        prolongations: [],
+        prosody: [],
+        ending_intonation: { type: "level", strength: 1 },
+        [field]: breaths,
+      }],
+    },
+  };
+}
+
+test("control spec import normalizes major and minor creator breath markers", () => {
+  const fixture = compactBreathFixture([
+    {
+      after_token_index: 0,
+      mark: "V",
+      source_control_ref: "compact/breath/major",
+    },
+    { afterTokenIndex: 1, mark: "v" },
+  ], "breath_marks");
+  const imported = importControlSpec(fixture.raw, fixture.sourceText, "work-breaths");
+
+  assert.deepEqual(imported.sentences[0].breaths, [
+    {
+      id: "sentence-1-breath-0",
+      sourceControlRef: "compact/breath/major",
+      afterTokenId: "token-0",
+      afterTokenIndex: 0,
+      type: "breath_major",
+      source: "human",
+    },
+    {
+      id: "sentence-1-breath-1",
+      sourceControlRef: undefined,
+      afterTokenId: "token-1",
+      afterTokenIndex: 1,
+      type: "breath_minor",
+      source: "human",
+    },
+  ]);
+  assert.equal(imported.tokens.map((token) => token.char).join(""), fixture.sourceText);
+});
+
+test("control spec import rejects malformed breath marker boundaries and types", () => {
+  const invalidIndex = compactBreathFixture([
+    { afterTokenIndex: 99, type: "breath_major" },
+  ]);
+  assert.throws(
+    () => importControlSpec(invalidIndex.raw, invalidIndex.sourceText, "work-breath-invalid-index"),
+    /换气引用了无效 token index/,
+  );
+
+  const invalidType = compactBreathFixture([
+    { afterTokenIndex: 0, type: "breath_medium" },
+  ]);
+  assert.throws(
+    () => importControlSpec(invalidType.raw, invalidType.sourceText, "work-breath-invalid-type"),
+    /不支持的换气类型/,
+  );
+
+  const invalidContainer = compactBreathFixture("V");
+  assert.throws(
+    () => importControlSpec(invalidContainer.raw, invalidContainer.sourceText, "work-breath-invalid-array"),
+    /换气标识必须是数组/,
+  );
+});
+
 test("control spec import preserves hidden performance profiles without changing source text", () => {
   const sourceText = "我。";
   const imported = importControlSpec({

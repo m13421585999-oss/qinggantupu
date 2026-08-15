@@ -33,6 +33,8 @@ import {
 import { ViewerScaleWrapper } from "@/components/ViewerScaleWrapper";
 import { WorkVisualPanel } from "@/components/WorkVisualPanel";
 import { A4PrintPreview } from "@/components/A4PrintPreview";
+import { CompactRecitationEditor } from "@/components/CompactRecitationEditor";
+import { buildCompactControlSpec } from "@/lib/compact-control-spec";
 import {
   ENDING_LABELS,
   PROSODY_LABELS,
@@ -56,6 +58,7 @@ import {
 } from "@/lib/visual-assets";
 
 type ProductMode = "studio" | "viewer";
+type StudioEdition = "full" | "compact";
 type WorkflowStep = 1 | 2 | 3;
 type AudioSource = "reference" | "standard";
 type AnalysisJobStatus = "idle" | "queued" | "processing" | "succeeded" | "failed";
@@ -2630,6 +2633,8 @@ function ViewerView({
 
 export function RecitationStudio() {
   const [mode, setMode] = useState<ProductMode>("studio");
+  const [studioEdition, setStudioEdition] = useState<StudioEdition>("full");
+  const [compactPreparing, setCompactPreparing] = useState(false);
   const [work, setWork] = useState<RecitationWork>(() => createEmptyWork());
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [isWorkDirty, setIsWorkDirty] = useState(true);
@@ -2753,6 +2758,7 @@ export function RecitationStudio() {
   /* eslint-disable react-hooks/set-state-in-effect -- URL loading is the external route synchronization boundary. */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    setStudioEdition(params.get("edition") === "compact" ? "compact" : "full");
     const workId = params.get("work");
     if (!workId) return;
     void loadStoredWork(workId, params.get("view") === "1")
@@ -3132,6 +3138,98 @@ export function RecitationStudio() {
       pendingSaveRef.current = null;
       showToast(error instanceof Error ? error.message : String(error));
     }
+  };
+
+  const updateEditionUrl = (edition: StudioEdition) => {
+    const url = new URL(window.location.href);
+    if (edition === "compact") url.searchParams.set("edition", "compact");
+    else url.searchParams.delete("edition");
+    url.searchParams.delete("view");
+    window.history.replaceState({}, "", url);
+  };
+
+  const switchStudioEdition = async (edition: StudioEdition) => {
+    setMode("studio");
+    if (edition === "full") {
+      setStudioEdition("full");
+      updateEditionUrl("full");
+      return;
+    }
+    if (compactPreparing) return;
+    if (work.controlSpec) {
+      setStudioEdition("compact");
+      updateEditionUrl("compact");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (!work.title.trim() || !work.sourceText.trim()) {
+      showToast("请先在完整版填写作品名称和完整正文");
+      setStep(1);
+      return;
+    }
+
+    setCompactPreparing(true);
+    try {
+      let saved = work;
+      if (work.id.startsWith("draft-")) {
+        setSaveState("saving");
+        saved = await persistWorkRecord();
+      } else if (isWorkDirty || savedSourceTextRef.current !== work.sourceText) {
+        const result = await performSaveCurrentWork();
+        if (!result) return;
+        saved = result;
+      }
+      const controlSpec = buildCompactControlSpec(saved.id, saved.sourceText);
+      const result = await apiJson<{ work: RecitationWork }>(
+        await fetch(`/api/works/${encodeURIComponent(saved.id)}/control-spec`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            control_spec: controlSpec,
+            source: "human",
+            expected_updated_at: savedUpdatedAtRef.current ?? saved.updatedAt,
+          }),
+        }),
+      );
+      setWork(result.work);
+      setIsWorkDirty(false);
+      setControlSpecDirty(false);
+      setSaveState("saved");
+      setLastSavedAt(result.work.updatedAt);
+      savedSourceTextRef.current = result.work.sourceText;
+      savedUpdatedAtRef.current = result.work.updatedAt;
+      savedHasDerivedAssetsRef.current = Boolean(result.work.controlSpec);
+      setStudioEdition("compact");
+      updateEditionUrl("compact");
+      showToast("紧凑版人工朗诵谱已建立");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      setSaveState("failed");
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCompactPreparing(false);
+    }
+  };
+
+  const updateCompactSentence = (nextSentence: RecitationSentence) => {
+    setWork((current) => {
+      if (!current.controlSpec) return current;
+      return {
+        ...current,
+        status: "review",
+        audioSyncStatus: current.standardAiAudio ? "modified" : "pending",
+        controlSpec: {
+          ...current.controlSpec,
+          source: "hybrid",
+          sentences: current.controlSpec.sentences.map((sentence) => (
+            sentence.id === nextSentence.id ? nextSentence : sentence
+          )),
+        },
+      };
+    });
+    setIsWorkDirty(true);
+    setControlSpecDirty(true);
+    setSaveState("dirty");
   };
 
   const handleAiAnalyze = async () => {
@@ -3624,10 +3722,12 @@ export function RecitationStudio() {
     setStep(1);
     setAudioSource("reference");
     setMode("studio");
+    setStudioEdition("full");
     setLibraryOpen(false);
     const url = new URL(window.location.href);
     url.searchParams.delete("work");
     url.searchParams.delete("view");
+    url.searchParams.delete("edition");
     window.history.replaceState({}, "", url);
   };
 
@@ -3722,11 +3822,13 @@ export function RecitationStudio() {
 
   const sentences = work.controlSpec?.sentences ?? [];
   const showPlayer = Boolean(
-    standardPlayback?.timeline && work.controlSpec && (mode === "viewer" || step >= 2),
+    standardPlayback?.timeline
+      && work.controlSpec
+      && (mode === "viewer" || (studioEdition === "full" && step >= 2)),
   );
 
   return (
-    <main className={`product-app mode-${mode} ${mode === "studio" && step === 2 ? "mode-inline-editor" : ""}`}>
+    <main className={`product-app mode-${mode} ${mode === "studio" && studioEdition === "compact" ? "mode-compact" : ""} ${mode === "studio" && studioEdition === "full" && step === 2 ? "mode-inline-editor" : ""}`}>
       {/* The synchronized graph is the exact on-screen transcript for this audio. */}
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <audio ref={audioRef} src={activeTrack?.url} preload="metadata" />
@@ -3748,7 +3850,7 @@ export function RecitationStudio() {
           </button>
         )}
 
-        <nav className="mode-switch" aria-label="产品端切换">
+        <nav className="mode-switch" aria-label="产品端与创作版本切换">
           <button
             type="button"
             className={mode === "studio" ? "active" : ""}
@@ -3763,6 +3865,22 @@ export function RecitationStudio() {
             disabled={!standardPlayback?.timeline}
             onClick={() => { setAudioSource("standard"); setMode("viewer"); }}
           ><span aria-hidden="true">◉</span> 用户观看端</button>
+          {mode === "studio" ? (
+            <>
+              <span className="edition-switch-divider" aria-hidden="true" />
+              <button
+                type="button"
+                className={`edition-option ${studioEdition === "full" ? "active" : ""}`}
+                onClick={() => void switchStudioEdition("full")}
+              >完整版</button>
+              <button
+                type="button"
+                className={`edition-option ${studioEdition === "compact" ? "active" : ""}`}
+                onClick={() => void switchStudioEdition("compact")}
+                disabled={compactPreparing}
+              >{compactPreparing ? "准备中…" : "紧凑版"}</button>
+            </>
+          ) : null}
         </nav>
 
         <div className="header-status">
@@ -3779,7 +3897,7 @@ export function RecitationStudio() {
         ) : null}
       </header>
 
-      {mode === "studio" ? (
+      {mode === "studio" && studioEdition === "full" ? (
         <StudioView
           work={work}
           step={step}
@@ -3810,6 +3928,15 @@ export function RecitationStudio() {
           lastSavedAt={lastSavedAt}
           onOpenLibrary={() => setLibraryOpen(true)}
           onSaveWork={() => void performSaveCurrentWork()}
+        />
+      ) : mode === "studio" ? (
+        <CompactRecitationEditor
+          work={work}
+          saveState={saveState}
+          onSentenceChange={updateCompactSentence}
+          onSave={() => void performSaveCurrentWork()}
+          onOpenLibrary={() => setLibraryOpen(true)}
+          onSwitchFull={() => void switchStudioEdition("full")}
         />
       ) : (
         <ViewerView

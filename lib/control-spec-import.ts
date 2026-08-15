@@ -1,4 +1,5 @@
 import type {
+  BreathMark,
   ControlSpec,
   EndingTone,
   FocusRealization,
@@ -377,6 +378,52 @@ function parsePauses(
   });
 }
 
+function parseBreathType(value: unknown): BreathMark["type"] | undefined {
+  const raw = String(value ?? "").trim();
+  if (raw === "V") return "breath_major";
+  if (raw === "v") return "breath_minor";
+  const normalized = normalizedKey(raw);
+  if (["breath_major", "major", "大换气"].includes(normalized)) return "breath_major";
+  if (["breath_minor", "minor", "小换气"].includes(normalized)) return "breath_minor";
+  return undefined;
+}
+
+function parseBreaths(
+  raw: unknown,
+  sentenceId: string,
+  tokensByIndex: Map<number, TimedToken>,
+  min: number,
+  max: number,
+): BreathMark[] | undefined {
+  const entries = Array.isArray(raw) ? raw : [];
+  const byBoundary = new Map<number, BreathMark>();
+  for (const value of entries) {
+    const entry = object(value);
+    const afterTokenIndex = integer(
+      entry.after_index ?? entry.after_token_index ?? entry.afterTokenIndex ?? entry.token_index,
+    );
+    const type = parseBreathType(entry.type ?? entry.mark);
+    if (
+      afterTokenIndex === undefined || afterTokenIndex < min || afterTokenIndex > max
+      || !type
+    ) continue;
+    const token = tokensByIndex.get(afterTokenIndex);
+    if (!token) continue;
+    byBoundary.set(afterTokenIndex, {
+      id: `${sentenceId}-breath-${afterTokenIndex}`,
+      sourceControlRef: string(entry.source_control_ref ?? entry.sourceControlRef),
+      afterTokenId: token.id,
+      afterTokenIndex,
+      type,
+      source: "human",
+    });
+  }
+  const breaths = [...byBoundary.values()].sort(
+    (left, right) => left.afterTokenIndex - right.afterTokenIndex,
+  );
+  return breaths.length ? breaths : undefined;
+}
+
 function parseProlongations(
   raw: unknown,
   sentenceId: string,
@@ -623,6 +670,22 @@ function validateAnnotationIndexes(
     ensure(integer(item.after_index ?? item.after_token_index ?? item.afterTokenIndex ?? item.token_index), "停顿");
   });
 
+  const breathsValue = entry.breaths ?? entry.breath_marks ?? entry.breathMarks;
+  if (breathsValue !== undefined && !Array.isArray(breathsValue)) {
+    throw new Error(`第 ${sentenceNumber} 句的换气标识必须是数组。`);
+  }
+  const breaths = Array.isArray(breathsValue) ? breathsValue : [];
+  breaths.forEach((value) => {
+    const item = object(value);
+    ensure(
+      integer(item.after_index ?? item.after_token_index ?? item.afterTokenIndex ?? item.token_index),
+      "换气",
+    );
+    if (!parseBreathType(item.type ?? item.mark)) {
+      throw new Error(`第 ${sentenceNumber} 句包含不支持的换气类型。`);
+    }
+  });
+
   const prolongations = Array.isArray(entry.prolongations)
     ? entry.prolongations
     : Array.isArray(entry.prolongs) ? entry.prolongs : [];
@@ -779,6 +842,13 @@ export function importControlSpec(
       focus: parseFocus(entry.focus, id, tokensByIndex, min, max),
       voiceQuality: voiceQualityRange(sentencePerformanceProfile?.voiceQuality),
       pauses: parsePauses(entry.pauses, id, tokensByIndex, min, max),
+      breaths: parseBreaths(
+        entry.breaths ?? entry.breath_marks ?? entry.breathMarks,
+        id,
+        tokensByIndex,
+        min,
+        max,
+      ),
       prolongations: parseProlongations(
         entry.prolongations ?? entry.prolongs,
         id,

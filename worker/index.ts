@@ -2510,6 +2510,65 @@ function validateControlSpec(spec: Record<string, unknown>, sourceText: string) 
   if (!Array.isArray(spec.sentences) || !spec.sentences.length) {
     throw new Error("控制谱缺少 sentences。");
   }
+  (spec.sentences as unknown[]).forEach((sentenceValue, sentencePosition) => {
+    const sentence = sentenceValue && typeof sentenceValue === "object" && !Array.isArray(sentenceValue)
+      ? sentenceValue as Record<string, unknown>
+      : {};
+    const sentenceTokens = Array.isArray(sentence.tokens)
+      ? sentence.tokens as Array<Record<string, unknown>>
+      : [];
+    const sentenceTokensByIndex = new Map(sentenceTokens.flatMap((token) => {
+      const tokenIndex = Number(token.index);
+      return Number.isInteger(tokenIndex) ? [[tokenIndex, token] as const] : [];
+    }));
+    const breaths = sentence.breaths;
+    if (breaths !== undefined && !Array.isArray(breaths)) {
+      throw new Error(`第 ${sentencePosition + 1} 句的换气标识必须是数组。`);
+    }
+    const seenBoundaries = new Set<number>();
+    (Array.isArray(breaths) ? breaths : []).forEach((breathValue) => {
+      const breath = breathValue && typeof breathValue === "object" && !Array.isArray(breathValue)
+        ? breathValue as Record<string, unknown>
+        : {};
+      const afterTokenIndex = Number(breath.afterTokenIndex);
+      const token = sentenceTokensByIndex.get(afterTokenIndex);
+      if (!Number.isInteger(afterTokenIndex) || !token) {
+        throw new Error(`第 ${sentencePosition + 1} 句的换气标识引用了无效 token index。`);
+      }
+      if (seenBoundaries.has(afterTokenIndex)) {
+        throw new Error(`第 ${sentencePosition + 1} 句的同一位置不能保存多个换气标识。`);
+      }
+      seenBoundaries.add(afterTokenIndex);
+      if (breath.type !== "breath_major" && breath.type !== "breath_minor") {
+        throw new Error(`第 ${sentencePosition + 1} 句包含不支持的换气类型。`);
+      }
+      if (String(breath.afterTokenId ?? "") !== String(token.id ?? "")) {
+        throw new Error(`第 ${sentencePosition + 1} 句的换气标识与 token id 不一致。`);
+      }
+    });
+    const overrides = sentence.prosodyPointOverrides;
+    if (overrides !== undefined && !Array.isArray(overrides)) {
+      throw new Error(`第 ${sentencePosition + 1} 句的语势节点调整必须是数组。`);
+    }
+    const overriddenTokens = new Set<number>();
+    (Array.isArray(overrides) ? overrides : []).forEach((overrideValue) => {
+      const override = overrideValue && typeof overrideValue === "object" && !Array.isArray(overrideValue)
+        ? overrideValue as Record<string, unknown>
+        : {};
+      const tokenIndex = Number(override.tokenIndex);
+      const visualLevel = Number(override.visualLevel);
+      if (!Number.isInteger(tokenIndex) || !sentenceTokensByIndex.has(tokenIndex)) {
+        throw new Error(`第 ${sentencePosition + 1} 句的语势节点引用了无效 token index。`);
+      }
+      if (overriddenTokens.has(tokenIndex)) {
+        throw new Error(`第 ${sentencePosition + 1} 句的同一文字不能保存多个语势高度。`);
+      }
+      overriddenTokens.add(tokenIndex);
+      if (!Number.isInteger(visualLevel) || visualLevel < 0 || visualLevel > 8) {
+        throw new Error(`第 ${sentencePosition + 1} 句的语势高度必须是 0 到 8 的整数。`);
+      }
+    });
+  });
 }
 
 async function saveControlSpec(request: Request, env: Env, workId: string) {
