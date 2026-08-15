@@ -20,7 +20,7 @@ import {
 import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
 import type { RecitationSentence } from "@/lib/recitation-schema";
 
-const PRINT_CURVE_HEIGHT = 44;
+const PRINT_CURVE_HEIGHT = 36;
 
 function visibleSourceCharacter(value: string) {
   if (/\r|\n/u.test(value)) return "";
@@ -176,7 +176,7 @@ function PrintProsodyCurve({
   const rowPoints = points.filter((point) => Number.isFinite(metrics.tokenCenters[point.tokenIndex]));
   if (!rowPoints.length) return <div className="print-curve-placeholder" aria-hidden="true" />;
 
-  const verticalPadding = 5;
+  const verticalPadding = 4;
   const step = (PRINT_CURVE_HEIGHT - verticalPadding * 2) / (PROSODY_VISUAL_LEVEL_COUNT - 1);
   const anchors = rowPoints.map((point) => ({
     ...point,
@@ -204,8 +204,8 @@ function PrintProsodyCurve({
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#a93627" stopOpacity="0.11" />
-          <stop offset="100%" stopColor="#a93627" stopOpacity="0.01" />
+          <stop offset="0%" stopColor="#c8452f" stopOpacity="0.1" />
+          <stop offset="100%" stopColor="#c8452f" stopOpacity="0.01" />
         </linearGradient>
       </defs>
       <path d={fillPath} fill={`url(#${gradientId})`} />
@@ -214,14 +214,14 @@ function PrintProsodyCurve({
         x2={drawingPoints.at(-1)!.x}
         y1={baseline}
         y2={baseline}
-        stroke="#d9cdc0"
+        stroke="#ded2c5"
         strokeWidth="0.8"
         strokeDasharray="2 4"
       />
       <path
         d={path}
         fill="none"
-        stroke="#a93627"
+        stroke="#c8452f"
         strokeWidth="1.55"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -233,8 +233,8 @@ function PrintProsodyCurve({
           cx={point.x}
           cy={point.y}
           r="1.8"
-          fill="#a93627"
-          stroke="#fff"
+          fill="#c8452f"
+          stroke="#fbf7ef"
           strokeWidth="0.7"
           vectorEffect="non-scaling-stroke"
         />

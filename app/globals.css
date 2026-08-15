@@ -204,28 +204,40 @@ p {
   overflow: hidden;
   padding: var(--a4-margin-top, 15mm) var(--a4-margin-right, 15mm)
     var(--a4-margin-bottom, 15mm) var(--a4-margin-left, 15mm);
-  background: #fff;
-  color: #2d2924;
+  background:
+    radial-gradient(circle at 9% 16%, rgba(191, 144, 93, 0.045), transparent 24%),
+    radial-gradient(circle at 88% 62%, rgba(121, 105, 81, 0.035), transparent 28%),
+    repeating-linear-gradient(0deg, rgba(91, 72, 52, 0.012) 0, rgba(91, 72, 52, 0.012) 1px, transparent 1px, transparent 5px),
+    #fbf7ef;
+  color: #292722;
   font-family: "Songti SC", STSong, SimSun, serif;
   box-shadow: 0 15px 38px rgba(42, 34, 27, 0.22);
 }
 
 .a4-first-page-header {
-  display: grid;
-  min-height: 29mm;
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 34mm;
   flex: none;
+  overflow: hidden;
+  border-bottom: 0.3mm solid rgba(111, 84, 56, 0.18);
+}
+
+.a4-first-page-header.uses-fallback-hero {
+  display: grid;
   grid-template-columns: minmax(0, 1fr) 49mm;
   align-items: center;
   gap: 8mm;
-  padding-bottom: 5mm;
-  border-bottom: 0.3mm solid #cbbbac;
+  padding: 0 4mm;
+  background: linear-gradient(90deg, rgba(251, 247, 239, 0.98), rgba(251, 247, 239, 0.88) 58%, rgba(251, 247, 239, 0.22));
 }
 
 .a4-title-lockup p {
   display: flex;
   align-items: center;
   gap: 2.5mm;
-  color: #9b3428;
+  color: #a93f2c;
   font-family: system-ui, sans-serif;
   font-size: 7.4pt;
   font-weight: 760;
@@ -235,7 +247,7 @@ p {
 .a4-title-lockup p span {
   display: inline-block;
   width: 7mm;
-  border-top: 0.45mm solid #a93627;
+  border-top: 0.45mm solid #c8452f;
 }
 
 .a4-title-lockup h3 {
@@ -249,7 +261,7 @@ p {
 }
 
 .a4-title-lockup strong {
-  color: #6e6257;
+  color: #6c5747;
   font-family: system-ui, sans-serif;
   font-size: 8.4pt;
   font-weight: 560;
@@ -258,19 +270,23 @@ p {
 
 .a4-hero-visual {
   position: relative;
-  width: 49mm;
-  height: 23mm;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
-  border-left: 0.5mm solid #a93627;
   background: #eee8df;
 }
 
+.a4-first-page-header.uses-fallback-hero .a4-hero-visual {
+  width: 49mm;
+  height: 23mm;
+}
+
 .a4-hero-visual img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: 72% center;
-  filter: saturate(0.82) contrast(0.96);
+  object-position: 50% 45%;
 }
 
 .a4-hero-visual > span,
@@ -291,8 +307,8 @@ p {
   align-items: center;
   gap: 5mm;
   overflow: hidden;
-  border-bottom: 0.2mm solid #e1d8cf;
-  color: #746b62;
+  border-bottom: 0.2mm solid rgba(111, 84, 56, 0.16);
+  color: #786b5f;
   font-family: system-ui, sans-serif;
   font-size: 6.4pt;
   white-space: nowrap;
@@ -305,7 +321,7 @@ p {
 }
 
 .a4-print-legend b {
-  color: #a93627;
+  color: #c8452f;
   font-weight: 750;
 }
 
@@ -313,7 +329,7 @@ p {
   display: inline-block;
   width: 7mm;
   height: 2.4mm;
-  border-top: 0.5mm solid #a93627;
+  border-top: 0.5mm solid #c8452f;
   border-radius: 50%;
   transform: rotate(-5deg);
 }
@@ -324,13 +340,13 @@ p {
   flex: none;
   align-items: flex-start;
   justify-content: space-between;
-  border-bottom: 0.3mm solid #cbbbac;
-  color: #5c5148;
+  border-bottom: 0.3mm solid rgba(111, 84, 56, 0.2);
+  color: #5f5146;
   font-size: 8.5pt;
 }
 
 .a4-running-header b {
-  color: #9b3428;
+  color: #a93f2c;
   font-family: system-ui, sans-serif;
   font-size: 6.8pt;
   letter-spacing: 0.14em;
@@ -350,19 +366,19 @@ p {
   display: grid;
   box-sizing: border-box;
   flex: 0 0 auto;
-  grid-template-columns: 27mm minmax(0, 1fr);
+  grid-template-columns: 29mm minmax(0, 1fr);
   gap: 4mm;
   align-items: start;
   padding: 2.4mm 0 2.7mm;
-  border-bottom: 0.2mm solid #e6ddd4;
+  border-bottom: 0.2mm solid rgba(111, 84, 56, 0.15);
   break-inside: avoid;
   page-break-inside: avoid;
 }
 
 .a4-scene-visual {
   position: relative;
-  width: 27mm;
-  height: 20.25mm;
+  width: 29mm;
+  height: 21.75mm;
   overflow: hidden;
   border: 0.2mm solid rgba(94, 76, 59, 0.18);
   background: #eee8df;
@@ -377,10 +393,10 @@ p {
 }
 
 .a4-scene-visual img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: saturate(0.86) contrast(0.96);
 }
 
 .a4-scene-visual b,
@@ -465,16 +481,16 @@ p {
 .print-spoken-token {
   display: grid;
   flex: 0 0 auto;
-  grid-template-rows: 4.9mm 8mm;
+  grid-template-rows: 5.1mm 8.3mm;
   justify-items: center;
 }
 
 .print-token-pinyin {
   align-self: end;
-  color: #5e4c40;
+  color: #594538;
   font-family: "Kaiti SC", STKaiti, "Songti SC", serif;
-  font-size: 8.6pt;
-  font-weight: 650;
+  font-size: 9pt;
+  font-weight: 600;
   line-height: 1;
   white-space: nowrap;
 }
@@ -482,29 +498,29 @@ p {
 .print-token-manuscript {
   display: inline-flex;
   align-items: flex-end;
-  color: #2c2824;
+  color: #292722;
   font-family: "Songti SC", STSong, SimSun, serif;
-  font-size: 17pt;
-  font-weight: 650;
+  font-size: 18pt;
+  font-weight: 600;
   line-height: 1;
 }
 
 .print-token-char {
   display: inline-flex;
   min-width: 1em;
-  height: 8mm;
+  height: 8.3mm;
   align-items: center;
   justify-content: center;
 }
 
 .print-token-char.is-focus {
-  color: #b0392a;
+  color: #c8452f;
   font-weight: 800;
 }
 
 .print-source-punctuation {
   display: inline-flex;
-  height: 8mm;
+  height: 8.3mm;
   align-items: center;
   align-self: flex-end;
   white-space: pre;
@@ -514,10 +530,10 @@ p {
 .print-ending-tone,
 .print-pause {
   display: inline-flex;
-  height: 8mm;
+  height: 8.3mm;
   align-items: center;
   align-self: flex-end;
-  color: #b0392a;
+  color: #c8452f;
   font-family: Arial, sans-serif;
   font-size: 0.76em;
   font-weight: 700;
@@ -548,17 +564,17 @@ p {
 .print-curve-placeholder {
   display: block;
   width: 100%;
-  height: 11.6mm;
+  height: 9.5mm;
   margin-top: 0.3mm;
   overflow: visible;
-  border-radius: 1.5mm;
-  background: linear-gradient(180deg, rgba(245, 232, 222, 0.42), rgba(249, 246, 241, 0.18));
+  background: transparent;
 }
 
 .print-graph-fallback p {
   font-family: "Songti SC", STSong, SimSun, serif;
-  font-size: 17pt;
-  font-weight: 650;
+  color: #292722;
+  font-size: 18pt;
+  font-weight: 600;
   line-height: 1.55;
 }
 
@@ -566,7 +582,7 @@ p {
   display: block;
   height: 8mm;
   margin-top: 1mm;
-  border-top: 0.45mm solid #a93627;
+  border-top: 0.45mm solid #c8452f;
   border-radius: 50%;
 }
 

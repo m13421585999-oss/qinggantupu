@@ -107,15 +107,11 @@ function FirstPageHeader({ work }: { work: RecitationWork }) {
   const showHero = Boolean(heroUrl && heroUrl !== failedUrl);
   return (
     <>
-      <header className="a4-first-page-header">
-        <div className="a4-title-lockup">
-          <p><span aria-hidden="true" />朗诵情感图谱</p>
-          <h3>{work.title}</h3>
-          {work.author ? <strong>作者 · {work.author}</strong> : <strong>作品朗诵教学谱</strong>}
-        </div>
-        <div className={`a4-hero-visual ${showHero ? "has-image" : "uses-fallback"}`}>
-          {showHero && heroUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
+      <header className={`a4-first-page-header ${showHero ? "has-generated-hero" : "uses-fallback-hero"}`}>
+        {showHero && heroUrl ? (
+          <div className="a4-hero-visual has-image">
+            {/* Persisted Hero assets are same-origin images and are safe to rasterize for PDF. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={heroUrl}
               alt={`${work.title}的作品主视觉`}
@@ -123,16 +119,32 @@ function FirstPageHeader({ work }: { work: RecitationWork }) {
               decoding="async"
               onError={() => setFailedUrl(heroUrl)}
             />
-          ) : <span aria-hidden="true" />}
-        </div>
+            <div className="visually-hidden">
+              <p>朗诵情感图谱</p>
+              <h3>{work.title}</h3>
+              {work.author ? <strong>作者 · {work.author}</strong> : null}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="a4-title-lockup">
+              <p><span aria-hidden="true" />朗诵情感图谱</p>
+              <h3>{work.title}</h3>
+              {work.author ? <strong>作者 · {work.author}</strong> : <strong>作品朗诵教学谱</strong>}
+            </div>
+            <div className="a4-hero-visual uses-fallback">
+              <span aria-hidden="true" />
+            </div>
+          </>
+        )}
       </header>
       <div className="a4-print-legend" aria-label="图谱符号说明">
-        <span><b>红字</b> 表达焦点</span>
+        <span><b>春</b> 红字：表达焦点</span>
         <span><b>/</b> 短停</span>
         <span><b>{"///"}</b> 长停</span>
-        <span><b>—</b> 拖音</span>
+        <span><b>——</b> 拖音</span>
         <span><b>↗ ↘</b> 句尾语调</span>
-        <span><i aria-hidden="true" />宏观语势</span>
+        <span><i aria-hidden="true" />曲线：宏观语势</span>
       </div>
     </>
   );
@@ -325,7 +337,7 @@ export function A4PrintPreview({
       for (let index = 0; index < pageElements.length; index += 1) {
         const page = pageElements[index];
         const canvas = await toCanvas(page, {
-          backgroundColor: "#ffffff",
+          backgroundColor: "#fbf7ef",
           cacheBust: true,
           pixelRatio: settings.renderDpr,
           width: page.scrollWidth,
