@@ -40,6 +40,7 @@ export interface PaginationOptions {
   continuationPageCapacityPx: number;
   blockGapPx: number;
   protectSingleBlockPages?: boolean;
+  maxBlocksPerPage?: number;
 }
 
 function pageCapacity(index: number, options: PaginationOptions) {
@@ -74,7 +75,9 @@ export function paginateMeasuredPrintBlocks(
   for (const block of usableBlocks) {
     const required = block.heightPx + (current.blocks.length ? options.blockGapPx : 0);
     const used = pageHeight(current.blocks, options.blockGapPx);
-    if (current.blocks.length && used + required > current.capacityPx + 0.5) {
+    const reachedBlockLimit = Number.isFinite(options.maxBlocksPerPage)
+      && current.blocks.length >= Math.max(1, Math.floor(options.maxBlocksPerPage!));
+    if (current.blocks.length && (reachedBlockLimit || used + required > current.capacityPx + 0.5)) {
       pages.push(current);
       current = {
         blocks: [block],

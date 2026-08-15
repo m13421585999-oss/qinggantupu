@@ -57,6 +57,7 @@ test("compact tokens use Unicode characters and neutral audio-free timings", () 
   assert.deepEqual(tokens.map((token) => token.index), [0, 1, 2, 3]);
   assert.ok(tokens.every((token) => token.startMs === 0 && token.endMs === 0));
   assert.ok(tokens.every((token) => token.confidence === 0));
+  assert.deepEqual(tokens.map((token) => token.displayPinyin), ["nǐ", undefined, "hǎo", undefined]);
 });
 
 test("manual compact control spec satisfies the backend token validation contract", () => {

@@ -5628,9 +5628,9 @@ button.annotation-char:hover {
 }
 
 .compact-editor-toolbar {
-  position: sticky;
+  position: relative;
   z-index: 44;
-  top: calc(var(--header-height) + 10px);
+  top: auto;
   display: grid;
   width: min(1180px, calc(100vw - 48px));
   min-width: 820px;
@@ -5757,7 +5757,7 @@ button.annotation-char:hover {
 
 .compact-page-header {
   display: flex;
-  min-height: 8mm;
+  min-height: 9mm;
   flex: none;
   align-items: center;
   gap: 2.2mm;
@@ -5772,7 +5772,7 @@ button.annotation-char:hover {
   max-width: 104mm;
   overflow: hidden;
   color: #2f2a25;
-  font-size: 10.5pt;
+  font-size: 12pt;
   font-weight: 700;
   text-overflow: ellipsis;
 }
@@ -5780,7 +5780,7 @@ button.annotation-char:hover {
 .compact-page-header > span {
   color: #9a3829;
   font-family: system-ui, sans-serif;
-  font-size: 7.2pt;
+  font-size: 8pt;
   font-weight: 750;
   letter-spacing: 0.06em;
 }
@@ -5789,7 +5789,7 @@ button.annotation-char:hover {
   margin-left: auto;
   color: #796d62;
   font-family: system-ui, sans-serif;
-  font-size: 6.6pt;
+  font-size: 7.2pt;
 }
 
 .compact-page-body {
@@ -5872,12 +5872,29 @@ button.annotation-char:hover {
 
 .compact-token-manuscript {
   display: inline-flex;
-  min-height: 7.8mm;
-  align-items: center;
+  min-height: 11.4mm;
+  align-items: flex-end;
   color: #27231f;
   font-size: 17pt;
   font-weight: 620;
   line-height: 1;
+}
+
+.compact-spoken-token {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-rows: 3.6mm 7.8mm;
+  justify-items: center;
+}
+
+.compact-token-pinyin {
+  align-self: end;
+  color: #5f4d40;
+  font-family: "Kaiti SC", STKaiti, "Songti SC", serif;
+  font-size: 8.5pt;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .compact-token-char {
@@ -5915,7 +5932,7 @@ button.compact-token-char.is-selected {
   display: inline-flex;
   min-height: 7.8mm;
   align-items: center;
-  align-self: center;
+  align-self: flex-end;
 }
 
 .compact-source-punctuation {
@@ -6050,13 +6067,20 @@ button.compact-token-char.is-selected {
   color: #d87934;
 }
 
-.compact-page-legend i {
+.compact-page-legend .compact-legend-focus {
+  color: #c33f2d;
+  font-family: "Songti SC", STSong, serif;
+  font-size: 7.4pt;
+  font-weight: 800;
+}
+
+.compact-page-legend .compact-legend-curve {
   display: inline-block;
-  width: 2.1mm;
-  height: 2.1mm;
-  border: 0.4mm solid #b9402e;
-  border-radius: 50%;
-  background: #fffdf8;
+  width: 7mm;
+  height: 2.4mm;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(168deg, transparent 44%, #b9402e 45%, #b9402e 55%, transparent 56%);
 }
 
 .compact-marker-popover {

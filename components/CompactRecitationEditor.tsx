@@ -255,24 +255,29 @@ function CompactTokenUnit({
             {visibleSourceCharacter(token.char)}
           </span>
         ))}
-        {editable ? (
-          <button
-            type="button"
-            className={`compact-token-char ${focused ? "is-focus" : ""} ${selected ? "is-selected" : ""}`}
-            ref={characterRef as (element: HTMLButtonElement | null) => void}
-            onClick={(event) => select(event.currentTarget)}
-            aria-label={`编辑“${unit.token.char}”及其后方标识`}
-          >
-            {unit.token.char}
-          </button>
-        ) : (
-          <span
-            className={`compact-token-char ${focused ? "is-focus" : ""}`}
-            ref={characterRef}
-          >
-            {unit.token.char}
+        <span className="compact-spoken-token">
+          <span className="compact-token-pinyin" aria-hidden="true">
+            {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
           </span>
-        )}
+          {editable ? (
+            <button
+              type="button"
+              className={`compact-token-char ${focused ? "is-focus" : ""} ${selected ? "is-selected" : ""}`}
+              ref={characterRef as (element: HTMLButtonElement | null) => void}
+              onClick={(event) => select(event.currentTarget)}
+              aria-label={`编辑“${unit.token.char}”及其后方标识`}
+            >
+              {unit.token.char}
+            </button>
+          ) : (
+            <span
+              className={`compact-token-char ${focused ? "is-focus" : ""}`}
+              ref={characterRef}
+            >
+              {unit.token.char}
+            </span>
+          )}
+        </span>
         {prolongation ? <span className="compact-prolongation" aria-label="拖音">—</span> : null}
         {tone ? (
           <span className="compact-ending-tone" aria-label={tone === "rising" ? "上升调" : "下降调"}>
@@ -726,7 +731,8 @@ function CompactPageLegend() {
       <span><b className="compact-legend-minor">v</b> 小换气</span>
       <span><b>/</b> 短停</span>
       <span><b>{"//"}</b> 长停</span>
-      <span><i aria-hidden="true" /> 圆圈：语势节点</span>
+      <span><b className="compact-legend-focus">红</b> 重音</span>
+      <span><i className="compact-legend-curve" aria-hidden="true" /> 语势曲线</span>
     </footer>
   );
 }
@@ -846,6 +852,7 @@ export function CompactRecitationEditor({
       continuationPageCapacityPx: contentCapacity(continuationBody),
       blockGapPx,
       protectSingleBlockPages: true,
+      maxBlocksPerPage: 10,
     });
     const nextSignature = nextPages.map((page) => (
       `${page.blockIds.join(",")}:${Math.round(page.usedHeightPx)}:${page.hasOversizedBlock ? 1 : 0}`
@@ -856,8 +863,8 @@ export function CompactRecitationEditor({
     }
     const oversized = nextPages.filter((page) => page.hasOversizedBlock).length;
     setLayoutMessage(oversized
-      ? `已排成 ${nextPages.length} 页；${oversized} 个超长句单独占页`
-      : `已排成 ${nextPages.length} 页；整句不会跨页`);
+      ? `已排成 ${nextPages.length} 页；每页最多 10 条，${oversized} 个超长句单独占页`
+      : `已排成 ${nextPages.length} 页；每页最多 10 条，整句不会跨页`);
   }, [blocks]);
 
   useLayoutEffect(() => {

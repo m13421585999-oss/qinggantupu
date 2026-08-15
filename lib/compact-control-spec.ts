@@ -3,6 +3,7 @@ import type {
   RecitationSentence,
   TimedToken,
 } from "./recitation-schema";
+import { pinyin } from "pinyin-pro";
 
 export interface CompactSentenceRange {
   startIndex: number;
@@ -106,6 +107,9 @@ export function buildCompactTokens(sourceText: string): TimedToken[] {
     id: `token-${index}`,
     index,
     char,
+    displayPinyin: /\p{Script=Han}/u.test(char)
+      ? pinyin(char, { toneType: "symbol" })
+      : undefined,
     startMs: 0,
     endMs: 0,
     confidence: 0,
