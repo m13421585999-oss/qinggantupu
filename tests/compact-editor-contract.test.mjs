@@ -34,6 +34,7 @@ test("compact editor paginates measured sentence rows and exports one A4 PDF", a
   assert.match(component, /data-compact-measure-id/);
   assert.match(component, /paginateMeasuredPrintBlocks\(measured/);
   assert.match(component, /maxBlocksPerPage: 10/);
+  assert.match(component, /plan\.blockIds\.length === 10 \? "is-ten-row-page"/);
   assert.match(component, /data-compact-pdf-page/);
   assert.match(component, /pixelRatio: COMPACT_RENDER_DPR/);
   assert.match(component, /new jsPDF\(\{[\s\S]*?unit: "mm"[\s\S]*?format: "a4"/);
@@ -41,6 +42,8 @@ test("compact editor paginates measured sentence rows and exports one A4 PDF", a
   assert.match(component, /pdf\.save\(safePrintFilename\(work\.title, "pdf"\)\)/);
   assert.match(css, /\.compact-a4-page \{[\s\S]*?width: 210mm;[\s\S]*?height: 297mm;/);
   assert.match(css, /--compact-a4-margin, 11mm/);
+  assert.match(css, /\.compact-a4-page\.is-ten-row-page \.compact-token-manuscript\s*\{[\s\S]*?font-size: 18pt/);
+  assert.match(css, /\.compact-a4-page\.is-ten-row-page \.compact-prosody-curve,[\s\S]*?height: 10mm/);
   assert.match(component, /compact-legend-focus/);
   assert.match(component, /> 语势曲线</);
 });

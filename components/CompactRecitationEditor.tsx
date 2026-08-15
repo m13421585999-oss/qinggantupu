@@ -756,7 +756,7 @@ function CompactA4Page({
 }) {
   return (
     <article
-      className="compact-a4-page"
+      className={`compact-a4-page ${plan.blockIds.length === 10 ? "is-ten-row-page" : ""}`}
       data-compact-pdf-page={plan.index + 1}
       aria-label={`A4 第 ${plan.index + 1} 页，共 ${total} 页`}
     >
