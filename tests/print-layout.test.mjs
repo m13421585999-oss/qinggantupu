@@ -92,14 +92,14 @@ test("A4 export contract uses physical paper dimensions, structured pages and 2.
   assert.match(component, /a4-first-page-header \$\{showHero \? "has-generated-hero"/);
   assert.match(component, /backgroundColor:\s*"#fbf7ef"/);
   assert.match(graph, /className="print-spoken-token"[\s\S]*?className="print-token-pinyin"[\s\S]*?className=\{`print-token-char/);
-  assert.match(graph, /PRINT_CURVE_HEIGHT = 36/);
+  assert.match(graph, /PRINT_CURVE_HEIGHT = 40/);
   assert.match(css, /\.a4-page\s*\{[\s\S]*?#fbf7ef/);
   assert.match(css, /\.a4-first-page-header\s*\{[\s\S]*?height:\s*34mm/);
   assert.match(css, /\.a4-hero-visual img\s*\{[\s\S]*?object-position:\s*50% 45%/);
-  assert.match(css, /\.print-spoken-token\s*\{[\s\S]*?grid-template-rows:\s*5\.1mm 8\.3mm/);
-  assert.match(css, /\.print-token-pinyin\s*\{[\s\S]*?font-size:\s*9pt/);
-  assert.match(css, /\.print-token-manuscript\s*\{[\s\S]*?font-size:\s*18pt/);
-  assert.match(css, /\.print-prosody-curve,[\s\S]*?height:\s*9\.5mm[\s\S]*?background:\s*transparent/);
+  assert.match(css, /\.print-spoken-token\s*\{[\s\S]*?grid-template-rows:\s*5\.7mm 9\.2mm/);
+  assert.match(css, /\.print-token-pinyin\s*\{[\s\S]*?font-size:\s*10pt/);
+  assert.match(css, /\.print-token-manuscript\s*\{[\s\S]*?font-size:\s*20pt/);
+  assert.match(css, /\.print-prosody-curve,[\s\S]*?height:\s*10\.6mm[\s\S]*?background:\s*transparent/);
   assert.equal(safePrintFilename("《活着》", "pdf"), "《活着》-朗诵情感图谱.pdf");
 });
 

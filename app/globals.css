@@ -435,7 +435,7 @@ p {
 }
 
 .print-graph-track {
-  --print-token-gap: 2px;
+  --print-token-gap: 2.2px;
   position: relative;
   width: 100%;
   min-width: 0;
@@ -454,7 +454,7 @@ p {
 
 .print-graph-lines {
   display: grid;
-  gap: 1.8mm;
+  gap: 2mm;
 }
 
 .print-graph-line {
@@ -481,7 +481,7 @@ p {
 .print-spoken-token {
   display: grid;
   flex: 0 0 auto;
-  grid-template-rows: 5.1mm 8.3mm;
+  grid-template-rows: 5.7mm 9.2mm;
   justify-items: center;
 }
 
@@ -489,7 +489,7 @@ p {
   align-self: end;
   color: #594538;
   font-family: "Kaiti SC", STKaiti, "Songti SC", serif;
-  font-size: 9pt;
+  font-size: 10pt;
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
@@ -500,7 +500,7 @@ p {
   align-items: flex-end;
   color: #292722;
   font-family: "Songti SC", STSong, SimSun, serif;
-  font-size: 18pt;
+  font-size: 20pt;
   font-weight: 600;
   line-height: 1;
 }
@@ -508,7 +508,7 @@ p {
 .print-token-char {
   display: inline-flex;
   min-width: 1em;
-  height: 8.3mm;
+  height: 9.2mm;
   align-items: center;
   justify-content: center;
 }
@@ -520,7 +520,7 @@ p {
 
 .print-source-punctuation {
   display: inline-flex;
-  height: 8.3mm;
+  height: 9.2mm;
   align-items: center;
   align-self: flex-end;
   white-space: pre;
@@ -530,7 +530,7 @@ p {
 .print-ending-tone,
 .print-pause {
   display: inline-flex;
-  height: 8.3mm;
+  height: 9.2mm;
   align-items: center;
   align-self: flex-end;
   color: #c8452f;
@@ -564,8 +564,8 @@ p {
 .print-curve-placeholder {
   display: block;
   width: 100%;
-  height: 9.5mm;
-  margin-top: 0.3mm;
+  height: 10.6mm;
+  margin-top: 0.35mm;
   overflow: visible;
   background: transparent;
 }
@@ -573,7 +573,7 @@ p {
 .print-graph-fallback p {
   font-family: "Songti SC", STSong, SimSun, serif;
   color: #292722;
-  font-size: 18pt;
+  font-size: 20pt;
   font-weight: 600;
   line-height: 1.55;
 }

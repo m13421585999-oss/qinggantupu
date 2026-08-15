@@ -20,7 +20,7 @@ import {
 import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
 import type { RecitationSentence } from "@/lib/recitation-schema";
 
-const PRINT_CURVE_HEIGHT = 36;
+const PRINT_CURVE_HEIGHT = 40;
 
 function visibleSourceCharacter(value: string) {
   if (/\r|\n/u.test(value)) return "";
@@ -176,7 +176,7 @@ function PrintProsodyCurve({
   const rowPoints = points.filter((point) => Number.isFinite(metrics.tokenCenters[point.tokenIndex]));
   if (!rowPoints.length) return <div className="print-curve-placeholder" aria-hidden="true" />;
 
-  const verticalPadding = 4;
+  const verticalPadding = 4.5;
   const step = (PRINT_CURVE_HEIGHT - verticalPadding * 2) / (PROSODY_VISUAL_LEVEL_COUNT - 1);
   const anchors = rowPoints.map((point) => ({
     ...point,
