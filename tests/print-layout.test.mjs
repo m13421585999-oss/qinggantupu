@@ -72,14 +72,14 @@ test("an exceptional over-height sentence is isolated and explicitly flagged", (
   assert.equal(pages[1].hasOversizedBlock, true);
 });
 
-test("compact page density can cap each physical page at ten complete sentence rows", () => {
+test("compact page density can cap each physical page at eight complete sentence rows", () => {
   const pages = paginateMeasuredPrintBlocks(blocks(24, 20), {
     firstPageCapacityPx: 1000,
     continuationPageCapacityPx: 1000,
     blockGapPx: 2,
-    maxBlocksPerPage: 10,
+    maxBlocksPerPage: 8,
   });
-  assert.deepEqual(pages.map((page) => page.blockIds.length), [10, 10, 4]);
+  assert.deepEqual(pages.map((page) => page.blockIds.length), [8, 8, 8]);
   assert.deepEqual(pages.flatMap((page) => page.blockIds), blocks(24, 20).map((block) => block.id));
 });
 

@@ -756,7 +756,7 @@ function CompactA4Page({
 }) {
   return (
     <article
-      className={`compact-a4-page ${plan.blockIds.length === 10 ? "is-ten-row-page" : ""}`}
+      className={`compact-a4-page ${plan.blockIds.length === 8 ? "is-eight-row-page" : ""}`}
       data-compact-pdf-page={plan.index + 1}
       aria-label={`A4 第 ${plan.index + 1} 页，共 ${total} 页`}
     >
@@ -852,7 +852,7 @@ export function CompactRecitationEditor({
       continuationPageCapacityPx: contentCapacity(continuationBody),
       blockGapPx,
       protectSingleBlockPages: true,
-      maxBlocksPerPage: 10,
+      maxBlocksPerPage: 8,
     });
     const nextSignature = nextPages.map((page) => (
       `${page.blockIds.join(",")}:${Math.round(page.usedHeightPx)}:${page.hasOversizedBlock ? 1 : 0}`
@@ -863,8 +863,8 @@ export function CompactRecitationEditor({
     }
     const oversized = nextPages.filter((page) => page.hasOversizedBlock).length;
     setLayoutMessage(oversized
-      ? `已排成 ${nextPages.length} 页；每页最多 10 条，${oversized} 个超长句单独占页`
-      : `已排成 ${nextPages.length} 页；每页最多 10 条，整句不会跨页`);
+      ? `已排成 ${nextPages.length} 页；每页最多 8 条，${oversized} 个超长句单独占页`
+      : `已排成 ${nextPages.length} 页；每页最多 8 条，整句不会跨页`);
   }, [blocks]);
 
   useLayoutEffect(() => {

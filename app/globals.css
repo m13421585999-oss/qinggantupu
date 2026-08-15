@@ -6083,51 +6083,52 @@ button.compact-token-char.is-selected {
   background: linear-gradient(168deg, transparent 44%, #b9402e 45%, #b9402e 55%, transparent 56%);
 }
 
-/* A full ten-row teaching page uses the remaining paper height instead of
-   leaving an oversized blank band above the legend. */
-.compact-a4-page.is-ten-row-page .compact-page-body {
-  gap: 1.65mm;
+/* A full eight-row teaching page scales every manuscript layer together while
+   preserving a fixed safety band above the legend. */
+.compact-a4-page.is-eight-row-page .compact-page-body {
+  gap: 1.7mm;
   padding-top: 2.2mm;
+  padding-bottom: 2.4mm;
 }
 
-.compact-a4-page.is-ten-row-page .compact-sentence-row {
-  padding-top: 1.25mm;
-  padding-bottom: 1.55mm;
+.compact-a4-page.is-eight-row-page .compact-sentence-row {
+  padding-top: 1.5mm;
+  padding-bottom: 2mm;
 }
 
-.compact-a4-page.is-ten-row-page .compact-graph-lines {
+.compact-a4-page.is-eight-row-page .compact-graph-lines {
   gap: 1.2mm;
 }
 
-.compact-a4-page.is-ten-row-page .compact-token-manuscript {
-  min-height: 12.2mm;
-  font-size: 18pt;
+.compact-a4-page.is-eight-row-page .compact-token-manuscript {
+  min-height: 14.2mm;
+  font-size: 20pt;
 }
 
-.compact-a4-page.is-ten-row-page .compact-spoken-token {
-  grid-template-rows: 3.9mm 8.3mm;
+.compact-a4-page.is-eight-row-page .compact-spoken-token {
+  grid-template-rows: 4.4mm 9.8mm;
 }
 
-.compact-a4-page.is-ten-row-page .compact-token-pinyin {
-  font-size: 9pt;
+.compact-a4-page.is-eight-row-page .compact-token-pinyin {
+  font-size: 10pt;
 }
 
-.compact-a4-page.is-ten-row-page .compact-token-char {
-  height: 8.3mm;
+.compact-a4-page.is-eight-row-page .compact-token-char {
+  height: 9.8mm;
 }
 
-.compact-a4-page.is-ten-row-page .compact-source-punctuation,
-.compact-a4-page.is-ten-row-page .compact-prolongation,
-.compact-a4-page.is-ten-row-page .compact-ending-tone,
-.compact-a4-page.is-ten-row-page .compact-pause,
-.compact-a4-page.is-ten-row-page .compact-breath-major,
-.compact-a4-page.is-ten-row-page .compact-breath-minor {
-  min-height: 8.3mm;
+.compact-a4-page.is-eight-row-page .compact-source-punctuation,
+.compact-a4-page.is-eight-row-page .compact-prolongation,
+.compact-a4-page.is-eight-row-page .compact-ending-tone,
+.compact-a4-page.is-eight-row-page .compact-pause,
+.compact-a4-page.is-eight-row-page .compact-breath-major,
+.compact-a4-page.is-eight-row-page .compact-breath-minor {
+  min-height: 9.8mm;
 }
 
-.compact-a4-page.is-ten-row-page .compact-prosody-curve,
-.compact-a4-page.is-ten-row-page .compact-curve-placeholder {
-  height: 10mm;
+.compact-a4-page.is-eight-row-page .compact-prosody-curve,
+.compact-a4-page.is-eight-row-page .compact-curve-placeholder {
+  height: 11.5mm;
 }
 
 .compact-marker-popover {
