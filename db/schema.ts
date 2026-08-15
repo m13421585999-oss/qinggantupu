@@ -16,6 +16,9 @@ export const works = sqliteTable(
     genre: text("genre").notNull(),
     language: text("language").notNull().default("zh-CN"),
     sourceText: text("source_text").notNull(),
+    printSettingsJson: text("print_settings_json").notNull().default(
+      '{"paper":"A4","orientation":"portrait","widthMm":210,"heightMm":297,"marginTopMm":15,"marginBottomMm":15,"marginLeftMm":15,"marginRightMm":15,"renderDpr":2.5}',
+    ),
     status: text("status").notNull().default("draft"),
     audioSourceType: text("audio_source_type").notNull().default("human_reference"),
     audioSyncStatus: text("audio_sync_status").notNull().default("pending"),

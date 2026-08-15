@@ -36,6 +36,13 @@
       "when": 1786714893377,
       "tag": "0004_pink_kree",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786773952012,
+      "tag": "0005_flaky_white_tiger",
+      "breakpoints": true
     }
   ]
 }

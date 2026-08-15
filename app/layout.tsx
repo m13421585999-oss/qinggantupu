@@ -24,6 +24,10 @@ export async function generateMetadata(): Promise<Metadata> {
       template: "%s · 声图",
     },
     description,
+    icons: {
+      icon: "/og.png",
+      apple: "/og.png",
+    },
     openGraph: {
       type: "website",
       locale: "zh_CN",

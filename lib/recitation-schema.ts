@@ -368,6 +368,18 @@ export interface AiTtsProduction {
   error?: { code: string; message: string };
 }
 
+export interface PrintSettings {
+  paper: "A4";
+  orientation: "portrait";
+  widthMm: 210;
+  heightMm: 297;
+  marginTopMm: number;
+  marginBottomMm: number;
+  marginLeftMm: number;
+  marginRightMm: number;
+  renderDpr: number;
+}
+
 export interface RecitationWork {
   id: string;
   slug: string;
@@ -397,6 +409,8 @@ export interface RecitationWork {
   controlSpec?: ControlSpec;
   /** Optional literary visual layer; it never changes control_spec or audio timing. */
   visuals?: import("./visual-assets").WorkVisualBundle;
+  /** Regenerated from project data on every open; no page screenshots are persisted. */
+  printSettings?: PrintSettings;
   createdAt: string;
   updatedAt: string;
 }

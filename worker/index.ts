@@ -77,6 +77,17 @@ const ELEVEN_TTS_MODEL_ID = "eleven_v3";
 const ELEVEN_TTS_OUTPUT_FORMAT = "mp3_44100_128";
 const AI_TTS_JOB_LEASE_MS = 4 * 60 * 1000;
 const AI_TTS_TERMINAL_STATUSES = new Set(["graph_ready", "error"]);
+const DEFAULT_PRINT_SETTINGS = {
+  paper: "A4",
+  orientation: "portrait",
+  widthMm: 210,
+  heightMm: 297,
+  marginTopMm: 15,
+  marginBottomMm: 15,
+  marginLeftMm: 15,
+  marginRightMm: 15,
+  renderDpr: 2.5,
+} as const;
 
 type AudioSourceType = "human_reference" | "ai_tts";
 
@@ -149,6 +160,25 @@ function parseJson<T>(value: string | null | undefined): T | undefined {
 
 function normalizeAudioSourceType(value: unknown): AudioSourceType {
   return value === "ai_tts" ? "ai_tts" : "human_reference";
+}
+
+function normalizePrintSettings(value: unknown) {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const margin = (key: string) => {
+    const candidate = Number(source[key]);
+    return Number.isFinite(candidate) ? Math.max(10, Math.min(25, candidate)) : 15;
+  };
+  const renderDpr = Number(source.renderDpr);
+  return {
+    ...DEFAULT_PRINT_SETTINGS,
+    marginTopMm: margin("marginTopMm"),
+    marginBottomMm: margin("marginBottomMm"),
+    marginLeftMm: margin("marginLeftMm"),
+    marginRightMm: margin("marginRightMm"),
+    renderDpr: Number.isFinite(renderDpr) ? Math.max(2, Math.min(3, renderDpr)) : 2.5,
+  };
 }
 
 function semanticText(value: string, stripAudioTags = false) {
@@ -619,6 +649,9 @@ async function getWorkPayload(env: Env, workId: string, published = false) {
     genre: work.genre,
     language: work.language,
     sourceText: work.source_text,
+    printSettings: normalizePrintSettings(
+      parseJson<Record<string, unknown>>(work.print_settings_json as string | null),
+    ),
     audioSourceType: normalizeAudioSourceType(work.audio_source_type),
     status: published ? "published" : work.status,
     audioSyncStatus: work.audio_sync_status ?? (standardTrack ? "synced" : "pending"),
@@ -737,6 +770,8 @@ async function createWork(request: Request, env: Env) {
   const author = String(body.author ?? "").trim();
   const fullText = String(body.full_text ?? "");
   const audioSourceType = normalizeAudioSourceType(body.audio_source_type ?? body.audioSourceType);
+  const printSettings = normalizePrintSettings(body.print_settings ?? body.printSettings);
+  const printSettingsJson = JSON.stringify(printSettings);
   const requestedWorkId = String(body.work_id ?? "").trim();
   const expectedUpdatedAt = String(body.expected_updated_at ?? body.expectedUpdatedAt ?? "").trim();
   if (!title || !fullText.trim()) {
@@ -763,7 +798,7 @@ async function createWork(request: Request, env: Env) {
       const results = await env.DB.batch([
         env.DB.prepare(
           `UPDATE works
-              SET title = ?, author = ?, source_text = ?, audio_source_type = ?,
+              SET title = ?, author = ?, source_text = ?, audio_source_type = ?, print_settings_json = ?,
                   status = 'draft', audio_sync_status = 'pending',
                   current_spec_version_id = NULL, published_revision_id = NULL, updated_at = ?
             WHERE id = ?${expectedUpdatedAt ? " AND updated_at = ?" : ""}`,
@@ -772,6 +807,7 @@ async function createWork(request: Request, env: Env) {
           author || null,
           fullText,
           audioSourceType,
+          printSettingsJson,
           savedAt,
           requestedWorkId,
           ...expectedUpdatedAt ? [expectedUpdatedAt] : [],
@@ -825,12 +861,13 @@ async function createWork(request: Request, env: Env) {
       }
     } else {
       const updateWork = env.DB.prepare(
-        `UPDATE works SET title = ?, author = ?, audio_source_type = ?, updated_at = ?
+        `UPDATE works SET title = ?, author = ?, audio_source_type = ?, print_settings_json = ?, updated_at = ?
           WHERE id = ?${expectedUpdatedAt ? " AND updated_at = ?" : ""}`,
       ).bind(
         title,
         author || null,
         audioSourceType,
+        printSettingsJson,
         savedAt,
         requestedWorkId,
         ...expectedUpdatedAt ? [expectedUpdatedAt] : [],
@@ -858,9 +895,19 @@ async function createWork(request: Request, env: Env) {
   const savedAt = now();
   await env.DB.prepare(
     `INSERT INTO works
-       (id, slug, title, author, genre, language, source_text, audio_source_type, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'other', 'zh-CN', ?, ?, 'draft', ?, ?)`,
-  ).bind(workId, slugFor(title, workId), title, author || null, fullText, audioSourceType, savedAt, savedAt).run();
+       (id, slug, title, author, genre, language, source_text, print_settings_json, audio_source_type, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'other', 'zh-CN', ?, ?, ?, 'draft', ?, ?)`,
+  ).bind(
+    workId,
+    slugFor(title, workId),
+    title,
+    author || null,
+    fullText,
+    printSettingsJson,
+    audioSourceType,
+    savedAt,
+    savedAt,
+  ).run();
   return json({ work: await getWorkPayload(env, workId) }, 201);
 }
 

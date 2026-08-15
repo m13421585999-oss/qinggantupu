@@ -1,0 +1,1 @@
+ALTER TABLE `works` ADD `print_settings_json` text DEFAULT '{"paper":"A4","orientation":"portrait","widthMm":210,"heightMm":297,"marginTopMm":15,"marginBottomMm":15,"marginLeftMm":15,"marginRightMm":15,"renderDpr":2.5}' NOT NULL;

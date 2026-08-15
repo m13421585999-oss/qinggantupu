@@ -33,6 +33,7 @@ import {
 } from "@/lib/semantic-scene-lines";
 import { ViewerScaleWrapper } from "@/components/ViewerScaleWrapper";
 import { WorkVisualPanel } from "@/components/WorkVisualPanel";
+import { A4PrintPreview } from "@/components/A4PrintPreview";
 import {
   ENDING_LABELS,
   PROSODY_LABELS,
@@ -367,6 +368,17 @@ function createEmptyWork(): RecitationWork {
     audioSourceType: "human_reference",
     status: "draft",
     audioSyncStatus: "pending",
+    printSettings: {
+      paper: "A4",
+      orientation: "portrait",
+      widthMm: 210,
+      heightMm: 297,
+      marginTopMm: 15,
+      marginBottomMm: 15,
+      marginLeftMm: 15,
+      marginRightMm: 15,
+      renderDpr: 2.5,
+    },
     createdAt,
     updatedAt: createdAt,
   };
@@ -2103,6 +2115,7 @@ function PublishStage({
           </div>
         </div>
       </div>
+      <A4PrintPreview work={work} onOpenLongImageExport={onPreview} />
       <button type="button" className="text-button publish-back" onClick={onBack}>← 返回编辑图谱</button>
     </section>
   );
@@ -3022,6 +3035,7 @@ export function RecitationStudio() {
           author: work.author?.trim() ?? "",
           full_text: work.sourceText,
           audio_source_type: work.audioSourceType ?? "human_reference",
+          print_settings: work.printSettings,
         }),
       }),
     );
