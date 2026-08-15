@@ -129,7 +129,7 @@ function FirstPageHeader({ work }: { work: RecitationWork }) {
       <div className="a4-print-legend" aria-label="图谱符号说明">
         <span><b>红字</b> 表达焦点</span>
         <span><b>/</b> 短停</span>
-        <span><b>///</b> 长停</span>
+        <span><b>{"///"}</b> 长停</span>
         <span><b>—</b> 拖音</span>
         <span><b>↗ ↘</b> 句尾语调</span>
         <span><i aria-hidden="true" />宏观语势</span>

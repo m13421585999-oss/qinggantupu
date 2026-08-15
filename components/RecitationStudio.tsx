@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -3594,6 +3593,17 @@ export function RecitationStudio() {
     }
   };
 
+  const openViewerWorkLibrary = () => {
+    resetPlaybackAndEditorState();
+    setMode("studio");
+    setStep(work.controlSpec ? 2 : 1);
+    setAudioSource(work.controlSpec && standardPlayback?.timeline ? "standard" : "reference");
+    setLibraryOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("view");
+    window.history.replaceState({}, "", url);
+  };
+
   const createNewWork = () => {
     if (localReferenceUrlRef.current) URL.revokeObjectURL(localReferenceUrlRef.current);
     localReferenceUrlRef.current = undefined;
@@ -3722,10 +3732,10 @@ export function RecitationStudio() {
       <audio ref={audioRef} src={activeTrack?.url} preload="metadata" />
       <header className="app-header">
         {mode === "viewer" ? (
-          <Link className="brand" href="/" aria-label="返回声图作品库">
+          <button type="button" className="brand" onClick={openViewerWorkLibrary} aria-label="返回声图作品库">
             <span className="brand-mark">声</span>
             <span className="brand-copy"><strong>声图</strong><small>朗诵情感图谱</small></span>
-          </Link>
+          </button>
         ) : (
           <button
             type="button"
@@ -3763,7 +3773,7 @@ export function RecitationStudio() {
 
         {mode === "viewer" ? (
           <nav className="viewer-header-actions" aria-label="观看页操作">
-            <Link href="/">返回作品库</Link>
+            <button type="button" onClick={openViewerWorkLibrary}>返回作品库</button>
             <button type="button" onClick={() => void shareViewer()}>分享</button>
           </nav>
         ) : null}

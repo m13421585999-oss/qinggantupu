@@ -89,6 +89,10 @@ test("A4 export contract uses physical paper dimensions, structured pages and 2.
   assert.match(component, /pixelRatio:\s*settings\.renderDpr/);
   assert.match(graph, /splitGraphUnitsByMeasuredWidth/);
   assert.match(graph, /extendProsodyCurveToTokenEdges/);
+  assert.match(graph, /className="print-spoken-token"[\s\S]*?className="print-token-pinyin"[\s\S]*?className=\{`print-token-char/);
+  assert.match(css, /\.print-spoken-token\s*\{[\s\S]*?grid-template-rows:\s*4\.9mm 8mm/);
+  assert.match(css, /\.print-token-pinyin\s*\{[\s\S]*?font-size:\s*8\.6pt/);
+  assert.match(css, /\.print-token-manuscript\s*\{[\s\S]*?font-size:\s*17pt/);
   assert.equal(safePrintFilename("《活着》", "pdf"), "《活着》-朗诵情感图谱.pdf");
 });
 

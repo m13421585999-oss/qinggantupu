@@ -126,6 +126,9 @@ test("viewer chrome explains every graph symbol and the shared-audio promise", a
   assert.match(studio, /播放整篇/);
   assert.match(studio, /听本句/);
   assert.match(studio, /标准 AI 朗诵/);
+  assert.match(studio, /const openViewerWorkLibrary = \(\) => \{/);
+  assert.match(studio, /<button type="button" onClick=\{openViewerWorkLibrary\}>返回作品库<\/button>/);
+  assert.doesNotMatch(studio, /<Link href="\/">返回作品库<\/Link>/);
 });
 
 test("mobile uses a portrait rotation gate and preserves the desktop structure in landscape", async () => {

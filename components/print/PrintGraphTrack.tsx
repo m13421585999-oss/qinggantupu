@@ -58,20 +58,22 @@ function PrintTokenUnit({
 }) {
   return (
     <span className="print-token-unit" ref={measureRef} data-print-token-index={unit.token.index}>
-      <span className="print-token-pinyin" aria-hidden="true">
-        {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
-      </span>
       <span className="print-token-manuscript">
         {unit.prefixPunctuation.map((token) => (
           <span className="print-source-punctuation" key={token.id}>
             {visibleSourceCharacter(token.char)}
           </span>
         ))}
-        <span
-          className={`print-token-char ${focused ? "is-focus" : ""}`}
-          ref={characterRef}
-        >
-          {unit.token.char}
+        <span className="print-spoken-token">
+          <span className="print-token-pinyin" aria-hidden="true">
+            {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
+          </span>
+          <span
+            className={`print-token-char ${focused ? "is-focus" : ""}`}
+            ref={characterRef}
+          >
+            {unit.token.char}
+          </span>
         </span>
         {unit.prolongation ? (
           <span className="print-prolongation" aria-label="拖音">—</span>
@@ -242,12 +244,10 @@ function PrintProsodyCurve({
 }
 
 function PrintGraphLine({
-  sentence,
   units,
   focusedIndexes,
   teachingPoints,
 }: {
-  sentence: RecitationSentence;
   units: GraphTokenUnit[];
   focusedIndexes: Set<number>;
   teachingPoints: TeachingProsodyPoint[];
@@ -367,7 +367,6 @@ export function PrintGraphTrack({ sentence }: { sentence: RecitationSentence }) 
       <div className="print-graph-lines">
         {lines.map((line, index) => (
           <PrintGraphLine
-            sentence={sentence}
             units={line}
             focusedIndexes={focusedIndexes}
             teachingPoints={teachingPoints}
