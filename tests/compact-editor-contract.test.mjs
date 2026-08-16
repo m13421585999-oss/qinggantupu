@@ -21,6 +21,8 @@ test("compact editor exposes formal V and v markers plus one editable node per s
   assert.match(component, /compact-breath-major/);
   assert.match(component, /compact-breath-minor/);
   assert.match(component, /\{breath \? \([\s\S]*?className="compact-spoken-token"/);
+  assert.match(component, /new MutationObserver\(schedule\)/);
+  assert.match(component, /element\.getBoundingClientRect\(\)/);
   assert.match(component, /buildTeachingProsodyPoints/);
   assert.match(component, /className="compact-token-pinyin"/);
   assert.match(component, /compact-curve-node is-editable/);

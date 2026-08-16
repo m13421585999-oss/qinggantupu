@@ -387,11 +387,17 @@ function CompactProsodyCurve({
     const observer = new ResizeObserver(schedule);
     observer.observe(rowElement);
     for (const element of characterRefs.current.values()) observer.observe(element);
+    // A breath mark can move a character horizontally without changing its own
+    // dimensions or the total row width. Observe rendered children as well so
+    // the curve always re-reads each character's real screen position.
+    const layoutObserver = new MutationObserver(schedule);
+    layoutObserver.observe(rowElement, { childList: true, subtree: true });
     document.fonts?.addEventListener("loadingdone", schedule);
     void document.fonts?.ready.then(schedule);
     return () => {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
+      layoutObserver.disconnect();
       document.fonts?.removeEventListener("loadingdone", schedule);
     };
   }, [characterRefs, measure, rowElement]);
