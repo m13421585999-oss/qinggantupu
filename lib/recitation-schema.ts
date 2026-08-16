@@ -280,6 +280,8 @@ export interface ControlSpec {
   documentProfile: DocumentProfile;
   tokens: TimedToken[];
   sentences: RecitationSentence[];
+  /** Creator-authored readings keyed by stable token id; they override generated pinyin in every compact rendering. */
+  pinyinOverrides?: Record<string, string>;
   analysisProvenance: {
     referenceAudioAssetId?: string;
     referenceAudioOriginalAssetId?: string;

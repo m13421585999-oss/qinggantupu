@@ -55,6 +55,17 @@ interface CompactBlock {
   sentence: RecitationSentence;
 }
 
+function applyPinyinOverrides(sentence: RecitationSentence, overrides: Record<string, string>) {
+  if (!Object.keys(overrides).length) return sentence;
+  return {
+    ...sentence,
+    tokens: sentence.tokens.map((token) => {
+      const override = overrides[token.id];
+      return override === undefined ? token : { ...token, displayPinyin: override };
+    }),
+  };
+}
+
 function visibleSourceCharacter(value: string) {
   if (/\r|\n/u.test(value)) return "";
   if (/^\s+$/u.test(value)) return " ";
@@ -809,6 +820,7 @@ export function CompactRecitationEditor({
   work,
   saveState,
   onSentenceChange,
+  onPinyinOverrideChange,
   onSave,
   onOpenLibrary,
   onSwitchFull,
@@ -816,13 +828,17 @@ export function CompactRecitationEditor({
   work: RecitationWork;
   saveState: CompactSaveState;
   onSentenceChange: (sentence: RecitationSentence) => void;
+  onPinyinOverrideChange: (tokenId: string, value: string) => void;
   onSave: () => void;
   onOpenLibrary: () => void;
   onSwitchFull: () => void;
 }) {
   const blocks = useMemo<CompactBlock[]>(
-    () => (work.controlSpec?.sentences ?? []).map((sentence) => ({ id: sentence.id, sentence })),
-    [work.controlSpec?.sentences],
+    () => (work.controlSpec?.sentences ?? []).map((sentence) => ({
+      id: sentence.id,
+      sentence: applyPinyinOverrides(sentence, work.controlSpec?.pinyinOverrides ?? {}),
+    })),
+    [work.controlSpec],
   );
   const blocksById = useMemo(() => new Map(blocks.map((block) => [block.id, block])), [blocks]);
   const measureRootRef = useRef<HTMLDivElement>(null);
@@ -923,9 +939,7 @@ export function CompactRecitationEditor({
     });
   };
 
-  const selectedSentence = selection
-    ? work.controlSpec?.sentences.find((sentence) => sentence.id === selection.sentenceId)
-    : undefined;
+  const selectedSentence = selection ? blocksById.get(selection.sentenceId)?.sentence : undefined;
   const selectedToken = selectedSentence?.tokens.find((token) => token.index === selection?.tokenIndex);
   const selectedPause = selectedSentence && selectedToken ? pauseAt(selectedSentence, selectedToken.index) : undefined;
   const selectedBreath = selectedSentence && selectedToken ? breathAt(selectedSentence, selectedToken.index) : undefined;
@@ -939,12 +953,8 @@ export function CompactRecitationEditor({
 
   const saveSelectedPinyin = () => {
     const value = pinyinDraft.trim();
-    editSelected((sentence, token) => ({
-      ...sentence,
-      tokens: sentence.tokens.map((candidate) => (
-        candidate.index === token.index ? { ...candidate, displayPinyin: value } : candidate
-      )),
-    }));
+    if (!selectedToken) return;
+    onPinyinOverrideChange(selectedToken.id, value);
     setPinyinEditorOpen(false);
   };
 

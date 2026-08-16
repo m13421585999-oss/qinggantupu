@@ -3232,6 +3232,28 @@ export function RecitationStudio() {
     setSaveState("dirty");
   };
 
+  const updateCompactPinyinOverride = (tokenId: string, value: string) => {
+    setWork((current) => {
+      if (!current.controlSpec) return current;
+      const pinyinOverrides = { ...(current.controlSpec.pinyinOverrides ?? {}) };
+      if (value) pinyinOverrides[tokenId] = value;
+      else delete pinyinOverrides[tokenId];
+      return {
+        ...current,
+        status: "review",
+        audioSyncStatus: current.standardAiAudio ? "modified" : "pending",
+        controlSpec: {
+          ...current.controlSpec,
+          source: "hybrid",
+          pinyinOverrides: Object.keys(pinyinOverrides).length ? pinyinOverrides : undefined,
+        },
+      };
+    });
+    setIsWorkDirty(true);
+    setControlSpecDirty(true);
+    setSaveState("dirty");
+  };
+
   const handleAiAnalyze = async () => {
     if (analysisJobStatus === "queued" || analysisJobStatus === "processing") return;
     if (!work.title.trim() || !work.sourceText.trim()) {
@@ -3934,6 +3956,7 @@ export function RecitationStudio() {
           work={work}
           saveState={saveState}
           onSentenceChange={updateCompactSentence}
+          onPinyinOverrideChange={updateCompactPinyinOverride}
           onSave={() => void performSaveCurrentWork()}
           onOpenLibrary={() => setLibraryOpen(true)}
           onSwitchFull={() => void switchStudioEdition("full")}

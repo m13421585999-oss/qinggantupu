@@ -16,6 +16,7 @@ test("compact editor is a sibling edition and keeps the full studio branch intac
 
 test("compact editor exposes formal V and v markers plus one editable node per spoken token", async () => {
   const component = await readFile(new URL("components/CompactRecitationEditor.tsx", root), "utf8");
+  const studio = await readFile(new URL("components/RecitationStudio.tsx", root), "utf8");
   assert.match(component, /"breath_major"/);
   assert.match(component, /"breath_minor"/);
   assert.match(component, /compact-breath-major/);
@@ -31,7 +32,10 @@ test("compact editor exposes formal V and v markers plus one editable node per s
   assert.match(component, /upsertProsodyPointOverride/);
   assert.match(component, /pinyinEditorOpen/);
   assert.match(component, /saveSelectedPinyin/);
-  assert.match(component, /displayPinyin: value/);
+  assert.match(component, /applyPinyinOverrides/);
+  assert.match(component, /onPinyinOverrideChange\(selectedToken\.id, value\)/);
+  assert.match(component, /work\.controlSpec\?\.pinyinOverrides/);
+  assert.match(studio, /pinyinOverrides\[tokenId\] = value/);
 });
 
 test("compact editor paginates measured sentence rows and exports one A4 PDF", async () => {
