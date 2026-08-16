@@ -286,7 +286,7 @@ function CompactTokenUnit({
         ) : null}
         {pause ? (
           <span className={`compact-pause compact-pause-${pause.type}`} aria-label={pause.type === "long" ? "长停" : "短停"}>
-            {pause.type === "long" ? "//" : "/"}
+            {pause.type === "long" ? "///" : "/"}
           </span>
         ) : null}
         {breath ? (
@@ -438,7 +438,7 @@ function CompactProsodyCurve({
       <path
         d={path}
         fill="none"
-        stroke="#b9402e"
+        stroke="#526f82"
         strokeWidth="1.65"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -498,7 +498,7 @@ function CompactProsodyCurve({
             cy={point.y}
             r="3.4"
             fill="#fffdf8"
-            stroke="#b9402e"
+            stroke="#526f82"
             strokeWidth="1.65"
             vectorEffect="non-scaling-stroke"
           />
@@ -730,7 +730,7 @@ function CompactPageLegend() {
       <span><b className="compact-legend-major">V</b> 大换气</span>
       <span><b className="compact-legend-minor">v</b> 小换气</span>
       <span><b>/</b> 短停</span>
-      <span><b>{"//"}</b> 长停</span>
+      <span><b>{"///"}</b> 长停</span>
       <span><b className="compact-legend-focus">红</b> 重音</span>
       <span><i className="compact-legend-curve" aria-hidden="true" /> 语势曲线</span>
     </footer>

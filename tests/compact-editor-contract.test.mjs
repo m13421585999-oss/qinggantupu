@@ -45,6 +45,10 @@ test("compact editor paginates measured sentence rows and exports one A4 PDF", a
   assert.match(css, /\.compact-a4-page\.is-eight-row-page \.compact-token-manuscript\s*\{[\s\S]*?font-size: 20pt/);
   assert.match(css, /\.compact-a4-page\.is-eight-row-page \.compact-prosody-curve,[\s\S]*?height: 11\.5mm/);
   assert.match(css, /\.compact-a4-page\.is-eight-row-page \.compact-page-body\s*\{[\s\S]*?padding-bottom: 2\.4mm/);
+  assert.match(css, /compact-a4-background\.png/);
+  assert.match(css, /\.compact-a4-page::before/);
+  assert.match(component, /stroke="#526f82"/);
+  assert.match(component, /\{"\/\/\/"\}/);
   assert.match(component, /compact-legend-focus/);
   assert.match(component, /> 语势曲线</);
 });

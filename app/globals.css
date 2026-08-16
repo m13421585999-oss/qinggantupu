@@ -5746,13 +5746,31 @@ button.annotation-char:hover {
   flex-direction: column;
   overflow: hidden;
   padding: var(--compact-a4-margin, 11mm);
-  background:
-    radial-gradient(circle at 10% 18%, rgba(189, 145, 91, 0.028), transparent 24%),
-    repeating-linear-gradient(0deg, rgba(91, 72, 52, 0.009) 0, rgba(91, 72, 52, 0.009) 1px, transparent 1px, transparent 6px),
-    #fffdf8;
+  isolation: isolate;
+  background: #fffdf8 url("/compact-a4-background.png") center / 100% 100% no-repeat;
   color: #292722;
   font-family: "Songti SC", STSong, SimSun, serif;
   box-shadow: 0 15px 38px rgba(42, 34, 27, 0.2);
+}
+
+.compact-a4-page::before {
+  position: absolute;
+  z-index: 0;
+  inset: 8.5mm 8.5mm 8mm;
+  border-radius: 1.8mm;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 253, 247, 0.7) 0%,
+    rgba(255, 253, 247, 0.78) 48%,
+    rgba(255, 253, 247, 0.88) 100%
+  );
+  content: "";
+  pointer-events: none;
+}
+
+.compact-a4-page > * {
+  position: relative;
+  z-index: 1;
 }
 
 .compact-page-header {
@@ -5762,7 +5780,7 @@ button.annotation-char:hover {
   align-items: center;
   gap: 2.2mm;
   overflow: hidden;
-  border-bottom: 0.3mm solid rgba(111, 84, 56, 0.24);
+  border-bottom: 0.3mm solid rgba(82, 111, 130, 0.26);
   color: #594d43;
   line-height: 1;
   white-space: nowrap;
@@ -5772,15 +5790,15 @@ button.annotation-char:hover {
   max-width: 104mm;
   overflow: hidden;
   color: #2f2a25;
-  font-size: 12pt;
+  font-size: 15pt;
   font-weight: 700;
   text-overflow: ellipsis;
 }
 
 .compact-page-header > span {
-  color: #9a3829;
+  color: #526f82;
   font-family: system-ui, sans-serif;
-  font-size: 8pt;
+  font-size: 9pt;
   font-weight: 750;
   letter-spacing: 0.06em;
 }
@@ -5789,7 +5807,7 @@ button.annotation-char:hover {
   margin-left: auto;
   color: #796d62;
   font-family: system-ui, sans-serif;
-  font-size: 7.2pt;
+  font-size: 7.8pt;
 }
 
 .compact-page-body {
@@ -5817,7 +5835,7 @@ button.annotation-char:hover {
 
 .compact-sentence-number {
   padding-top: 1mm;
-  color: #a23b2b;
+  color: #526f82;
   font-family: system-ui, sans-serif;
   font-size: 6.5pt;
   font-weight: 800;
@@ -5889,7 +5907,7 @@ button.annotation-char:hover {
 
 .compact-token-pinyin {
   align-self: end;
-  color: #5f4d40;
+  color: #655d54;
   font-family: "Kaiti SC", STKaiti, "Songti SC", serif;
   font-size: 8.5pt;
   font-weight: 650;
@@ -6024,7 +6042,7 @@ button.compact-token-char.is-selected {
 
 .compact-curve-node.is-editable:focus circle:last-child,
 .compact-curve-node.is-editable:hover circle:last-child {
-  fill: #f7e5df;
+  fill: #e8f0f2;
   stroke-width: 2.2;
 }
 
@@ -6036,15 +6054,17 @@ button.compact-token-char.is-selected {
 
 .compact-page-legend {
   display: flex;
-  min-height: 6mm;
+  min-height: 7.2mm;
   flex: none;
   align-items: flex-end;
-  gap: 4.2mm;
-  padding-top: 1.4mm;
-  border-top: 0.2mm solid rgba(111, 84, 56, 0.18);
-  color: #746a61;
+  gap: 4.5mm;
+  margin-top: 0.6mm;
+  padding: 1.25mm 2.2mm 1mm;
+  border-top: 0.2mm solid rgba(82, 111, 130, 0.2);
+  background: rgba(255, 253, 247, 0.84);
+  color: #5f5a54;
   font-family: system-ui, sans-serif;
-  font-size: 6.2pt;
+  font-size: 7pt;
   white-space: nowrap;
 }
 
@@ -6080,7 +6100,7 @@ button.compact-token-char.is-selected {
   height: 2.4mm;
   border: 0;
   border-radius: 0;
-  background: linear-gradient(168deg, transparent 44%, #b9402e 45%, #b9402e 55%, transparent 56%);
+  background: linear-gradient(168deg, transparent 43%, #526f82 44%, #526f82 56%, transparent 57%);
 }
 
 /* A full eight-row teaching page scales every manuscript layer together while
