@@ -5777,7 +5777,7 @@ button.annotation-char:hover {
   display: flex;
   min-height: 9mm;
   flex: none;
-  align-items: center;
+  align-items: baseline;
   gap: 2.2mm;
   overflow: hidden;
   border-bottom: 0.3mm solid rgba(82, 111, 130, 0.26);
@@ -6194,7 +6194,50 @@ button.compact-token-char.is-selected {
 }
 
 .compact-other-markers {
-  grid-template-columns: repeat(4, minmax(38px, auto)) !important;
+  grid-template-columns: repeat(5, minmax(38px, auto)) !important;
+}
+
+.compact-pinyin-editor {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(104, 80, 57, 0.13);
+}
+
+.compact-pinyin-editor label {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  color: #6d6259;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.compact-pinyin-editor input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid rgba(103, 78, 54, 0.2);
+  border-radius: 6px;
+  background: #fffdf8;
+  color: #3f3731;
+  font: inherit;
+}
+
+.compact-pinyin-editor > button {
+  min-width: 46px;
+  height: 30px;
+  border: 1px solid rgba(185, 64, 46, 0.35);
+  border-radius: 6px;
+  background: #f7e5df;
+  color: #9d3829;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .compact-measure-layer {

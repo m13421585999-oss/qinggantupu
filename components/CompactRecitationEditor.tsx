@@ -721,7 +721,7 @@ function CompactPageHeader({ work, page, total }: {
   return (
     <header className="compact-page-header">
       <strong>《{displayTitle}》</strong>
-      <span>朗诵情感图谱（{page}/{total}）</span>
+      <span><span>朗诵情感图谱</span><span>（{page}/{total}）</span></span>
       {work.author ? <small>作者：{work.author}</small> : null}
     </header>
   );
@@ -730,8 +730,8 @@ function CompactPageHeader({ work, page, total }: {
 function CompactPageLegend() {
   return (
     <footer className="compact-page-legend">
-      <span><b className="compact-legend-major">V</b> 大换气</span>
-      <span><b className="compact-legend-minor">v</b> 小换气</span>
+      <span><b className="compact-legend-major">V</b> 换气</span>
+      <span><b className="compact-legend-minor">v</b> 偷气</span>
       <span><b>/</b> 短停</span>
       <span><b>{"///"}</b> 长停</span>
       <span><b className="compact-legend-focus">红</b> 重音</span>
@@ -824,6 +824,8 @@ export function CompactRecitationEditor({
   const pageSignatureRef = useRef("");
   const [pages, setPages] = useState<PrintPagePlan[]>([]);
   const [selection, setSelection] = useState<CompactSelection>();
+  const [pinyinEditorOpen, setPinyinEditorOpen] = useState(false);
+  const [pinyinDraft, setPinyinDraft] = useState("");
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [layoutMessage, setLayoutMessage] = useState("正在按整句计算 A4 分页…");
   const [exportingPdf, setExportingPdf] = useState(false);
@@ -898,8 +900,10 @@ export function CompactRecitationEditor({
       sentenceId: sentence.id,
       tokenIndex: token.index,
       x: Math.max(12, Math.min(window.innerWidth - width - 12, rect.left + rect.width / 2 - width / 2)),
-      y: Math.max(80, Math.min(window.innerHeight - 174, rect.bottom + 10)),
+      y: Math.max(80, Math.min(window.innerHeight - 238, rect.bottom + 10)),
     });
+    setPinyinEditorOpen(false);
+    setPinyinDraft(token.displayPinyin ?? token.pinyin ?? "");
   };
 
   const changePoint = (sentence: RecitationSentence, tokenIndex: number, visualLevel: number) => {
@@ -925,6 +929,17 @@ export function CompactRecitationEditor({
   const editSelected = (transform: (sentence: RecitationSentence, token: TimedToken) => RecitationSentence) => {
     if (!selectedSentence || !selectedToken) return;
     onSentenceChange(transform(selectedSentence, selectedToken));
+  };
+
+  const saveSelectedPinyin = () => {
+    const value = pinyinDraft.trim();
+    editSelected((sentence, token) => ({
+      ...sentence,
+      tokens: sentence.tokens.map((candidate) => (
+        candidate.index === token.index ? { ...candidate, displayPinyin: value } : candidate
+      )),
+    }));
+    setPinyinEditorOpen(false);
   };
 
   const exportPdf = async () => {
@@ -1067,7 +1082,7 @@ export function CompactRecitationEditor({
         >
           <div className="compact-popover-heading">
             <span>“{selectedToken.char}”及字后位置</span>
-            <button type="button" onClick={() => setSelection(undefined)} aria-label="关闭标识工具">×</button>
+            <button type="button" onClick={() => { setSelection(undefined); setPinyinEditorOpen(false); }} aria-label="关闭标识工具">×</button>
           </div>
           <div className="compact-marker-groups">
             <div>
@@ -1118,8 +1133,31 @@ export function CompactRecitationEditor({
                 className={selectedSentence.endingIntonation.type === "falling" ? "active" : ""}
                 onClick={() => editSelected((sentence) => setEndingTone(sentence, "falling"))}
               >↘</button>
+              <button
+                type="button"
+                className={pinyinEditorOpen ? "active" : ""}
+                onClick={() => {
+                  setPinyinDraft(selectedToken.displayPinyin ?? selectedToken.pinyin ?? "");
+                  setPinyinEditorOpen((open) => !open);
+                }}
+              >拼音</button>
             </div>
           </div>
+          {pinyinEditorOpen ? (
+            <div className="compact-pinyin-editor">
+              <label>拼音
+                <input
+                  value={pinyinDraft}
+                  onChange={(event) => setPinyinDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") saveSelectedPinyin();
+                  }}
+                  aria-label={`修改“${selectedToken.char}”的拼音`}
+                />
+              </label>
+              <button type="button" onClick={saveSelectedPinyin}>保存</button>
+            </div>
+          ) : null}
         </aside>
       ) : null}
 

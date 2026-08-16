@@ -26,6 +26,9 @@ test("compact editor exposes formal V and v markers plus one editable node per s
   assert.match(component, /onPointerMove/);
   assert.match(component, /prosodyVisualLevelFromPointerY/);
   assert.match(component, /upsertProsodyPointOverride/);
+  assert.match(component, /pinyinEditorOpen/);
+  assert.match(component, /saveSelectedPinyin/);
+  assert.match(component, /displayPinyin: value/);
 });
 
 test("compact editor paginates measured sentence rows and exports one A4 PDF", async () => {
@@ -55,4 +58,7 @@ test("compact editor paginates measured sentence rows and exports one A4 PDF", a
   assert.match(component, /\{"\/\/\/"\}/);
   assert.match(component, /compact-legend-focus/);
   assert.match(component, /> 语势曲线</);
+  assert.match(component, /V<\/b> 换气/);
+  assert.match(component, /v<\/b> 偷气/);
+  assert.match(css, /\.compact-page-header\s*\{[\s\S]*?align-items: baseline/);
 });
