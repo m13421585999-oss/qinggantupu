@@ -33,8 +33,8 @@ test("compact editor paginates measured sentence rows and exports one A4 PDF", a
   const css = await readFile(new URL("app/globals.css", root), "utf8");
   assert.match(component, /data-compact-measure-id/);
   assert.match(component, /paginateMeasuredPrintBlocks\(measured/);
-  assert.match(component, /maxBlocksPerPage: 8/);
-  assert.match(component, /plan\.blockIds\.length === 8 \? "is-eight-row-page"/);
+  assert.doesNotMatch(component, /maxBlocksPerPage:/);
+  assert.doesNotMatch(component, /is-eight-row-page/);
   assert.match(component, /data-compact-pdf-page/);
   assert.match(component, /pixelRatio: COMPACT_RENDER_DPR/);
   assert.match(component, /new jsPDF\(\{[\s\S]*?unit: "mm"[\s\S]*?format: "a4"/);
@@ -42,9 +42,13 @@ test("compact editor paginates measured sentence rows and exports one A4 PDF", a
   assert.match(component, /pdf\.save\(safePrintFilename\(work\.title, "pdf"\)\)/);
   assert.match(css, /\.compact-a4-page \{[\s\S]*?width: 210mm;[\s\S]*?height: 297mm;/);
   assert.match(css, /--compact-a4-margin, 11mm/);
-  assert.match(css, /\.compact-a4-page\.is-eight-row-page \.compact-token-manuscript\s*\{[\s\S]*?font-size: 20pt/);
-  assert.match(css, /\.compact-a4-page\.is-eight-row-page \.compact-prosody-curve,[\s\S]*?height: 11\.5mm/);
-  assert.match(css, /\.compact-a4-page\.is-eight-row-page \.compact-page-body\s*\{[\s\S]*?padding-bottom: 2\.4mm/);
+  assert.match(css, /\.compact-token-manuscript\s*\{[\s\S]*?font-size: 22\.6pt/);
+  assert.match(css, /\.compact-token-pinyin\s*\{[\s\S]*?font-size: 12\.5pt/);
+  assert.match(css, /\.compact-sentence-number\s*\{[\s\S]*?font-size: 7\.3pt/);
+  assert.match(css, /\.compact-page-body\s*\{[\s\S]*?gap: 0\.6mm/);
+  assert.match(css, /\.compact-prosody-curve,[\s\S]*?height: 11\.5mm/);
+  assert.match(css, /\.compact-page-legend\s*\{[\s\S]*?font-size: 8\.25pt/);
+  assert.match(component, /replace\(\/\^《\+/);
   assert.match(css, /compact-a4-background\.png/);
   assert.match(css, /\.compact-a4-page::before/);
   assert.match(component, /stroke="#526f82"/);
