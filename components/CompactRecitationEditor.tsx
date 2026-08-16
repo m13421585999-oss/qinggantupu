@@ -255,6 +255,14 @@ function CompactTokenUnit({
             {visibleSourceCharacter(token.char)}
           </span>
         ))}
+        {breath ? (
+          <span
+            className={breath.type === "breath_major" ? "compact-breath-major" : "compact-breath-minor"}
+            aria-label={breath.type === "breath_major" ? "大换气" : "小换气"}
+          >
+            {breath.type === "breath_major" ? "V" : "v"}
+          </span>
+        ) : null}
         <span className="compact-spoken-token">
           <span className="compact-token-pinyin" aria-hidden="true">
             {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
@@ -287,14 +295,6 @@ function CompactTokenUnit({
         {pause ? (
           <span className={`compact-pause compact-pause-${pause.type}`} aria-label={pause.type === "long" ? "长停" : "短停"}>
             {pause.type === "long" ? "///" : "/"}
-          </span>
-        ) : null}
-        {breath ? (
-          <span
-            className={breath.type === "breath_major" ? "compact-breath-major" : "compact-breath-minor"}
-            aria-label={breath.type === "breath_major" ? "大换气" : "小换气"}
-          >
-            {breath.type === "breath_major" ? "V" : "v"}
           </span>
         ) : null}
         {unit.suffixPunctuation.map((token) => (
