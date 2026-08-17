@@ -46,6 +46,16 @@ npm run local
 
 真正启动逻辑统一在 `scripts/start-local.mjs`，双击入口只负责切到项目根目录并调用 `npm run local`。
 
+#### 初始化本地数据库
+
+首次启动（或清理 `.wrangler` 后），本地 D1 是空库，页面会报 `no such table: works`。运行一次初始化即可：
+
+```text
+npm run db:init
+```
+
+该命令把 `drizzle/` 下的迁移应用到本地 D1（幂等，可重复执行）。
+
 ### 环境要求
 
 - Node.js 22.13 或更高版本；

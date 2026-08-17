@@ -14,6 +14,7 @@
     "test:integration": "node --test tests/integration/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
+    "db:init": "node scripts/init-local-db.mjs",
     "local": "node scripts/start-local.mjs"
   },
   "dependencies": {
