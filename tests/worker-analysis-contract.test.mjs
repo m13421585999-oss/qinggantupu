@@ -53,11 +53,15 @@ test("worker exposes the production standard-audio analysis contract", async () 
   assert.match(worker, /\/v1\/interpretation-jobs/);
   assert.doesNotMatch(worker, /DEMO_CONTROL_SPEC|createDemoControlSpec|月光下的中国/);
 
-  assert.match(worker, /interface Env/);
-  assert.match(worker, /ANALYSIS_SERVICE_URL/);
-  assert.match(worker, /ANALYSIS_SERVICE_TOKEN/);
-  assert.match(worker, /ANALYSIS_CALLBACK_TOKEN/);
-  assert.doesNotMatch(worker, /LLM_API_KEY/);
+  const envDeclaration = await readFile(
+    new URL("../worker-configuration.d.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(envDeclaration, /interface Env/);
+  assert.match(envDeclaration, /ANALYSIS_SERVICE_URL/);
+  assert.match(envDeclaration, /ANALYSIS_SERVICE_TOKEN/);
+  assert.match(envDeclaration, /ANALYSIS_CALLBACK_TOKEN/);
+  assert.doesNotMatch(envDeclaration, /LLM_API_KEY/);
 });
 
 test("worker exposes a searchable work library with optimistic concurrency", async () => {
