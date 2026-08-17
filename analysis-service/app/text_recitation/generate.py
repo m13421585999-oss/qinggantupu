@@ -22,6 +22,9 @@ class TextRecitationError(RuntimeError):
 
 
 PUNCTUATION = set("，。！？、；：,.!?;:\n\r\t ‘’“”\"'（）()【】[]《》〈〉—…·")
+# Punctuation that already carries a natural pause. An automatic "/" placed
+# immediately before or after these is redundant and is dropped by the program.
+PAUSE_PUNCTUATION = set("，。；：！？、…—,.!?;:")
 HAN = re.compile(r"[\u3400-\u9fff]")
 PIPELINE_VERSION = "text-recitation-1.0"
 # Synthetic pacing for a manuscript-only timeline. There is no audio, but the
@@ -132,6 +135,72 @@ def _user_prompt(request: TextRecitationRequest) -> str:
     )
 
 
+def _pause_next_to_punctuation(text: str, index: int) -> bool:
+    after = text[index] if 0 <= index < len(text) else ""
+    nxt = text[index + 1] if 0 <= index + 1 < len(text) else ""
+    return after in PAUSE_PUNCTUATION or nxt in PAUSE_PUNCTUATION
+
+
+def normalize_pauses(sentence: TextRecitationSentence, text: str) -> list[int]:
+    """Drop automatic "/" that sit next to existing punctuation.
+
+    A punctuation mark already carries a natural pause, so a teaching "/"
+    immediately before or after it is redundant. Human editors can still add
+    their own "/" later; this only cleans the automatic output.
+    """
+    result: list[int] = []
+    seen: set[int] = set()
+    for index in sentence.pause_after:
+        if index in seen:
+            continue
+        if _pause_next_to_punctuation(text, index):
+            continue
+        seen.add(index)
+        result.append(index)
+    return result
+
+
+def _validate_annotations(
+    plan: TextRecitationPlan,
+    text: str,
+    expected: list[tuple[int, int]],
+) -> None:
+    """Program-side annotation invariants the LLM must respect."""
+    for position, (sentence, (start, end)) in enumerate(
+        zip(plan.sentences, expected, strict=True), 1
+    ):
+        # Focus: spans must not overlap and must contain at least one real
+        # spoken character (never a pure punctuation span).
+        ordered = sorted(
+            (f.focus_span.start, f.focus_span.end) for f in sentence.focus_spans
+        )
+        for index, (fstart, fend) in enumerate(ordered):
+            if fend < fstart:
+                raise TextRecitationError(f"第 {position} 句重音范围无效。")
+            if index > 0 and fstart <= ordered[index - 1][1]:
+                raise TextRecitationError(f"第 {position} 句存在相互重叠的重音。")
+            segment = text[fstart : fend + 1]
+            if not any(HAN.search(char) and char not in PUNCTUATION for char in segment):
+                raise TextRecitationError(f"第 {position} 句重音不含有效朗读文字。")
+        # Pause: must not sit inside a focus span.
+        focus_indexes: set[int] = set()
+        for focus in sentence.focus_spans:
+            focus_indexes.update(range(focus.focus_span.start, focus.focus_span.end + 1))
+        for index in sentence.pause_after:
+            if index in focus_indexes:
+                raise TextRecitationError(f"第 {position} 句停顿落在重音词组内部。")
+        # Prosody: active span must cover at least 3 spoken characters.
+        for event in sentence.prosody:
+            segment = text[event.active_span.start : event.active_span.end + 1]
+            spoken = sum(
+                1 for char in segment if HAN.search(char) and char not in PUNCTUATION
+            )
+            if spoken < 3:
+                raise TextRecitationError(
+                    f"第 {position} 句语势覆盖的有效朗读文字不足 3 个。"
+                )
+
+
 def _validate_plan(plan: TextRecitationPlan, text: str) -> list[tuple[int, int]]:
     expected = split_sentences(text)
     if len(plan.sentences) != len(expected):
@@ -150,12 +219,14 @@ def _validate_plan(plan: TextRecitationPlan, text: str) -> list[tuple[int, int]]
             raise TextRecitationError(
                 f"第 {position} 句正文或 token 范围被改写，已拒绝结果。"
             )
+    _validate_annotations(plan, text, expected)
     return expected
 
 
 def _assemble_control_spec(
     *,
     request: TextRecitationRequest,
+    text: str,
     plan: TextRecitationPlan,
     tokens: list[dict[str, Any]],
     expected: list[tuple[int, int]],
@@ -173,6 +244,7 @@ def _assemble_control_spec(
                 "text": sentence.text,
                 "start_index": sentence.start_index,
                 "end_index": sentence.end_index,
+                "function": sentence.function,
                 "focus": [
                     {
                         "focus_span": {
@@ -188,7 +260,7 @@ def _assemble_control_spec(
                 ],
                 "pauses": [
                     {"after_index": index, "type": "short", "observed_duration_ms": None}
-                    for index in sorted(set(sentence.pause_after))
+                    for index in normalize_pauses(sentence, text)
                 ],
                 "prolongations": [],
                 "macro_prosody_path": {
@@ -340,6 +412,7 @@ async def generate_text_recitation(
 
     control_spec = _assemble_control_spec(
         request=request,
+        text=text,
         plan=plan,
         tokens=tokens,
         expected=expected,

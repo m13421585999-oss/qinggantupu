@@ -179,19 +179,19 @@ def compile_sentence_prosody(
 ) -> CompiledProsody:
     """Compile teaching prosody events into a 9-level monotone curve.
 
-    Outside every active span the curve stays flat at the carried level so two
-    connected events inherit each other's ending height instead of jumping.
+    Each event redraws its own start height from the local baseline, so a
+    second event is never forced to inherit the first event's ending height.
+    Outside every active span the curve stays flat at the baseline.
     """
     levels: dict[int, int] = {
         index: base_level for index in range(min_index, max_index + 1)
     }
     segments: list[dict[str, Any]] = []
-    carried = base_level
 
     for event in normalize_events(events):
         start, end = event.active_span.start, event.active_span.end
-        start_level, _peak, end_level = _resolve_curve(event, carried)
-        anchors = _event_anchors(event, carried)
+        start_level, _peak, end_level = _resolve_curve(event, base_level)
+        anchors = _event_anchors(event, base_level)
         _interpolate_levels(levels, anchors)
         segment_type = "level"
         if event.type in {"rising", "peak"}:
@@ -208,7 +208,6 @@ def compile_sentence_prosody(
                 "confidence": event.confidence,
             }
         )
-        carried = end_level
 
     points = [
         {"token_index": index, "normalized_level": levels[index]}

@@ -23,12 +23,14 @@ import {
 import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
 import { TeachingProsodyTrack } from "@/components/TeachingProsodyTrack";
 import { mapSceneAssetsToSentences } from "@/lib/visual-assets";
+import { RHYTHM_LABELS } from "@/lib/recitation-schema";
 import type {
   BreathMark,
   EndingTone,
   PauseMark,
   RecitationSentence,
   RecitationWork,
+  Rhythm,
   TimedToken,
 } from "@/lib/recitation-schema";
 
@@ -467,10 +469,12 @@ function FullSceneCard({
   imageUrl,
   imageAlt,
   order,
+  rhythm,
 }: {
   imageUrl?: string;
   imageAlt?: string;
   order: number;
+  rhythm: Rhythm;
 }) {
   const [failed, setFailed] = useState<string>();
   const available = Boolean(imageUrl && imageUrl !== failed);
@@ -490,6 +494,9 @@ function FullSceneCard({
         <div className="full-scene-placeholder" role="img" aria-label="情景图片生成中" />
       )}
       <span className="full-scene-order">{String(order).padStart(2, "0")}</span>
+      <span className="full-rhythm-label" aria-label={`节奏：${RHYTHM_LABELS[rhythm]}`}>
+        {RHYTHM_LABELS[rhythm]}
+      </span>
     </aside>
   );
 }
@@ -519,7 +526,12 @@ function FullSentenceRow({
       data-full-block-id={measure ? undefined : block.id}
       data-full-measure-id={measure ? block.id : undefined}
     >
-      <FullSceneCard imageUrl={sceneImageUrl} imageAlt={sceneImageAlt} order={block.sentence.order} />
+      <FullSceneCard
+        imageUrl={sceneImageUrl}
+        imageAlt={sceneImageAlt}
+        order={block.sentence.order}
+        rhythm={block.sentence.rhythm}
+      />
       <div className="full-sentence-body">
         <FullGraphTrack
           sentence={block.sentence}

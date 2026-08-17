@@ -22,6 +22,7 @@ import {
 } from "@/lib/prosody-visual";
 import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
 import { TeachingProsodyTrack } from "@/components/TeachingProsodyTrack";
+import { RHYTHM_LABELS } from "@/lib/recitation-schema";
 import type {
   BreathMark,
   EndingTone,
@@ -533,7 +534,14 @@ function CompactSentenceRow({
       data-compact-block-id={measure ? undefined : block.id}
       data-compact-measure-id={measure ? block.id : undefined}
     >
-      <span className="compact-sentence-number">{String(block.sentence.order).padStart(2, "0")}</span>
+      <div className="compact-sentence-rail">
+        <span className="compact-sentence-number">{String(block.sentence.order).padStart(2, "0")}</span>
+        <span className="compact-rhythm-label" aria-label={`节奏：${RHYTHM_LABELS[block.sentence.rhythm]}`}>
+          {Array.from(RHYTHM_LABELS[block.sentence.rhythm]).map((character, index) => (
+            <span key={index}>{character}</span>
+          ))}
+        </span>
+      </div>
       <CompactGraphTrack
         sentence={block.sentence}
         editable={editable}

@@ -32,10 +32,13 @@ class TextRecitationSentence(StrictModel):
     text: str = Field(min_length=1)
     start_index: int = Field(ge=0)
     end_index: int = Field(ge=0)
-    focus_spans: list[FocusInterpretation] = Field(default_factory=list)
+    # Internal line function (叙述/描写/铺陈/展开/说明/对比/转折/递进/强调/
+    # 呼告/反问/设问/总结/高潮/回落/收束). Analysis-only, never rendered.
+    function: str | None = None
+    focus_spans: list[FocusInterpretation] = Field(default_factory=list, max_length=2)
     # ``/`` pause positions expressed as the token index they follow. The LLM
     # only selects teaching-meaningful boundaries; every pause is stored short.
-    pause_after: list[int] = Field(default_factory=list)
+    pause_after: list[int] = Field(default_factory=list, max_length=2)
     prosody: list[Prosody] = Field(default_factory=list, max_length=2)
     # New analysis only emits an explicit rise or fall; omission means level.
     ending_intonation: Literal["rising", "falling"] | None = None

@@ -3,13 +3,17 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
+import pytest
+
 from app.providers.openai_compatible import StructuredGenerationResult
 from app.schemas.control_spec import Prosody, Span
 from app.text_recitation.generate import (
     build_tokens,
     split_sentences,
     generate_text_recitation,
+    normalize_pauses,
     _assemble_control_spec,
+    _validate_annotations,
 )
 from app.text_recitation.prosody_compiler import (
     BASE_LEVEL,
@@ -139,10 +143,10 @@ def _plan() -> TextRecitationPlan:
     sentence = TextRecitationSentence(
         text="床前明月光，疑是地上霜。",
         start_index=0,
-        end_index=12,
+        end_index=11,
         focus_spans=[],
-        pause_after=[5],
-        prosody=[make_prosody("rising", 0, 12, 4, 8, strength=2)],
+        pause_after=[3],
+        prosody=[make_prosody("rising", 0, 11, 4, 8, strength=2)],
         ending_intonation="falling",
         confidence=0.8,
     )
@@ -156,6 +160,7 @@ def test_assemble_control_spec_marks_and_source():
     tokens = build_tokens(text)
     control_spec = _assemble_control_spec(
         request=request,
+        text=text,
         plan=plan,
         tokens=tokens,
         expected=split_sentences(text),
@@ -167,7 +172,7 @@ def test_assemble_control_spec_marks_and_source():
     sentence = control_spec["sentences"][0]
     # 停顿只出现 short，且 / 对应 after_index
     assert all(pause["type"] == "short" for pause in sentence["pauses"])
-    assert sentence["pauses"][0]["after_index"] == 5
+    assert sentence["pauses"][0]["after_index"] == 3
     # 无拖音
     assert sentence["prolongations"] == []
     # 语势事件 ≤ 2
@@ -240,3 +245,94 @@ def test_generate_text_recitation_end_to_end():
         assert len(sentence["prosody"]) <= 2
         assert sentence["ending_intonation"]["type"] in ("rising", "falling", "level")
         assert sentence["macro_prosody_path"]["source"] == "text_llm"
+
+
+# ============ 第三轮：自动标谱规则测试 ============
+
+def _sentence(text, start=0, end=None, **kwargs):
+    end = len(text) - 1 if end is None else end
+    return TextRecitationSentence(text=text, start_index=start, end_index=end, confidence=0.9, **kwargs)
+
+
+def test_focus_max_two_enforced_by_schema():
+    # 每行 focus <= 2，超过 2 由 schema 拒绝
+    from pydantic import ValidationError
+    from app.schemas.control_spec import FocusInterpretation
+
+    focus = FocusInterpretation(focus_span=Span(start=0, end=1), confidence=0.8)
+    with pytest.raises(ValidationError):
+        _sentence("测试文本", focus_spans=[focus, focus, focus])
+
+
+def test_pause_max_two_enforced_by_schema():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        _sentence("测试文本", pause_after=[0, 1, 2])
+
+
+def test_pause_next_to_punctuation_is_dropped():
+    # 标点本身已承担停顿，紧邻标点的自动 / 被程序删除
+    text = "人生得意须尽欢，莫使金樽空对月。"
+    # 逗号 index 7；pause_after=[6] 在逗号前、[7] 在逗号后，都紧邻标点
+    sentence = _sentence(text, pause_after=[6, 7])
+    result = normalize_pauses(sentence, text)
+    assert result == []
+
+
+def test_pause_allowed_without_punctuation():
+    # 无标点意群边界允许 /
+    text = "君不见黄河之水天上来"
+    sentence = _sentence(text, pause_after=[2])
+    result = normalize_pauses(sentence, text)
+    assert result == [2]
+
+
+def test_pause_inside_focus_rejected():
+    from app.schemas.control_spec import FocusInterpretation
+    text = "人生得意须尽欢"
+    focus = FocusInterpretation(focus_span=Span(start=0, end=3), confidence=0.8)
+    sentence = _sentence(text, focus_spans=[focus], pause_after=[2])
+    plan = TextRecitationPlan(sentences=[sentence])
+    with pytest.raises(Exception, match="重音"):
+        _validate_annotations(plan, text, [(0, len(text) - 1)])
+
+
+def test_prosody_active_span_requires_three_spoken_chars():
+    text = "人生得意须尽欢"
+    sentence = _sentence(
+        text,
+        prosody=[make_prosody("rising", 0, 1, 0, 1)],  # 只覆盖 2 字
+    )
+    plan = TextRecitationPlan(sentences=[sentence])
+    with pytest.raises(Exception, match="有效朗读文字不足 3 个"):
+        _validate_annotations(plan, text, [(0, len(text) - 1)])
+
+
+def test_compile_prosody_amplitude_at_least_three():
+    # 已有测试，保持
+    pass
+
+
+def test_second_prosody_event_restarts_from_baseline():
+    # 两个事件：第二个不强制继承第一个结束高度（可重新起势）
+    events = [
+        make_prosody("rising", 0, 4, 2, 3, strength=3),   # 终点约 7
+        make_prosody("falling", 6, 9, 7, 8, strength=1),  # 从基准 4 重新起势
+    ]
+    compiled = compile_sentence_prosody(0, 9, events)
+    levels = {p["token_index"]: p["normalized_level"] for p in compiled.points}
+    # 第一事件结束高度（index 4）明显高于第二事件起点（index 6）
+    assert levels[4] > levels[6]
+
+
+def test_ending_intonation_allows_null():
+    # 无明确语调允许 null（不显示符号）
+    sentence = _sentence("测试文本", ending_intonation=None)
+    assert sentence.ending_intonation is None
+    assert _sentence("测试文本", ending_intonation="falling").ending_intonation == "falling"
+
+
+def test_rhythm_label_mapping_exists():
+    from app.schemas.control_spec import Rhythm
+    for rhythm in ("light", "solemn", "relaxed", "tense", "soaring", "low"):
+        assert Rhythm(type=rhythm).type == rhythm

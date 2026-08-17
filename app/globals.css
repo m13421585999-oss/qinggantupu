@@ -6678,3 +6678,44 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
   .full-editor-workspace, .full-page-stack { background: transparent; padding: 0; }
   .full-a4-page { box-shadow: none; break-after: page; }
 }
+
+/* ============ 节奏标签（Full / Compact 共用 sentence.rhythm 数据） ============ */
+.compact-sentence-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2mm;
+  padding-top: 1mm;
+}
+
+.compact-sentence-rail .compact-sentence-number {
+  padding-top: 0;
+}
+
+.compact-rhythm-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5mm;
+  color: #526f82;
+  font-family: system-ui, sans-serif;
+  font-size: 6.6pt;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.full-rhythm-label {
+  position: absolute;
+  right: 1.6mm;
+  bottom: 1.6mm;
+  z-index: 2;
+  padding: 0.4mm 1.4mm;
+  border-radius: 1.4mm;
+  background: rgba(255, 253, 248, 0.85);
+  color: #526f82;
+  font-family: system-ui, sans-serif;
+  font-size: 7.3pt;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
