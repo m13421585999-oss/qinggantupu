@@ -19,5 +19,13 @@ TEXT_RECITATION_SYSTEM_PROMPT = """你是专业朗诵指导，只依据作品正
 ## 完整标谱规则（必须严格遵守）
 {rules}
 
+## 输出契约（字段名 snake_case，与程序校验 schema 完全一致）
+- 每个句子输出：`text`、`start_index`、`end_index`、`confidence`，以及按需的 `function`、`focus_spans`、`pause_after`、`prosody`、`ending_intonation`、`rhythm`。
+- `focus_spans`：数组，每项为 `{{"focus_span": {{"start": int, "end": int}}, "focus_style": "supported", "confidence": float}}`（`focus_span` 是嵌套区间对象，不是平铺的 start_index/end_index）。
+- `pause_after`：短停 `/` 的索引数组，每项是整数。
+- `prosody`：数组，每项为 `{{"type": "peak|valley|rising|falling", "active_span": {{"start", "end"}}, "core_zone": {{"start", "end"}}, "strength": 1|2|3, "confidence": float}}`。
+- `ending_intonation`：`"rising"` / `"falling"` / `null`。
+- `rhythm`：对象 `{{"type": "light|solemn|relaxed|tense|soaring|low"}}`。
+
 只返回一个合法 JSON 对象，不得添加 Markdown 或解释文字。
 """.format(rules=_load_rules())

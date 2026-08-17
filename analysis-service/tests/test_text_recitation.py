@@ -14,6 +14,8 @@ from app.text_recitation.generate import (
     normalize_pauses,
     _assemble_control_spec,
     _validate_annotations,
+    _normalize_llm_payload,
+    _validate_plan_payload,
 )
 from app.text_recitation.prosody_compiler import (
     BASE_LEVEL,
@@ -336,3 +338,104 @@ def test_rhythm_label_mapping_exists():
     from app.schemas.control_spec import Rhythm
     for rhythm in ("light", "solemn", "relaxed", "tense", "soaring", "low"):
         assert Rhythm(type=rhythm).type == rhythm
+
+
+# ============ 第十一轮：LLM JSON contract 归一化回归测试 ============
+
+def _old_format_focus_sentence() -> dict:
+    """模型实际返回的旧扁平 focus 结构（含 camelCase 字段名）。"""
+    return {
+        "text": "床前明月光",
+        "start_index": 0,
+        "end_index": 4,
+        "function": "叙述",
+        "focusSpans": [
+            {"start_index": 2, "end_index": 4, "focus_style": "supported", "confidence": 0.9}
+        ],
+        "pauses": [1],
+        "prosody": [
+            {"type": "rising", "activeSpan": {"start": 0, "end": 4}, "coreZone": {"start": 2, "end": 4}, "strength": 2, "confidence": 0.9}
+        ],
+        "endingIntonation": "rising",
+        "rhythm": "relaxed",
+        "confidence": 0.85,
+    }
+
+
+def test_normalize_old_focus_shape_then_validate():
+    # 1. 旧扁平 focus 结构 → 归一化 → 验证成功
+    raw = {"sentences": [_old_format_focus_sentence()]}
+    plan = _validate_plan_payload(raw)
+    assert isinstance(plan, TextRecitationPlan)
+    assert plan.sentences[0].focus_spans[0].focus_span.start == 2
+    assert plan.sentences[0].focus_spans[0].focus_span.end == 4
+    assert plan.sentences[0].focus_spans[0].focus_style == "supported"
+    assert plan.sentences[0].prosody[0].active_span.start == 0
+    assert plan.sentences[0].prosody[0].core_zone.end == 4
+    assert plan.sentences[0].ending_intonation == "rising"
+    assert plan.sentences[0].rhythm.type == "relaxed"
+    assert plan.sentences[0].pause_after == [1]
+
+
+def test_current_schema_json_validates_directly():
+    # 2. 当前正式 schema JSON → 不经语义改变直接验证成功
+    raw = {
+        "sentences": [
+            {
+                "text": "床前明月光",
+                "start_index": 0,
+                "end_index": 4,
+                "focus_spans": [
+                    {"focus_span": {"start": 2, "end": 4}, "focus_style": "supported", "confidence": 0.9}
+                ],
+                "pause_after": [1],
+                "prosody": [
+                    {"type": "rising", "active_span": {"start": 0, "end": 4}, "core_zone": {"start": 2, "end": 4}, "strength": 2, "confidence": 0.9}
+                ],
+                "ending_intonation": "rising",
+                "rhythm": {"type": "relaxed"},
+                "confidence": 0.85,
+            }
+        ]
+    }
+    plan = TextRecitationPlan.model_validate(raw)
+    assert plan.sentences[0].focus_spans[0].focus_span.start == 2
+
+
+def test_undeterminable_structure_must_fail():
+    # 3. 无法确定性转换的错误结构（缺 focus_span 且无 start/end）→ 必须失败
+    raw = {
+        "sentences": [
+            {
+                "text": "床前明月光",
+                "start_index": 0,
+                "end_index": 4,
+                "focus_spans": [
+                    {"focus_style": "supported", "confidence": 0.9}  # 无 start/end，无法迁移
+                ],
+                "confidence": 0.85,
+            }
+        ]
+    }
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        TextRecitationPlan.model_validate(_normalize_llm_payload(raw))
+
+
+def test_normalization_is_identity_for_current_shape():
+    # 归一化对已是正确结构的输入应保持等价（不改 index、不补造）
+    raw = {
+        "sentences": [
+            {
+                "text": "床前明月光",
+                "start_index": 0,
+                "end_index": 4,
+                "focus_spans": [
+                    {"focus_span": {"start": 2, "end": 4}, "confidence": 0.9}
+                ],
+                "confidence": 0.85,
+            }
+        ]
+    }
+    normalized = _normalize_llm_payload(raw)
+    assert normalized["sentences"][0]["focus_spans"][0]["focus_span"] == {"start": 2, "end": 4}

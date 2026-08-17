@@ -141,6 +141,88 @@ def _pause_next_to_punctuation(text: str, index: int) -> bool:
     return after in PAUSE_PUNCTUATION or nxt in PAUSE_PUNCTUATION
 
 
+def _rename_key(old: str, new: str, mapping: dict[str, Any]) -> None:
+    """Deterministic key rename: only move the value, never invent one."""
+    if old in mapping and new not in mapping:
+        mapping[new] = mapping.pop(old)
+
+
+def _normalize_focus_item(focus: Any) -> Any:
+    """Migrate a flat legacy focus to the nested ``focus_span`` shape.
+
+    Legacy (LLM drift): ``{"start_index": x, "end_index": y, "focus_style": ...}``
+    Current schema:     ``{"focus_span": {"start": x, "end": y}, ...}``
+    The index values are preserved verbatim; only the container shape changes.
+    """
+    if not isinstance(focus, dict):
+        return focus
+    item = dict(focus)
+    if "focus_span" not in item:
+        if "start_index" in item and "end_index" in item:
+            item["focus_span"] = {
+                "start": item.pop("start_index"),
+                "end": item.pop("end_index"),
+            }
+        elif "start" in item and "end" in item:
+            item["focus_span"] = {
+                "start": item.pop("start"),
+                "end": item.pop("end"),
+            }
+    return item
+
+
+def _normalize_prosody_item(event: Any) -> Any:
+    if not isinstance(event, dict):
+        return event
+    item = dict(event)
+    _rename_key("activeSpan", "active_span", item)
+    _rename_key("coreZone", "core_zone", item)
+    return item
+
+
+def _normalize_sentence(sentence: Any) -> Any:
+    if not isinstance(sentence, dict):
+        return sentence
+    item = dict(sentence)
+    # Legacy camelCase field names from the old prompt examples.
+    _rename_key("focusSpans", "focus_spans", item)
+    _rename_key("pauses", "pause_after", item)
+    _rename_key("endingIntonation", "ending_intonation", item)
+    if isinstance(item.get("focus_spans"), list):
+        item["focus_spans"] = [_normalize_focus_item(f) for f in item["focus_spans"]]
+    if isinstance(item.get("prosody"), list):
+        item["prosody"] = [_normalize_prosody_item(p) for p in item["prosody"]]
+    if isinstance(item.get("pause_after"), list):
+        item["pause_after"] = [
+            p["after_index"] if isinstance(p, dict) and "after_index" in p else p
+            for p in item["pause_after"]
+        ]
+    if isinstance(item.get("rhythm"), str):
+        item["rhythm"] = {"type": item["rhythm"]}
+    return item
+
+
+def _normalize_llm_payload(data: Any) -> Any:
+    """Narrow compatibility layer: migrate only confirmed legacy shapes.
+
+    This never guesses missing semantics, fabricates focus, rewrites index
+    values or the manuscript, and never relaxes field validation. It only
+    performs deterministic key renames and the flat-to-nested ``focus_span``
+    migration so the LLM's drift does not block the strict Pydantic model.
+    """
+    if not isinstance(data, dict):
+        return data
+    item = dict(data)
+    if isinstance(item.get("sentences"), list):
+        item["sentences"] = [_normalize_sentence(s) for s in item["sentences"]]
+    return item
+
+
+def _validate_plan_payload(data: dict[str, Any]) -> TextRecitationPlan:
+    """Validate the (normalized) LLM payload against the single schema."""
+    return TextRecitationPlan.model_validate(_normalize_llm_payload(data))
+
+
 def normalize_pauses(sentence: TextRecitationSentence, text: str) -> list[int]:
     """Drop automatic "/" that sit next to existing punctuation.
 
@@ -349,10 +431,10 @@ async def _generate_once(
             reasoning_effort=reasoning_effort,
             temperature=0.2,
             timeout_seconds=timeout_seconds,
-            validator=TextRecitationPlan.model_validate,
+            validator=_validate_plan_payload,
             prefer_chat_json=True,
         )
-        plan = TextRecitationPlan.model_validate(generation.data)
+        plan = _validate_plan_payload(generation.data)
     except (StructuredLlmError, ValidationError, ValueError) as exc:
         raise TextRecitationError(f"文稿分析生成失败：{exc}") from exc
     return plan, {

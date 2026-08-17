@@ -156,7 +156,7 @@ falling 落潮
 
 ### 8.2 半起型
 
-资料中的「半起型」有意义的，但**不增加第五种语势类型**，统一通过 `rising` 的局部 activeSpan 表达：前部平稳 → 局部 rising → 提前结束 → 后部悬停/保持。
+资料中的「半起型」有意义的，但**不增加第五种语势类型**，统一通过 `rising` 的局部 active_span 表达：前部平稳 → 局部 rising → 提前结束 → 后部悬停/保持。
 
 ### 8.3 各类型表达结构
 
@@ -180,9 +180,9 @@ falling 落潮
 
 上一行曲线结束在什么高度不约束下一行起始高度。每个 Sentence 根据自己的上下文、行功能、节奏、语势独立设计曲线。句群递进通过 rhythm、strength、prosody type、情感阶段表达，不是通过跨行连接 SVG 高度。
 
-### 8.7 activeSpan
+### 8.7 active_span
 
-一个语势事件原则上至少覆盖 `3` 个有效朗读文字，不要给一个孤立单字创建自动语势。activeSpan 不必覆盖整行，允许前平、局部变化、后平。
+一个语势事件原则上至少覆盖 `3` 个有效朗读文字，不要给一个孤立单字创建自动语势。active_span 不必覆盖整行，允许前平、局部变化、后平。
 
 ### 8.8 9 档视觉规则
 
@@ -194,7 +194,7 @@ falling 落潮
 
 ### 8.10 曲线必须存在平台和过渡
 
-语势不能逐字改变高度。推荐形态（趋势模板，按实际 activeSpan 长度插值）：
+语势不能逐字改变高度。推荐形态（趋势模板，按实际 active_span 长度插值）：
 
 ```text
 rising  4 4 4 5 6 7 7
@@ -259,18 +259,33 @@ v      偷气
 
 ## 12. 输出结构
 
-每个 Sentence 的 Text Recitation Plan 至少表达：
+每个 Sentence 必须输出以下字段（snake_case，与程序校验 schema 完全一致）：
 
 ```json
 {
-  "text": "...",
-  "function": "...",
-  "rhythm": "relaxed",
-  "focusSpans": [],
-  "pauses": [],
-  "prosody": [],
-  "endingIntonation": null
+  "text": "君不见黄河之水天上来",
+  "start_index": 0,
+  "end_index": 9,
+  "function": "呼告",
+  "focus_spans": [
+    {"focus_span": {"start": 4, "end": 6}, "focus_style": "supported", "confidence": 0.9}
+  ],
+  "pause_after": [2],
+  "prosody": [
+    {"type": "rising", "active_span": {"start": 0, "end": 9}, "core_zone": {"start": 4, "end": 6}, "strength": 2, "confidence": 0.9}
+  ],
+  "ending_intonation": "rising",
+  "rhythm": {"type": "soaring"},
+  "confidence": 0.9
 }
 ```
 
-其中：`focusSpans maxItems = 2`、`pauses maxItems = 2`、`prosody maxItems = 2`。
+字段说明（snake_case，字段名不可改写）：
+
+- `focus_spans`：重音数组，`maxItems = 2`。每个元素为 `{"focus_span": {"start": int, "end": int}, "focus_style": "supported", "confidence": float}`。`focus_span.start/end` 是字符索引区间（含端点），必须在句子 `start_index..end_index` 内。
+- `pause_after`：短停 `/` 的 token 索引数组，`maxItems = 2`。每个元素是整数（该停顿紧跟的字索引）。
+- `prosody`：语势数组，`maxItems = 2`。每个元素为 `{"type": "peak|valley|rising|falling", "active_span": {"start": int, "end": int}, "core_zone": {"start": int, "end": int}, "strength": 1|2|3, "confidence": float}`。`core_zone` 必须在 `active_span` 内。
+- `ending_intonation`：句尾语调，只允许 `"rising"`、`"falling"`、或 `null`（无明确方向时）。
+- `rhythm`：节奏对象 `{"type": "light|solemn|relaxed|tense|soaring|low"}`。
+- `confidence`：`0~1` 浮点（每个 sentence 和每个 focus/prosody 都有）。
+
