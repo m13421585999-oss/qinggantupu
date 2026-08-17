@@ -39,6 +39,11 @@ from app.providers.hero_text_validation import (
 )
 from app.schemas.control_spec import JobRequest
 from app.schemas.visual import VisualDirectorRequest
+from app.text_recitation import (
+    TextRecitationError,
+    TextRecitationRequest,
+    generate_text_recitation,
+)
 from app.tts_director import (
     TtsDirectorError,
     TtsDirectorRequest,
@@ -502,6 +507,37 @@ async def retry_control_spec_interpretation(
             timeout_seconds=settings.request_timeout_seconds,
         )
         return {"job_id": request.job_id, "status": "failed"}
+
+
+@app.post("/v1/text-recitation", status_code=status.HTTP_200_OK)
+async def create_text_recitation(
+    request: TextRecitationRequest,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    try:
+        result = await generate_text_recitation(
+            request=request,
+            provider=settings.llm_provider,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            thinking=settings.llm_thinking,
+            reasoning_effort=settings.llm_reasoning_effort,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except TextRecitationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    generation_meta = result.pop("_meta", {})
+    generation_meta = generation_meta if isinstance(generation_meta, dict) else {}
+    return {
+        **result,
+        "_meta": {
+            "provider": settings.llm_provider,
+            "model": settings.llm_model,
+            "reasoning_effort": settings.llm_reasoning_effort,
+            **generation_meta,
+        },
+    }
 
 
 @app.post("/v1/visual-director", status_code=status.HTTP_200_OK)

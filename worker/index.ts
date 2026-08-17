@@ -38,6 +38,7 @@ const STANDARD_ANALYSIS_JOB_TYPE = "standard_audio_analysis";
 const LEGACY_ANALYSIS_JOB_TYPE = "reference_analysis";
 const AI_TTS_ANALYSIS_JOB_TYPE = "ai_tts_audio_analysis";
 const AI_TTS_GENERATION_JOB_TYPE = "ai_tts_generation";
+const TEXT_RECITATION_JOB_TYPE = "text_recitation";
 const VISUAL_GENERATION_JOB_TYPE = "visual_generation";
 const VISUAL_SCENE_CONCURRENCY = 3;
 const VISUAL_GENERATION_RETRY_LIMIT = 1;
@@ -1592,6 +1593,113 @@ async function getAnalysisJob(env: Env, jobId: string) {
   if (output?.control_spec) payload.control_spec = output.control_spec;
   if (job.status === "succeeded") payload.work = await getWorkPayload(env, String(job.work_id));
   return json(payload);
+}
+
+async function createTextRecitationJob(env: Env, workId: string) {
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
+  const serviceUrl = env.ANALYSIS_SERVICE_URL?.replace(/\/$/, "");
+  if (!serviceUrl || !env.ANALYSIS_SERVICE_TOKEN) {
+    return apiError(503, "ANALYSIS_SERVICE_NOT_CONFIGURED", "文稿分析服务尚未配置。");
+  }
+
+  // Preserve any human pinyin overrides from the current control spec so a
+  // re-analysis never loses creator-authored readings.
+  let pinyinOverrides: Record<string, unknown> = {};
+  if (work.current_spec_version_id) {
+    const existingSpec = await first<Row>(env.DB.prepare(
+      "SELECT spec_json FROM control_spec_versions WHERE id = ?",
+    ).bind(work.current_spec_version_id));
+    const existing = parseJson<Record<string, unknown>>(existingSpec?.spec_json as string | null);
+    const overrides = existing?.pinyin_overrides ?? existing?.pinyinOverrides;
+    if (overrides && typeof overrides === "object" && !Array.isArray(overrides)) {
+      pinyinOverrides = overrides as Record<string, unknown>;
+    }
+  }
+
+  const jobId = id("job");
+  const createdAt = now();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO processing_jobs
+         (id, work_id, type, status, progress, idempotency_key, input_json, created_at, updated_at)
+       VALUES (?, ?, ?, 'processing', 10, ?, ?, ?, ?)`,
+    ).bind(
+      jobId,
+      workId,
+      TEXT_RECITATION_JOB_TYPE,
+      `text-recitation:${workId}:${jobId}`,
+      JSON.stringify({ workId }),
+      createdAt,
+      createdAt,
+    ),
+    env.DB.prepare("UPDATE works SET status = 'analyzing', updated_at = ? WHERE id = ?").bind(createdAt, workId),
+  ]);
+
+  try {
+    const response = await fetch(`${serviceUrl}/v1/text-recitation`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.ANALYSIS_SERVICE_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: String(work.title),
+        author: String(work.author ?? ""),
+        text: String(work.source_text),
+        pinyin_overrides: pinyinOverrides,
+      }),
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`文稿分析服务返回 HTTP ${response.status}：${detail.slice(0, 400)}`);
+    }
+    const payload = await response.json() as Record<string, unknown>;
+    const controlSpec = payload.control_spec as Record<string, unknown> | undefined;
+    if (!controlSpec) throw new Error("文稿分析服务未返回 control_spec。");
+    validateControlSpec(controlSpec, String(work.source_text));
+
+    const latest = await first<Row>(env.DB.prepare(
+      "SELECT COALESCE(MAX(version), 0) AS version FROM control_spec_versions WHERE work_id = ?",
+    ).bind(workId));
+    const version = Number(latest?.version ?? 0) + 1;
+    const specId = id("spec");
+    const updated = { ...controlSpec, id: specId, workId, version };
+    const savedAt = nextUpdatedAt(String(work.updated_at));
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO control_spec_versions
+           (id, work_id, version, schema_version, source, spec_json, validation_state, created_by, created_at)
+         VALUES (?, ?, ?, ?, 'ai', ?, 'valid', 'ai', ?)`,
+      ).bind(specId, workId, version, String(controlSpec.schema_version ?? "2.0"), JSON.stringify(updated), savedAt),
+      env.DB.prepare(
+        `UPDATE works
+            SET current_spec_version_id = ?, status = 'review', audio_sync_status = 'pending',
+                published_revision_id = NULL, updated_at = ?
+          WHERE id = ?`,
+      ).bind(specId, savedAt, workId),
+      env.DB.prepare(
+        `UPDATE processing_jobs
+            SET status = 'succeeded', progress = 100, output_json = ?, updated_at = ?
+          WHERE id = ?`,
+      ).bind(JSON.stringify({ control_spec: updated }), savedAt, jobId),
+    ]);
+    return json({ control_spec: updated, work: await getWorkPayload(env, workId) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failedAt = now();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE processing_jobs
+            SET status = 'failed', progress = 100, error_code = 'TEXT_RECITATION_FAILED',
+                error_message = ?, updated_at = ?
+          WHERE id = ?`,
+      ).bind(message.slice(0, 1_200), failedAt, jobId),
+      env.DB.prepare("UPDATE works SET status = 'draft', updated_at = ? WHERE id = ?").bind(failedAt, workId),
+    ]);
+    return apiError(502, "TEXT_RECITATION_FAILED", message);
+  }
 }
 
 async function requestTtsDirection(env: Env, work: Row) {
@@ -3598,6 +3706,10 @@ async function api(request: Request, env: Env): Promise<Response | null> {
   const createJobMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/analysis-jobs$/);
   if (createJobMatch && request.method === "POST") {
     return createAnalysisJob(env, url.origin, createJobMatch[1]);
+  }
+  const textRecitationMatch = url.pathname.match(/^\/api\/works\/([^/]+)\/text-recitation-jobs$/);
+  if (textRecitationMatch && request.method === "POST") {
+    return createTextRecitationJob(env, textRecitationMatch[1]);
   }
   const jobMatch = url.pathname.match(/^\/api\/analysis-jobs\/([^/]+)$/);
   if (jobMatch && request.method === "GET") return getAnalysisJob(env, jobMatch[1]);

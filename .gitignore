@@ -59,3 +59,4 @@ cloudflare-env.d.ts
 /work/
 local-analyzer-windows.zip
 *.tsbuildinfo
+analysis-service/.venv-tr/

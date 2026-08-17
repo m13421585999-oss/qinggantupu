@@ -551,7 +551,8 @@ function parseMacroProsodyPath(value: unknown, min: number, max: number): MacroP
       confidence: number(segment.confidence),
     }];
   });
-  return { points, segments, source: "acoustic" };
+  const source = entry.source === "text_llm" ? "text_llm" : "acoustic";
+  return { points, segments, source };
 }
 
 function parseProsodyPointOverrides(value: unknown, min: number, max: number): ProsodyPointOverride[] | undefined {
@@ -877,12 +878,16 @@ export function importControlSpec(
   }
 
   const now = new Date().toISOString();
+  const rawProvenance = object(raw.analysis_provenance ?? raw.analysisProvenance);
+  const rawKnowledgeBase = object(
+    rawProvenance.knowledge_base ?? rawProvenance.knowledgeBase,
+  );
   return {
     schemaVersion: "2.0",
     id: `spec-${crypto.randomUUID()}`,
     workId,
     version: 1,
-    source: "hybrid",
+    source: raw.source === "ai" || raw.source === "human" ? raw.source : "hybrid",
     performanceProfile,
     timingProfile,
     tokens,
@@ -904,11 +909,23 @@ export function importControlSpec(
       standardAiAudioAssetId: referenceAudioOriginalAssetId ? analysisAudioAssetId : undefined,
       analyzedAudioRole: referenceAudioOriginalAssetId ? "standard_ai_audio" : "reference_audio",
       knowledgeAssetIds: [],
-      knowledgeBase: { id: "recitation-expression", version: "1.0", scope: "system" },
-      pipelineVersion: "control-spec-import-1.0",
+      knowledgeBase: string(rawKnowledgeBase.id)
+        ? {
+            id: String(rawKnowledgeBase.id),
+            version: string(rawKnowledgeBase.version) ?? "1.0",
+            scope: "system",
+          }
+        : { id: "recitation-expression", version: "1.0", scope: "system" },
+      pipelineVersion:
+        string(rawProvenance.pipeline_version ?? rawProvenance.pipelineVersion)
+        ?? "control-spec-import-1.0",
+      languageModel: string(
+        rawProvenance.language_model ?? rawProvenance.languageModel,
+      ),
       alignmentModel: "elevenlabs-forced-alignment",
       acousticModel: "parselmouth",
-      generatedAt: now,
+      generatedAt:
+        string(rawProvenance.generated_at ?? rawProvenance.generatedAt) ?? now,
     },
     validation: { state: "valid", issues: [] },
     createdAt: now,

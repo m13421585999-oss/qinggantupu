@@ -33,7 +33,7 @@ test("server-renders the recitation product", async () => {
   const html = await response.text();
   assert.match(html, /<title>声图 · 朗诵情感图谱<\/title>/i);
   assert.match(html, /把一段好朗诵，变成一张能听的声音地图/);
-  assert.match(html, /生成标准 AI 声音并解析/);
+  assert.match(html, /生成图谱/);
   assert.match(html, /完整正文/);
   assert.match(html, /声音与图谱同源/);
   assert.match(html, /用户观看端/);
@@ -97,8 +97,8 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(studio, /WORK_VERSION_CONFLICT|expected_updated_at/);
   assert.match(studio, /mode === "studio" \? \(\s*<WorkLibrary/);
   assert.match(studio, /\/reference-audio/);
-  assert.match(studio, /\/api\/analysis-jobs/);
-  assert.match(studio, /生成 AI 参考朗诵并分析/);
+  assert.match(studio, /text-recitation-jobs/);
+  assert.match(studio, /生成图谱/);
   assert.match(studio, /\/api\/ai-tts-jobs/);
   assert.match(studio, /type="file"/);
   assert.match(worker, /ANALYSIS_SERVICE_URL/);

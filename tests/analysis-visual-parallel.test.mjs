@@ -8,30 +8,17 @@ const studio = await readFile(
 );
 const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
 
-test("standard voice analysis starts versioned visual generation without waiting for analysis", () => {
+test("manuscript analysis generates a text-recitation spec without audio or visual prerequisites", () => {
   const handleAnalyze = studio.slice(
     studio.indexOf("const handleAnalyze = async () =>"),
     studio.indexOf("const persistControlSpec = async"),
   );
-  const visualStart = handleAnalyze.indexOf(
-    'void generateWorkVisualAssets(saved.id, { type: "all" })',
-  );
-  const analysisStart = handleAnalyze.indexOf(
-    "const created = await apiJson<AnalysisJobPayload>",
-  );
-
-  assert.ok(visualStart >= 0, "analysis action must launch the existing visual job flow");
-  assert.ok(analysisStart >= 0, "analysis action must still launch standard-audio analysis");
-  assert.ok(visualStart < analysisStart, "visual generation must begin before analysis is awaited");
-  assert.match(handleAnalyze.slice(visualStart, analysisStart), /\.catch\(\(visualError\) =>/);
-  assert.doesNotMatch(
-    handleAnalyze.slice(visualStart, analysisStart),
-    /setAnalysisJobStatus\("failed"\)|throw visualError/,
-  );
-  assert.match(
-    handleAnalyze.slice(visualStart, analysisStart),
-    /current\.id === saved\.id \? \{ \.\.\.current, visuals \} : current/,
-  );
+  assert.match(handleAnalyze, /persistWorkRecord/);
+  assert.match(handleAnalyze, /text-recitation-jobs/);
+  assert.doesNotMatch(handleAnalyze, /generateWorkVisualAssets/);
+  assert.doesNotMatch(handleAnalyze, /analysis-jobs/);
+  assert.doesNotMatch(handleAnalyze, /handleAiAnalyze/);
+  assert.doesNotMatch(handleAnalyze, /referenceAudio/);
 });
 
 test("AI recitation retry reuses a saved work and creates its job before parallel visuals", () => {

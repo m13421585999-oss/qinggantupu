@@ -206,7 +206,7 @@ export interface MacroProsodySegment {
 export interface MacroProsodyPath {
   points: MacroProsodyPoint[];
   segments: MacroProsodySegment[];
-  source: "acoustic";
+  source: "acoustic" | "text_llm";
 }
 
 /** Sparse creator-authored heights for the teaching curve; acoustic path data stays immutable. */

@@ -11,6 +11,8 @@ import {
   type RefObject,
   type CSSProperties,
 } from "react";
+// 保留：旧音频分析路径的 ControlSpec 导入，供旧工程兼容与未来声音校验复用。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { importControlSpec } from "@/lib/control-spec-import";
 import {
   buildGraphTokenUnits,
@@ -440,6 +442,8 @@ function aiTtsStatusText(status?: AiTtsProduction["status"]) {
   }
 }
 
+// 保留：旧音频分析路径的错误文案，供旧工程兼容复用。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function analysisErrorMessage(error: AnalysisJobPayload["error"]) {
   if (typeof error === "string" && error.trim()) return error;
   if (error && typeof error === "object" && typeof error.message === "string") {
@@ -1231,6 +1235,8 @@ function GraphSentence({
   );
 }
 
+// 保留：旧真人参考音频上传面板，供旧工程兼容与未来声音校验复用。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ReferenceAudioPanel({
   audio,
   disabled = false,
@@ -1313,6 +1319,8 @@ function ReferenceAudioPanel({
   );
 }
 
+// 保留：旧 AI 参考朗诵面板，供旧工程兼容与未来声音校验复用。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function AiReferenceAudioPanel({
   work,
   disabled,
@@ -1522,35 +1530,22 @@ function MaterialStage({
   work,
   jobStatus,
   analysisStatus,
+  edition,
   onWorkChange,
-  onReferenceFile,
-  onDeleteReference,
-  onAudioSourceTypeChange,
+  onEditionChange,
   onAnalyze,
 }: {
   work: RecitationWork;
   jobStatus: AnalysisJobStatus;
   analysisStatus: string;
+  edition: StudioEdition;
   onWorkChange: (field: "title" | "author" | "sourceText", value: string) => void;
-  onReferenceFile: (file: File) => void;
-  onDeleteReference: () => void;
-  onAudioSourceTypeChange: (source: AudioSourceType) => void;
+  onEditionChange: (edition: StudioEdition) => void;
   onAnalyze: () => void;
 }) {
   const hasWorkInfo = Boolean(work.title.trim() && work.sourceText.trim());
   const isAnalyzing = jobStatus === "queued" || jobStatus === "processing";
-  const sourceType = work.audioSourceType ?? "human_reference";
-  const canAnalyze = Boolean(
-    hasWorkInfo
-    && !isAnalyzing
-    && (sourceType === "ai_tts" || work.referenceAudio),
-  );
-  const aiHasAudio = Boolean(work.aiTts?.audioUrl || (
-    sourceType === "ai_tts" && work.standardAiAudio
-  ));
-  const aiErrorCode = work.aiTts?.error?.code ?? "";
-  const aiRetryingAudio = aiErrorCode === "TTS_AUDIO_GENERATION_FAILED";
-  const aiRetryingAnalysis = aiHasAudio && Boolean(aiErrorCode);
+  const canAnalyze = Boolean(hasWorkInfo && !isAnalyzing);
 
   return (
     <section className="stage material-stage">
@@ -1559,36 +1554,36 @@ function MaterialStage({
           <p className="eyebrow">01 · 准备作品</p>
           <h1>把一段好朗诵，变成一张能听的声音地图</h1>
           <p className="stage-lead">
-            填写准确正文，再选择真人参考朗诵或 AI 参考朗诵。两条路径最终都基于真实音频执行文字对齐、声学分析和控制谱生成。
+            填写准确正文，选择展示版本，一键生成专业朗诵图谱。完整版与紧凑版共用同一份分析。
           </p>
         </div>
         <span className="version-chip">控制谱 v2.0</span>
       </div>
 
-      <div className="reference-source-choice" role="radiogroup" aria-label="参考朗诵来源">
+      <div className="edition-choice" role="radiogroup" aria-label="展示版本">
         <button
           type="button"
           role="radio"
-          aria-checked={sourceType === "human_reference"}
-          className={sourceType === "human_reference" ? "active" : ""}
+          aria-checked={edition === "full"}
+          className={edition === "full" ? "active" : ""}
           disabled={isAnalyzing}
-          onClick={() => onAudioSourceTypeChange("human_reference")}
+          onClick={() => onEditionChange("full")}
         >
-          <span aria-hidden="true">真</span>
-          <strong>模式 A｜真人参考朗诵</strong>
-          <small>上传优秀真人朗诵，统一声音后进行分析。</small>
+          <span aria-hidden="true">全</span>
+          <strong>完整版</strong>
+          <small>有情景图片和丰富电子版页面</small>
         </button>
         <button
           type="button"
           role="radio"
-          aria-checked={sourceType === "ai_tts"}
-          className={sourceType === "ai_tts" ? "active" : ""}
+          aria-checked={edition === "compact"}
+          className={edition === "compact" ? "active" : ""}
           disabled={isAnalyzing}
-          onClick={() => onAudioSourceTypeChange("ai_tts")}
+          onClick={() => onEditionChange("compact")}
         >
-          <span aria-hidden="true">AI</span>
-          <strong>模式 B｜AI 参考朗诵</strong>
-          <small>没有真人素材时，从当前文稿一键生成并分析。</small>
+          <span aria-hidden="true">谱</span>
+          <strong>紧凑版</strong>
+          <small>无图片的 A4 朗诵教学谱</small>
         </button>
       </div>
 
@@ -1636,42 +1631,17 @@ function MaterialStage({
         </div>
 
         <div className="asset-column">
-          {sourceType === "human_reference" ? (
-            <ReferenceAudioPanel
-              audio={work.referenceAudio}
-              disabled={isAnalyzing}
-              onFile={onReferenceFile}
-              onDelete={work.referenceAudio?.url.startsWith("blob:") ? onDeleteReference : undefined}
-            />
-          ) : (
-            <AiReferenceAudioPanel work={work} disabled={isAnalyzing} />
-          )}
-
           <div className="analysis-card">
             <div className="analysis-orbit" aria-hidden="true">
-              <span>声</span>
+              <span>谱</span>
             </div>
             <div className="analysis-copy">
-              <p className="eyebrow">
-                {sourceType === "ai_tts" ? "AI 参考朗诵生产" : "标准声音生成与解析"}
-              </p>
+              <p className="eyebrow">文稿朗诵分析</p>
               <h3>{analysisStatus}</h3>
               <p>
-                {sourceType === "ai_tts"
-                  ? jobStatus === "failed"
-                    ? aiHasAudio
-                      ? "AI 参考声音已保留，可直接重新分析，不会重复调用 TTS。"
-                      : aiRetryingAudio
-                        ? "朗诵方案与脚本已保留，可直接重试声音生成。"
-                        : "朗诵方案未能完成，请重新生成。"
-                    : "系统会分阶段保存朗诵方案、AI 参考声音和分析结果，刷新页面后仍可继续。"
-                  : jobStatus === "queued"
-                    ? "真人原声和正文已经保存，正在生成标准 AI 声音并等待分析服务。"
-                    : jobStatus === "processing"
-                      ? "正在分析标准 AI 声音的字符时间戳、停顿、时值、音高和能量，并生成控制谱。"
-                      : jobStatus === "failed"
-                        ? "本次没有生成控制谱。请根据错误提示检查正文、音频或服务配置后重新解析。"
-                        : "标准 AI 声音既是控制谱的分析对象，也是最终播放给用户的示范声音。"}
+                {jobStatus === "failed"
+                  ? "本次没有生成图谱。请根据错误提示检查正文或服务配置后重试。"
+                  : "GPT 只基于文稿进行专业朗诵分析，生成统一控制谱，完整版与紧凑版共用同一份图谱。"}
               </p>
             </div>
             <button
@@ -1681,28 +1651,10 @@ function MaterialStage({
               onClick={onAnalyze}
             >
               {isAnalyzing ? <span className="button-spinner" /> : <span aria-hidden="true">✦</span>}
-              {isAnalyzing
-                ? sourceType === "ai_tts" ? "正在生成并分析" : "正在生成并解析"
-                : sourceType === "ai_tts"
-                  ? aiRetryingAnalysis
-                    ? "重新分析 AI 参考声音"
-                    : aiRetryingAudio
-                      ? "重新生成 AI 参考声音"
-                      : work.aiTts?.status && !["graph_ready", "error"].includes(work.aiTts.status)
-                        ? "继续生成 AI 参考朗诵并分析"
-                        : work.aiTts?.status === "graph_ready"
-                          ? "重新生成 AI 参考朗诵并分析"
-                          : "生成 AI 参考朗诵并分析"
-                : jobStatus === "failed" || jobStatus === "succeeded"
-                  ? "重新生成标准声音并解析"
-                  : "生成标准 AI 声音并解析"}
+              {isAnalyzing ? "正在生成图谱" : "生成图谱"}
             </button>
           </div>
-          {sourceType === "human_reference" && !work.referenceAudio ? (
-            <p className="analysis-requirement" role="status">
-              请先上传真人参考朗诵，系统将先统一音色，再根据标准 AI 声音生成情感图谱。
-            </p>
-          ) : !hasWorkInfo ? (
+          {!hasWorkInfo ? (
             <p className="analysis-requirement" role="status">
               请先填写作品名称和完整正文。
             </p>
@@ -2373,10 +2325,16 @@ function StudioView({
   timeline,
   onStep,
   onWorkChange,
+  // 保留：旧音频能力入口，从新建作品主流程移出但保留 props 供兼容。
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onReferenceFile,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onDeleteReference,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onAudioSourceTypeChange,
   onAnalyze,
+  edition,
+  onEditionChange,
   onSaveSentence,
   onPlaySentence,
   onVisualsChange,
@@ -2404,6 +2362,8 @@ function StudioView({
   onDeleteReference: () => void;
   onAudioSourceTypeChange: (source: AudioSourceType) => void;
   onAnalyze: () => void;
+  edition: StudioEdition;
+  onEditionChange: (edition: StudioEdition) => void;
   onSaveSentence: (sentence: RecitationSentence) => void;
   onPlaySentence: (sentence: RecitationSentence) => void;
   onVisualsChange: (visuals: WorkVisualBundle) => void;
@@ -2459,10 +2419,9 @@ function StudioView({
             work={work}
             jobStatus={analysisJobStatus}
             analysisStatus={analysisStatus}
+            edition={edition}
             onWorkChange={onWorkChange}
-            onReferenceFile={onReferenceFile}
-            onDeleteReference={onDeleteReference}
-            onAudioSourceTypeChange={onAudioSourceTypeChange}
+            onEditionChange={onEditionChange}
             onAnalyze={onAnalyze}
           />
         ) : null}
@@ -3148,6 +3107,13 @@ export function RecitationStudio() {
     window.history.replaceState({}, "", url);
   };
 
+  // Version choice in the material stage only selects the target edition. It
+  // must not run the compact-prepare flow, which builds a blank human spec.
+  const handleEditionChoice = (edition: StudioEdition) => {
+    setStudioEdition(edition);
+    updateEditionUrl(edition);
+  };
+
   const switchStudioEdition = async (edition: StudioEdition) => {
     setMode("studio");
     if (edition === "full") {
@@ -3254,6 +3220,8 @@ export function RecitationStudio() {
     setSaveState("dirty");
   };
 
+  // 保留：旧 AI 参考朗诵生成流程，从新建作品主流程移出，供旧工程兼容与未来声音校验复用。
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleAiAnalyze = async () => {
     if (analysisJobStatus === "queued" || analysisJobStatus === "processing") return;
     if (!work.title.trim() || !work.sourceText.trim()) {
@@ -3389,139 +3357,57 @@ export function RecitationStudio() {
   };
 
   const handleAnalyze = async () => {
-    if ((work.audioSourceType ?? "human_reference") === "ai_tts") {
-      await handleAiAnalyze();
+    if (analysisJobStatus === "queued" || analysisJobStatus === "processing") return;
+    if (!work.title.trim() || !work.sourceText.trim()) {
+      showToast("请先填写作品名称和完整正文");
       return;
     }
-    if (analysisJobStatus === "queued" || analysisJobStatus === "processing") return;
-    if (!work.title.trim() || !work.sourceText.trim()) { showToast("请先填写作品名称和完整正文"); return; }
-    if (!work.referenceAudio) { showToast("请先上传参考朗诵"); return; }
     setAnalysisJobStatus("queued");
-    setAnalysisStatus("正在保存作品与真人参考音频");
+    setAnalysisStatus("正在基于文稿生成朗诵图谱");
     try {
       setSaveState("saving");
-      let saved = await persistWorkRecord();
-
-      if (referenceFile) {
-        saved = await persistReferenceFile(saved);
-        if (!saved.referenceAudio) {
-          throw new Error("参考朗诵上传后未能读取，请重新上传。");
-        }
-        setWork(saved);
-      } else if (!saved.referenceAudio) {
-        const refreshed = await apiJson<{ work: RecitationWork }>(
-          await fetch(`/api/works/${encodeURIComponent(saved.id)}`),
-        );
-        saved = refreshed.work;
-        if (!saved.referenceAudio) throw new Error("当前作品没有已保存的参考朗诵，请重新选择音频。");
-        setWork(saved);
-      }
+      const saved = await persistWorkRecord();
       setSaveState("saved");
       setLastSavedAt(saved.updatedAt);
       savedSourceTextRef.current = saved.sourceText;
       savedUpdatedAtRef.current = saved.updatedAt;
-      savedReferenceIdRef.current = saved.referenceAudioOriginal?.id ?? saved.referenceAudio?.id;
-      savedHasDerivedAssetsRef.current = Boolean(saved.standardAiAudio || saved.aiDemoAudio || saved.aiTts || saved.controlSpec);
 
-      // Visual planning and image generation are independent of the acoustic
-      // pipeline. Start them before awaiting the analysis request so the two
-      // long-running jobs make progress in parallel. The visual flow is
-      // versioned: failed attempts keep the currently active Hero/Scene assets.
-      void generateWorkVisualAssets(saved.id, { type: "all" })
-        .then((visuals) => {
-          setWork((current) => current.id === saved.id ? { ...current, visuals } : current);
-          showToast("作品视觉已同步生成");
-        })
-        .catch((visualError) => {
-          const message = visualError instanceof Error ? visualError.message : String(visualError);
-          showToast(`声音分析继续；作品视觉生成未完成：${message}`);
-        });
+      setAnalysisJobStatus("processing");
+      setAnalysisStatus("GPT 正在分析文稿并生成图谱");
 
-      const created = await apiJson<AnalysisJobPayload>(
-        await fetch(`/api/works/${encodeURIComponent(saved.id)}/analysis-jobs`, {
+      const created = await apiJson<{ control_spec?: unknown; work: RecitationWork }>(
+        await fetch(`/api/works/${encodeURIComponent(saved.id)}/text-recitation-jobs`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{}",
         }),
       );
-      if (!created.analysis_job_id) throw new Error("分析任务创建失败：服务端没有返回任务编号。");
-      const analyzingWork = (await apiJson<{ work: RecitationWork }>(
-        await fetch(`/api/works/${encodeURIComponent(saved.id)}`),
-      )).work;
-      savedUpdatedAtRef.current = analyzingWork.updatedAt;
-      setLastSavedAt(analyzingWork.updatedAt);
-      setWork((current) => ({ ...current, analysisJobId: created.analysis_job_id, status: "analyzing" }));
-      setAnalysisStatus("标准 AI 声音已生成，已进入分析队列");
-
-      const deadline = Date.now() + 20 * 60 * 1000;
-      while (Date.now() < deadline) {
-        const job = await apiJson<AnalysisJobPayload>(
-          await fetch(`/api/analysis-jobs/${encodeURIComponent(created.analysis_job_id)}`),
-        );
-        setAnalysisJobStatus(job.status);
-        const progressValue = typeof job.progress === "number"
-          ? (job.progress > 0 && job.progress <= 1 ? job.progress * 100 : job.progress)
-          : undefined;
-        const progress = progressValue === undefined ? "" : ` ${Math.round(progressValue)}%`;
-        if (job.status === "queued") {
-          setAnalysisStatus(`等待分析服务${progress}`);
-        } else if (job.status === "processing") {
-          setAnalysisStatus(`正在分析标准 AI 朗诵${progress}`);
-        } else if (job.status === "failed") {
-          throw new Error(analysisErrorMessage(job.error));
-        } else if (job.status === "succeeded") {
-          let completedWork = job.work;
-          if (!completedWork?.controlSpec) {
-            completedWork = (await apiJson<{ work: RecitationWork }>(
-              await fetch(`/api/works/${encodeURIComponent(saved.id)}`),
-            )).work;
-          }
-          if (!completedWork.controlSpec && job.control_spec) {
-            const controlSpec = importControlSpec(
-              job.control_spec,
-              work.sourceText,
-              saved.id,
-              completedWork.standardAiAudio?.id ?? completedWork.referenceAudio?.id,
-              completedWork.referenceAudioOriginal?.id,
-            );
-            completedWork = (await apiJson<{ work: RecitationWork }>(
-              await fetch(`/api/works/${encodeURIComponent(saved.id)}/control-spec`, {
-                method: "PATCH",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ control_spec: controlSpec, source: "analysis" }),
-              }),
-            )).work;
-          }
-          if (!completedWork.controlSpec) {
-            throw new Error("分析任务已结束，但没有返回当前正文的控制谱。请重新解析。");
-          }
-          setWork(completedWork);
-          setIsWorkDirty(false);
-          setSaveState("saved");
-          setLastSavedAt(completedWork.updatedAt);
-          savedSourceTextRef.current = completedWork.sourceText;
-          savedUpdatedAtRef.current = completedWork.updatedAt;
-          savedReferenceIdRef.current = completedWork.referenceAudioOriginal?.id ?? completedWork.referenceAudio?.id;
-          savedHasDerivedAssetsRef.current = Boolean(
-            completedWork.standardAiAudio || completedWork.aiDemoAudio || completedWork.aiTts || completedWork.controlSpec,
-          );
-          setControlSpecDirty(false);
-          setAnalysisJobStatus("succeeded");
-          setAnalysisStatus("标准 AI 朗诵解析完成，声音与图谱同源");
-          setAudioSource("standard");
-          setStep(2);
-          window.scrollTo({ top: 0, behavior: "smooth" });
-          showToast(`同源控制谱已生成：${completedWork.controlSpec.sentences.length} 句`);
-          return;
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, 1600));
+      const completedWork = created.work;
+      if (!completedWork?.controlSpec) {
+        throw new Error("文稿分析完成，但没有返回控制谱。");
       }
-      throw new Error("分析等待超过 20 分钟，请稍后重新打开作品检查任务状态。");
+      setWork(completedWork);
+      setIsWorkDirty(false);
+      setSaveState("saved");
+      setLastSavedAt(completedWork.updatedAt);
+      savedSourceTextRef.current = completedWork.sourceText;
+      savedUpdatedAtRef.current = completedWork.updatedAt;
+      savedHasDerivedAssetsRef.current = true;
+      setControlSpecDirty(false);
+      setAnalysisJobStatus("succeeded");
+      setAnalysisStatus("朗诵图谱已生成");
+      if (studioEdition === "compact") {
+        setStudioEdition("compact");
+        updateEditionUrl("compact");
+      } else {
+        setStep(2);
+      }
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      showToast(`朗诵图谱已生成：${completedWork.controlSpec.sentences.length} 句`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setAnalysisJobStatus("failed");
-      setAnalysisStatus(`分析失败：${message}`);
-      setWork((current) => ({ ...current, status: "draft" }));
+      setAnalysisStatus(`生成失败：${message}`);
       setSaveState(hasUnsavedChanges ? "dirty" : "saved");
       showToast(message);
     }
@@ -3935,6 +3821,8 @@ export function RecitationStudio() {
           onDeleteReference={handleDeleteReference}
           onAudioSourceTypeChange={handleAudioSourceTypeChange}
           onAnalyze={handleAnalyze}
+          edition={studioEdition}
+          onEditionChange={handleEditionChoice}
           onSaveSentence={saveSentence}
           onPlaySentence={playSentence}
           onVisualsChange={(visuals) => {
