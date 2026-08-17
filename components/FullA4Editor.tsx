@@ -10,7 +10,6 @@ import {
 } from "react";
 import { buildGraphTokenUnits, type GraphTokenUnit } from "@/lib/graph-track";
 import {
-  paginateMeasuredPrintBlocks,
   safePrintFilename,
   type PrintPagePlan,
 } from "@/lib/print-layout";
@@ -560,30 +559,21 @@ function FullSentenceRow({
   );
 }
 
-function FullPageHeader({ work, page, total, first }: {
+function FullPageHeader({ work, page, total }: {
   work: RecitationWork;
   page: number;
   total: number;
-  first: boolean;
 }) {
   const displayTitle = (work.title || "未命名作品")
     .replace(/^《+\s*/, "")
     .replace(/\s*》+$/, "");
-  if (first) {
-    return (
-      <header className="full-page-header full-page-header-first">
-        <div>
-          <p className="full-header-kicker">朗诵情感图谱</p>
-          <h1 className="full-header-title">《{displayTitle}》</h1>
-          {work.author ? <p className="full-header-author">作者：{work.author}</p> : null}
-        </div>
-        <span className="full-header-page">{page} / {total}</span>
-      </header>
-    );
-  }
   return (
-    <header className="full-page-header full-page-header-running">
-      <span>《{displayTitle}》 · 朗诵情感图谱</span>
+    <header className="full-page-header full-page-header-first">
+      <div>
+        <p className="full-header-kicker">朗诵情感图谱</p>
+        <h1 className="full-header-title">《{displayTitle}》</h1>
+        {work.author ? <p className="full-header-author">作者：{work.author}</p> : null}
+      </div>
       <span className="full-header-page">{page} / {total}</span>
     </header>
   );
@@ -621,6 +611,12 @@ function FullA4Page({
   onSelectToken: (sentence: RecitationSentence, token: TimedToken, anchor: HTMLElement) => void;
   onPointChange: (sentence: RecitationSentence, tokenIndex: number, visualLevel: number) => void;
 }) {
+  const slotBlocks: Array<FullBlock | undefined> = [0, 1, 2, 3].map(
+    (slotIndex) => {
+      const blockId = plan.blockIds[slotIndex];
+      return blockId ? blocksById.get(blockId) : undefined;
+    },
+  );
   return (
     <article
       className="full-a4-page"
@@ -640,23 +636,26 @@ function FullA4Page({
             </span>
           ))}
         </div>
-        <FullPageHeader work={work} page={plan.index + 1} total={total} first={plan.index === 0} />
-        <div className="full-page-body">
-          {plan.blockIds.map((blockId) => {
-            const block = blocksById.get(blockId);
-            const scene = sceneAssetsBySentenceId.get(blockId);
-            return block ? (
-              <FullSentenceRow
-                block={block}
-                sceneImageUrl={scene?.url}
-                sceneImageAlt={scene?.alt}
-                editable
-                selectedTokenIndex={selection?.sentenceId === block.sentence.id ? selection.tokenIndex : undefined}
-                onSelectToken={(token, anchor) => onSelectToken(block.sentence, token, anchor)}
-                onPointChange={(tokenIndex, visualLevel) => onPointChange(block.sentence, tokenIndex, visualLevel)}
-                key={block.id}
-              />
-            ) : null;
+        <FullPageHeader work={work} page={plan.index + 1} total={total} />
+        <div className="full-page-body full-page-body-slots">
+          {slotBlocks.map((block, slotIndex) => {
+            const scene = block ? sceneAssetsBySentenceId.get(block.id) : undefined;
+            return (
+              <div className="full-slot" key={slotIndex} data-full-slot={slotIndex + 1}>
+                {block ? (
+                  <FullSentenceRow
+                    block={block}
+                    sceneImageUrl={scene?.url}
+                    sceneImageAlt={scene?.alt}
+                    editable
+                    selectedTokenIndex={selection?.sentenceId === block.sentence.id ? selection.tokenIndex : undefined}
+                    onSelectToken={(token, anchor) => onSelectToken(block.sentence, token, anchor)}
+                    onPointChange={(tokenIndex, visualLevel) => onPointChange(block.sentence, tokenIndex, visualLevel)}
+                    key={block.id}
+                  />
+                ) : null}
+              </div>
+            );
           })}
         </div>
         <FullPageLegend />
@@ -667,13 +666,6 @@ function FullA4Page({
       </div>
     </article>
   );
-}
-
-function contentCapacity(element: HTMLElement) {
-  const styles = window.getComputedStyle(element);
-  const padding = (Number.parseFloat(styles.paddingTop) || 0)
-    + (Number.parseFloat(styles.paddingBottom) || 0);
-  return Math.max(0, element.clientHeight - padding);
 }
 
 function saveStateLabel(state: FullSaveState) {
@@ -721,77 +713,36 @@ export function FullA4Editor({
     ])),
     [sceneAssetsBySentenceId],
   );
-  const measureRootRef = useRef<HTMLDivElement>(null);
   const pageStackRef = useRef<HTMLDivElement>(null);
-  const pageSignatureRef = useRef("");
-  const [pages, setPages] = useState<PrintPagePlan[]>([]);
   const [selection, setSelection] = useState<FullSelection>();
   const [pinyinEditorOpen, setPinyinEditorOpen] = useState(false);
   const [pinyinDraft, setPinyinDraft] = useState("");
-  const [layoutRevision, setLayoutRevision] = useState(0);
-  const [layoutMessage, setLayoutMessage] = useState("正在按整句计算 A4 分页…");
+  const [exportStatus, setExportStatus] = useState("");
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportError, setExportError] = useState<string>();
   const workspaceStyle = { "--full-a4-margin": `${FULL_MARGIN_MM}mm` } as CSSProperties;
 
-  const calculatePagination = useCallback(() => {
-    const root = measureRootRef.current;
-    if (!root || !blocks.length) {
-      pageSignatureRef.current = "";
-      setPages([]);
-      return;
-    }
-    const firstBody = root.querySelector<HTMLElement>("[data-full-measure-capacity='first']");
-    const continuationBody = root.querySelector<HTMLElement>("[data-full-measure-capacity='continuation']");
-    const measuredElements = Array.from(root.querySelectorAll<HTMLElement>("[data-full-measure-id]"));
-    if (!firstBody || !continuationBody || measuredElements.length !== blocks.length) return;
-    const measured = measuredElements.map((element) => ({
-      id: element.dataset.fullMeasureId ?? "",
-      heightPx: element.getBoundingClientRect().height,
+  // Fixed four-slot layout: every page carries exactly four equal slots, each
+  // holding one sentence row vertically centered inside it. Pages are cut at
+  // 4 sentences/page; a final short page keeps its remaining slots empty
+  // instead of re-spreading content.
+  const pages = useMemo<PrintPagePlan[]>(() => {
+    const pageCount = Math.max(1, Math.ceil(blocks.length / 4));
+    return Array.from({ length: pageCount }, (_, index) => ({
+      index,
+      blockIds: blocks
+        .slice(index * 4, index * 4 + 4)
+        .map((block) => block.id),
+      usedHeightPx: 0,
+      capacityPx: 0,
+      hasOversizedBlock: false,
     }));
-    if (measured.some((block) => block.heightPx <= 0)) return;
-    const styles = window.getComputedStyle(firstBody);
-    const blockGapPx = Number.parseFloat(styles.rowGap || styles.gap) || 0;
-    const nextPages = paginateMeasuredPrintBlocks(measured, {
-      firstPageCapacityPx: contentCapacity(firstBody),
-      continuationPageCapacityPx: contentCapacity(continuationBody),
-      blockGapPx,
-      protectSingleBlockPages: true,
-    });
-    const nextSignature = nextPages.map((page) => (
-      `${page.blockIds.join(",")}:${Math.round(page.usedHeightPx)}:${page.hasOversizedBlock ? 1 : 0}`
-    )).join("|");
-    if (pageSignatureRef.current !== nextSignature) {
-      pageSignatureRef.current = nextSignature;
-      setPages(nextPages);
-    }
-    const oversized = nextPages.filter((page) => page.hasOversizedBlock).length;
-    setLayoutMessage(oversized
-      ? `已按实际高度排成 ${nextPages.length} 页；${oversized} 个超长句单独占页`
-      : `已按实际高度排成 ${nextPages.length} 页；整句不会跨页`);
   }, [blocks]);
 
-  useLayoutEffect(() => {
-    const root = measureRootRef.current;
-    if (!root) return;
-    let frame = 0;
-    const schedule = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => window.requestAnimationFrame(calculatePagination));
-    };
-    schedule();
-    const observer = new ResizeObserver(schedule);
-    observer.observe(root);
-    root.querySelectorAll<HTMLElement>("[data-full-measure-id], [data-full-measure-capacity]")
-      .forEach((element) => observer.observe(element));
-    document.fonts?.addEventListener("loadingdone", schedule);
-    void document.fonts?.ready.then(schedule);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-      document.fonts?.removeEventListener("loadingdone", schedule);
-    };
-  }, [blocks, calculatePagination, layoutRevision]);
+  const layoutMessage = exportStatus
+    || (blocks.length
+      ? `已按每页 4 句排成 ${pages.length} 页；每句在各自槽位垂直居中`
+      : "正在按每页 4 句排布 A4…");
 
   const openSelection = (sentence: RecitationSentence, token: TimedToken, anchor: HTMLElement) => {
     const rect = anchor.getBoundingClientRect();
@@ -844,7 +795,7 @@ export function FullA4Editor({
     setSelection(undefined);
     setExportingPdf(true);
     setExportError(undefined);
-    setLayoutMessage(`正在生成 ${pages.length} 页 PDF…`);
+    setExportStatus(`正在生成 ${pages.length} 页 PDF…`);
     try {
       await document.fonts?.ready;
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
@@ -872,15 +823,15 @@ export function FullA4Editor({
         });
         if (index > 0) pdf.addPage("a4", "portrait");
         pdf.addImage(canvas, "PNG", 0, 0, 210, 297, undefined, "FAST");
-        setLayoutMessage(`正在生成 PDF：${index + 1} / ${pageElements.length} 页`);
+        setExportStatus(`正在生成 PDF：${index + 1} / ${pageElements.length} 页`);
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
       pdf.save(safePrintFilename(work.title, "pdf"));
-      setLayoutMessage(`PDF 已生成：${pageElements.length} 页 A4`);
+      setExportStatus(`PDF 已生成：${pageElements.length} 页 A4`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setExportError(`PDF 导出失败：${message}`);
-      setLayoutMessage("PDF 导出失败，请重试");
+      setExportStatus("PDF 导出失败，请重试");
     } finally {
       setExportingPdf(false);
     }
@@ -915,14 +866,6 @@ export function FullA4Editor({
         </div>
         <div className="full-toolbar-actions">
           <button type="button" className="text-button" onClick={onOpenLibrary}>作品库</button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => setLayoutRevision((revision) => revision + 1)}
-            disabled={exportingPdf}
-          >
-            重新排版
-          </button>
           <button
             type="button"
             className="secondary-button"
@@ -1051,30 +994,6 @@ export function FullA4Editor({
           ) : null}
         </aside>
       ) : null}
-
-      <div className="full-measure-layer" aria-hidden="true" ref={measureRootRef}>
-        <article className="full-a4-page full-measure-page">
-          <div className="full-a4-background" aria-hidden="true" />
-          <div className="full-a4-content">
-            <FullPageHeader work={work} page={1} total={1} first />
-            <div className="full-page-body" data-full-measure-capacity="first" />
-            <FullPageLegend />
-          </div>
-        </article>
-        <article className="full-a4-page full-measure-page">
-          <div className="full-a4-background" aria-hidden="true" />
-          <div className="full-a4-content">
-            <FullPageHeader work={work} page={2} total={2} first={false} />
-            <div className="full-page-body" data-full-measure-capacity="continuation" />
-            <FullPageLegend />
-          </div>
-        </article>
-        <div className="full-block-measure-list">
-          {blocks.map((block) => (
-            <FullSentenceRow block={block} measure key={`full-measure-${block.id}`} />
-          ))}
-        </div>
-      </div>
     </section>
   );
 }
