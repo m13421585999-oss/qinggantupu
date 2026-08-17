@@ -471,7 +471,7 @@
 }
 
 .cropFrameHero { aspect-ratio: 1500 / 280; }
-.cropFrameScene { aspect-ratio: 4 / 3; }
+.cropFrameScene { aspect-ratio: 38 / 51; }
 
 .cropFrame img {
   width: 100%;
@@ -559,7 +559,7 @@
   overflow: hidden;
   width: min(440px, 100%);
   margin: 0 auto 14px;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 38 / 51;
   place-items: center;
   border-radius: 15px;
   background:

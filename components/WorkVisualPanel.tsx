@@ -88,7 +88,7 @@ async function loadImage(file: File) {
 
 async function cropImage(draft: CropDraft) {
   const image = await loadImage(draft.file);
-  const [width, height] = draft.kind === "hero" ? [1500, 280] : [768, 576];
+  const [width, height] = draft.kind === "hero" ? [1500, 280] : [768, 1031];
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;

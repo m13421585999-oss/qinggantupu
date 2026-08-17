@@ -97,23 +97,6 @@ export function buildSceneUnits(
   controlSpec?: Record<string, unknown>,
 ): SceneUnit[] {
   const chars = Array.from(fullText);
-  const ranges: Array<{ start: number; end: number; text: string }> = [];
-  let start = 0;
-  for (let index = 0; index < chars.length; index += 1) {
-    if (!/[。！？]/u.test(chars[index])) continue;
-    let end = index;
-    while (end + 1 < chars.length && /[”’」』）》】]/u.test(chars[end + 1])) end += 1;
-    const text = chars.slice(start, end + 1).join("");
-    if (text.trim()) ranges.push({ start, end, text });
-    start = end + 1;
-    index = end;
-  }
-  if (start < chars.length) {
-    const text = chars.slice(start).join("");
-    if (text.trim()) ranges.push({ start, end: chars.length - 1, text });
-  }
-  if (!ranges.length && fullText.trim()) ranges.push({ start: 0, end: chars.length - 1, text: fullText });
-
   const sentences = Array.isArray(controlSpec?.sentences)
     ? controlSpec.sentences as Array<Record<string, unknown>>
     : [];
@@ -133,8 +116,42 @@ export function buildSceneUnits(
       id: String(sentence.id ?? `sentence-${index + 1}`),
       start: sentenceStart,
       end: sentenceEnd,
+      text,
     };
   });
+
+  // One scene unit per control-spec sentence so every Full sentence row gets
+  // its own Scene Card image (Sentence 数 = Scene Card 图片数). Fall back to
+  // punctuation-based grouping only when there is no parsed control spec.
+  const units: SceneUnit[] = sentenceRanges.length
+    ? sentenceRanges.map((sentence, index) => ({
+        scene_id: `scene-${index + 1}`,
+        source_sentence_ids: [sentence.id],
+        source_text: sentence.text,
+        previous_text: index > 0 ? sentenceRanges[index - 1].text : undefined,
+        next_text: index + 1 < sentenceRanges.length ? sentenceRanges[index + 1].text : undefined,
+        position: index,
+      }))
+    : [];
+
+  if (units.length) return units;
+
+  const ranges: Array<{ start: number; end: number; text: string }> = [];
+  let start = 0;
+  for (let index = 0; index < chars.length; index += 1) {
+    if (!/[。！？]/u.test(chars[index])) continue;
+    let end = index;
+    while (end + 1 < chars.length && /[”’」』）》】]/u.test(chars[end + 1])) end += 1;
+    const text = chars.slice(start, end + 1).join("");
+    if (text.trim()) ranges.push({ start, end, text });
+    start = end + 1;
+    index = end;
+  }
+  if (start < chars.length) {
+    const text = chars.slice(start).join("");
+    if (text.trim()) ranges.push({ start, end: chars.length - 1, text });
+  }
+  if (!ranges.length && fullText.trim()) ranges.push({ start: 0, end: chars.length - 1, text: fullText });
 
   return ranges.map((range, index) => ({
     scene_id: `scene-${index + 1}`,

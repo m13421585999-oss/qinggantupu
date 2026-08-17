@@ -3396,7 +3396,25 @@ export function RecitationStudio() {
       savedHasDerivedAssetsRef.current = true;
       setControlSpecDirty(false);
       setAnalysisJobStatus("succeeded");
-      setAnalysisStatus("朗诵图谱已生成");
+      setAnalysisStatus("朗诵图谱已生成，正在同步生成情景图片");
+      // Auto-launch the Scene visual generation (Text-first flow). It plans
+      // Scene specs from the freshly-saved control spec, generates every Scene
+      // image, waits for the job to reach terminal, and writes the latest
+      // visual bundle back into the React work state so Full Scene Cards show
+      // real images without a manual refresh or a second click.
+      const sentenceCount = completedWork.controlSpec.sentences.length;
+      const visualTarget = "scene";
+      void generateWorkVisualAssets(saved.id, { type: visualTarget })
+        .then((visuals) => {
+          setWork((current) => current.id === saved.id ? { ...current, visuals } : current);
+          setAnalysisStatus("朗诵图谱与情景图片已生成");
+          showToast(`朗诵图谱已生成：${sentenceCount} 句；情景图片已同步`);
+        })
+        .catch((visualError) => {
+          const message = visualError instanceof Error ? visualError.message : String(visualError);
+          setAnalysisStatus("朗诵图谱已生成；情景图片生成未完成");
+          showToast(`图谱已生成；情景图片未完成：${message}`);
+        });
       if (studioEdition === "compact") {
         setStudioEdition("compact");
         updateEditionUrl("compact");
@@ -3404,7 +3422,6 @@ export function RecitationStudio() {
         setStep(2);
       }
       window.scrollTo({ top: 0, behavior: "smooth" });
-      showToast(`朗诵图谱已生成：${completedWork.controlSpec.sentences.length} 句`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setAnalysisJobStatus("failed");

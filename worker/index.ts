@@ -43,6 +43,12 @@ const VISUAL_SCENE_CONCURRENCY = 3;
 const VISUAL_GENERATION_RETRY_LIMIT = 1;
 const VISUAL_JOB_LEASE_MS = 5 * 60 * 1000;
 const VISUAL_TERMINAL_STATUSES = new Set(["completed", "succeeded", "partial_failed", "failed"]);
+// Scene Cards render at 38mm x 51mm (portrait, ratio ~0.745). Generate the
+// source image at the same ratio (768 x 1031) so it is never cropped by
+// object-fit: cover; the image is produced portrait from the source, not
+// re-framed in the browser from an old 4:3 landscape.
+const SCENE_IMAGE_WIDTH = 768;
+const SCENE_IMAGE_HEIGHT = 1031;
 const VOICE_CHANGER_MODEL_ID = "eleven_multilingual_sts_v2";
 const VOICE_CHANGER_OUTPUT_FORMAT = "mp3_44100_128";
 const ELEVEN_TTS_MODEL_ID = "eleven_v3";
@@ -3009,8 +3015,8 @@ async function storeGeneratedVisual(
   const createdAt = now();
   const isHero = kind === "hero";
   const detectedDimensions = detectImageDimensions(generated.bytes);
-  const generatedWidth = detectedDimensions?.width ?? generated.width ?? (isHero ? 1500 : 768);
-  const generatedHeight = detectedDimensions?.height ?? generated.height ?? (isHero ? 280 : 576);
+  const generatedWidth = detectedDimensions?.width ?? generated.width ?? (isHero ? 1500 : SCENE_IMAGE_WIDTH);
+  const generatedHeight = detectedDimensions?.height ?? generated.height ?? (isHero ? 280 : SCENE_IMAGE_HEIGHT);
   const heroMatched = isHero && textValidation?.status === "matched";
   const needsReview = isHero && !generated.isPlaceholder && !heroMatched;
   const ready = !generated.isPlaceholder && !needsReview;
@@ -3089,8 +3095,8 @@ async function storeFailedVisual(
   ).bind(
     visualId, work.id, specRow.id, kind, sceneId ?? null,
     provider.provider, provider.model, String(spec.image_prompt ?? ""),
-    String(spec.negative_prompt ?? "") || null, kind === "hero" ? 1500 : 768,
-    kind === "hero" ? 280 : 576, safeVisualErrorMessage(env, error), version, now(),
+    String(spec.negative_prompt ?? "") || null, kind === "hero" ? 1500 : SCENE_IMAGE_WIDTH,
+    kind === "hero" ? 280 : SCENE_IMAGE_HEIGHT, safeVisualErrorMessage(env, error), version, now(),
   ).run();
 }
 
@@ -3127,8 +3133,8 @@ async function generateOneVisual(env: Env, work: Row, specRow: Row, recordFailur
         kind,
         prompt: productionPrompt,
         negativePrompt: productionNegativePrompt || undefined,
-        width: kind === "hero" ? 1500 : 768,
-        height: kind === "hero" ? 280 : 576,
+        width: kind === "hero" ? 1500 : SCENE_IMAGE_WIDTH,
+        height: kind === "hero" ? 280 : SCENE_IMAGE_HEIGHT,
         title,
         author,
         sceneId,

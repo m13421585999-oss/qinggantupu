@@ -177,7 +177,7 @@ async def _generate_visual_batch(
             if author_display
             else "当前作品没有作者，不得虚构作者行。"
         )
-        + "每个 Scene 使用 4:3 构图，适合约 280x220 的小尺寸展示，主体明确、细节克制、不生成文字。"
+        + "每个 Scene 使用竖构图 3:4（约 38:51 卡片比例），适合约 280x360 的竖向小卡展示，主体明确、细节克制、不生成文字。"
         "如果 locked_profile 非空，必须原样使用它作为 work_visual_profile，不得重新设计作品风格。"
         "scene_visual_specs 必须与输入 scene_units 数量、顺序、scene_id、source_sentence_ids 和 source_text 完全一致。"
         "仅返回一个合法 JSON 对象，不要添加 Markdown 或解释。输出必须符合下面的 JSON Schema：\n"
@@ -305,14 +305,14 @@ def _fallback_visual_plan(request: VisualDirectorRequest) -> dict[str, Any]:
             "environment": "与当前句情绪相符的克制环境空间，保留足够呼吸感",
             "emotion": ["含蓄", "真实", "有层次"],
             "symbolism": ["光影", "空间", "时间痕迹"],
-            "composition": "4:3构图，主体位于三分线，小尺寸下轮廓清楚，背景简洁",
+            "composition": "3:4竖构图，主体位于三分线，小尺寸下轮廓清楚，背景简洁",
             "camera_distance": "中景或中远景",
             "lighting": str(profile.get("lighting", "柔和自然光")),
             "palette": list(profile.get("palette", ["暖白", "雾蓝"])),
             "image_prompt": (
-                "4:3当代东方诗意编辑插画，细腻棉纸与克制水粉质感。"
+                "3:4竖构图当代东方诗意编辑插画，细腻棉纸与克制水粉质感。"
                 f"根据当前原文“{scene.source_text}”及相邻语境“{context}”提炼一个具体、清楚、"
-                "具有文学象征性的环境画面；主体适合约280×220小尺寸显示，色彩低饱和，"
+                "具有文学象征性的环境画面；主体适合约280×360竖向小卡显示，色彩低饱和，"
                 "不得出现正文、标题、编号、按钮、界面、随机汉字或水印。"
             ),
             "negative_prompt": "任何文字，汉字，数字，水印，徽标，UI，按钮，正面人物特写，廉价卡通，旅游海报，杂乱细节",
