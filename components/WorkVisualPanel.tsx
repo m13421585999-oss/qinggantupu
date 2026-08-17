@@ -429,7 +429,7 @@ export function WorkVisualPanel({
             ) : (
               <div className={styles.placeholder}>
                 <strong>{compactKind === "hero" ? title || "作品主视觉" : "本句意境图"}</strong>
-                <small>{compactKind === "hero" ? `${author || "作者"} · 1500 × 280` : "4:3"}</small>
+                <small>{compactKind === "hero" ? `${author || "作者"} · 1500 × 280` : "竖版"}</small>
               </div>
             )}
           </div>
@@ -702,7 +702,7 @@ export function WorkVisualPanel({
             <article className={styles.sceneCard} key={scene.sceneId}>
               <div className={styles.scenePreview}>
                 {asset?.url ? <img src={asset.url} alt={`第 ${index + 1} 幕意境图`} /> : (
-                  <div className={styles.placeholder}><strong>第 {String(index + 1).padStart(2, "0")} 幕</strong><small>4:3 意境图</small></div>
+                  <div className={styles.placeholder}><strong>第 {String(index + 1).padStart(2, "0")} 幕</strong><small>竖版意境图</small></div>
                 )}
               </div>
               <div className={styles.sceneBody}>

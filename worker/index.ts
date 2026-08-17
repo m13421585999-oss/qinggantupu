@@ -45,8 +45,7 @@ const VISUAL_JOB_LEASE_MS = 5 * 60 * 1000;
 const VISUAL_TERMINAL_STATUSES = new Set(["completed", "succeeded", "partial_failed", "failed"]);
 // Scene Cards render at 38mm x 51mm (portrait, ratio ~0.745). Generate the
 // source image at the same ratio (768 x 1031) so it is never cropped by
-// object-fit: cover; the image is produced portrait from the source, not
-// re-framed in the browser from an old 4:3 landscape.
+// object-fit: cover; the image is produced portrait from the source.
 const SCENE_IMAGE_WIDTH = 768;
 const SCENE_IMAGE_HEIGHT = 1031;
 const VOICE_CHANGER_MODEL_ID = "eleven_multilingual_sts_v2";
