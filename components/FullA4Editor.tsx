@@ -244,9 +244,13 @@ function FullTokenUnit({
   measureRef?: (element: HTMLSpanElement | null) => void;
   onSelect?: (anchor: HTMLElement) => void;
 }) {
-  const pause = pauseAt(sentence, unit.token.index);
-  const breath = breathAt(sentence, unit.token.index);
-  const prolongation = prolongAt(sentence, unit.token.index);
+  // Full only renders the four primary recitation cues: 重音, short pause /,
+  // sentence-final tone ↗/↘ and the prosody curve. Breath (V/v), long pause
+  // (///) and prolongation (—) are intentionally NOT rendered here — the
+  // underlying ControlSpec data is untouched and Compact still shows them.
+  const shortPause = sentence.pauses.find(
+    (pause) => pause.afterTokenIndex === unit.token.index && pause.type === "short",
+  );
   const isEndingHost = endingTokenIndex === unit.token.index;
   const tone = isEndingHost && sentence.endingIntonation.type !== "level"
     ? sentence.endingIntonation.type
@@ -258,11 +262,6 @@ function FullTokenUnit({
         {unit.prefixPunctuation.map((token) => (
           <span className="full-source-punctuation" key={token.id}>{visibleSourceCharacter(token.char)}</span>
         ))}
-        {breath ? (
-          <span className={breath.type === "breath_major" ? "full-breath-major" : "full-breath-minor"}>
-            {breath.type === "breath_major" ? "V" : "v"}
-          </span>
-        ) : null}
         <span className="full-spoken-token">
           <span className="full-token-pinyin" aria-hidden="true">
             {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
@@ -282,14 +281,15 @@ function FullTokenUnit({
               {unit.token.char}
             </span>
           )}
+          {shortPause || tone ? (
+            <span className="full-token-marker">
+              {shortPause ? <span className="full-pause">/</span> : null}
+              {tone ? (
+                <span className="full-ending-tone">{tone === "rising" ? "↗" : "↘"}</span>
+              ) : null}
+            </span>
+          ) : null}
         </span>
-        {prolongation ? <span className="full-prolongation">—</span> : null}
-        {tone ? (
-          <span className="full-ending-tone">{tone === "rising" ? "↗" : "↘"}</span>
-        ) : null}
-        {pause ? (
-          <span className={`full-pause full-pause-${pause.type}`}>{pause.type === "long" ? "///" : "/"}</span>
-        ) : null}
         {unit.suffixPunctuation.map((token) => (
           <span className="full-source-punctuation" key={token.id}>{visibleSourceCharacter(token.char)}</span>
         ))}
@@ -580,12 +580,12 @@ function FullPageHeader({ work, page, total }: {
 }
 
 function FullPageLegend() {
+  // Full only displays short pause, tone, 重音 and the prosody curve, so the
+  // footer legend is kept to exactly those cues.
   return (
     <footer className="full-page-legend">
-      <span><b className="full-legend-major">V</b> 换气</span>
-      <span><b className="full-legend-minor">v</b> 偷气</span>
       <span><b>/</b> 短停</span>
-      <span><b>{"///"}</b> 长停</span>
+      <span><b>↗ ↘</b> 语调</span>
       <span><b className="full-legend-focus">红</b> 重音</span>
       <span><i className="full-legend-curve" aria-hidden="true" /> 语势曲线</span>
     </footer>

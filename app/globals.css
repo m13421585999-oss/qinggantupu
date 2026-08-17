@@ -6554,10 +6554,23 @@ button.compact-token-char.is-selected {
 }
 
 .full-token-unit { position: relative; display: inline-flex; flex: 0 0 auto; align-items: flex-end; white-space: nowrap; }
-.full-token-manuscript { display: inline-flex; min-height: 26mm; align-items: flex-end; color: #27231f; font-size: 28pt; font-weight: 620; line-height: 1; }
-.full-spoken-token { display: grid; flex: 0 0 auto; grid-template-rows: 7.5mm 19mm; justify-items: center; }
-.full-token-pinyin { align-self: end; color: #554f49; font-family: "Kaiti SC", STKaiti, "Songti SC", serif; font-size: 15pt; font-weight: 650; line-height: 1; white-space: nowrap; }
+.full-token-manuscript { display: inline-flex; min-height: 26mm; align-items: flex-end; color: #27231f; font-size: 29pt; font-weight: 620; line-height: 1; }
+/* Full spoken token: two columns — pinyin/char in column 1, marker in column 2.
+   Pinyin stays centered over the character only (never over the marker). */
+.full-spoken-token {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: auto auto;
+  grid-template-rows: 7.5mm 19mm;
+  grid-template-areas:
+    "pinyin pinyin"
+    "char marker";
+  justify-items: center;
+  align-items: end;
+}
+.full-token-pinyin { grid-area: pinyin; align-self: end; color: #554f49; font-family: "Kaiti SC", STKaiti, "Songti SC", serif; font-size: 15pt; font-weight: 650; line-height: 1; white-space: nowrap; }
 .full-token-char {
+  grid-area: char;
   display: inline-flex;
   min-width: 1em;
   height: 19mm;
@@ -6574,30 +6587,24 @@ button.compact-token-char.is-selected {
 button.full-token-char:hover, button.full-token-char.is-selected { background: rgba(185, 64, 46, 0.09); box-shadow: inset 0 0 0 0.25mm rgba(185, 64, 46, 0.2); }
 .full-token-char.is-focus { color: #c33f2d; font-weight: 800; }
 
-.full-source-punctuation,
-.full-prolongation,
-.full-ending-tone,
-.full-pause,
-.full-breath-major,
-.full-breath-minor {
-  display: inline;
-  align-self: flex-end;
+/* Marker slot sits in column 2 / row 2 (the character row), vertically
+   centered against the character so /, ↗, ↘ read as part of the same
+   text band as the manuscript. It never renders V, v, /// or —. */
+.full-token-marker {
+  grid-area: marker;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
 }
-.full-source-punctuation { white-space: pre; }
-/* Primary recitation markers: pause, ending tone, prolongation all sit
-   at 0.92em so they read as part of the manuscript text instead of as
-   small subscripts, while still fitting a 10-character sentence with
-   multiple markers inside a 4-slot A4 page. */
-.full-prolongation, .full-ending-tone, .full-pause { color: #b9402e; font-family: Arial, sans-serif; font-weight: 800; font-size: 0.92em; }
-.full-prolongation { min-width: 0.72em; overflow: hidden; }
+
+.full-source-punctuation { display: inline; white-space: pre; }
+/* Primary recitation markers: pause / and ending tone ↗/↘ at 1em so they
+   read as part of the manuscript instead of as small subscripts. */
+.full-ending-tone, .full-pause { color: #b9402e; font-family: Arial, sans-serif; font-weight: 800; font-size: 1em; }
 .full-pause { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0 0.02em; letter-spacing: -0.12em; }
-.full-pause-long { letter-spacing: -0.2em; }
-/* V/v are kept visually smaller because they are not the focus of Full
-   reading; the user has confirmed the primary markers for Full are
-   /, ↗/↘ and the prosody curve. */
-.full-breath-major, .full-breath-minor { margin: 0 0.04em; font-family: Arial, sans-serif; font-weight: 900; line-height: 1; }
-.full-breath-major { color: #c33324; font-size: 0.85em; }
-.full-breath-minor { color: #d87934; font-size: 0.9em; }
 
 .full-boundary-trigger {
   position: absolute;
