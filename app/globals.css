@@ -6524,7 +6524,7 @@ button.compact-token-char.is-selected {
 .full-sentence-body { min-width: 0; }
 
 .full-graph-track {
-  --full-token-gap: 2px;
+  --full-token-gap: 1px;
   position: relative;
   width: 100%;
   min-width: 0;
@@ -6584,19 +6584,20 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
   align-self: flex-end;
 }
 .full-source-punctuation { white-space: pre; }
-.full-prolongation, .full-ending-tone, .full-pause { color: #b9402e; font-family: Arial, sans-serif; font-weight: 800; }
-.full-prolongation { font-size: 0.9em; min-width: 0.6em; overflow: hidden; }
-.full-pause { font-size: 0.9em; margin: 0 0.02em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -0.12em; }
+/* Primary recitation markers: pause, ending tone, prolongation all sit
+   at 0.92em so they read as part of the manuscript text instead of as
+   small subscripts, while still fitting a 10-character sentence with
+   multiple markers inside a 4-slot A4 page. */
+.full-prolongation, .full-ending-tone, .full-pause { color: #b9402e; font-family: Arial, sans-serif; font-weight: 800; font-size: 0.92em; }
+.full-prolongation { min-width: 0.72em; overflow: hidden; }
+.full-pause { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0 0.02em; letter-spacing: -0.12em; }
 .full-pause-long { letter-spacing: -0.2em; }
-/* Arrows (↗/↘): shrink so their visual centre lands in the character band
-   instead of flying above it. baseline-end keeps them flush with the
-   manuscript baseline. */
-.full-ending-tone { font-size: 0.82em; }
-/* V/v: shrink to bring cap-height / x-height visual centre into the
-   character band. */
+/* V/v are kept visually smaller because they are not the focus of Full
+   reading; the user has confirmed the primary markers for Full are
+   /, ↗/↘ and the prosody curve. */
 .full-breath-major, .full-breath-minor { margin: 0 0.04em; font-family: Arial, sans-serif; font-weight: 900; line-height: 1; }
-.full-breath-major { color: #c33324; font-size: 0.82em; }
-.full-breath-minor { color: #d87934; font-size: 0.88em; }
+.full-breath-major { color: #c33324; font-size: 0.85em; }
+.full-breath-minor { color: #d87934; font-size: 0.9em; }
 
 .full-boundary-trigger {
   position: absolute;
