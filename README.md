@@ -37,7 +37,7 @@
 npm run local
 ```
 
-启动器会自动：检查环境 → 启动分析服务 → 启动前端 → 等待两个服务就绪 → 打开浏览器。按 `Ctrl+C` 关闭全部服务。
+启动器会自动：检查运行环境 → 检查本地服务配置 → 初始化本地 D1 → 启动分析服务 → 启动前端 → 打开浏览器。按 `Ctrl+C` 关闭全部服务。
 
 也可以直接双击项目根目录的入口文件（无需打开终端）：
 
@@ -45,6 +45,15 @@ npm run local
 - macOS：`start-local.command`
 
 真正启动逻辑统一在 `scripts/start-local.mjs`，双击入口只负责切到项目根目录并调用 `npm run local`。
+
+#### 配置本地服务（两个文件，token 两边必须一致）
+
+一键启动前需要两份本地配置：
+
+- 根目录 `.dev.vars`（复制 `.dev.vars.example`）：`ANALYSIS_SERVICE_URL`、`ANALYSIS_SERVICE_TOKEN`、`ANALYSIS_CALLBACK_TOKEN`
+- `analysis-service/.env`（复制 `.env.example`）：`AI_API_KEY`、`LLM_MODEL`、`ANALYSIS_SERVICE_TOKEN`、`ANALYSIS_CALLBACK_TOKEN`
+
+**注意**：`.dev.vars` 与 `analysis-service/.env` 里的 `ANALYSIS_SERVICE_TOKEN`、`ANALYSIS_CALLBACK_TOKEN` 必须完全一致，否则前端与分析服务无法互相认证。启动器会在打开浏览器前校验这些字段（只显示 ✓/✗ 状态，不打印密钥），缺配或两端不一致会直接停止并提示。
 
 #### 初始化本地数据库
 
@@ -54,7 +63,7 @@ npm run local
 npm run db:init
 ```
 
-该命令把 `drizzle/` 下的迁移应用到本地 D1（幂等，可重复执行）。
+该命令把 `drizzle/` 下的迁移应用到本地 D1（幂等，可重复执行）。启动器也会在前端启动后自动检测并补做初始化。
 
 ### 环境要求
 
