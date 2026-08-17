@@ -17,7 +17,7 @@ import {
   type SentencePrintBlock,
 } from "@/lib/print-layout";
 import {
-  RHYTHM_LABELS,
+  rhythmLabel,
   type PrintSettings,
   type RecitationWork,
 } from "@/lib/recitation-schema";
@@ -74,7 +74,7 @@ function PrintSceneVisual({ block }: { block: SentencePrintBlock }) {
         />
       ) : <span className="a4-scene-fallback" role="img" aria-label="淡墨作品插图后备背景" />}
       <b>{String(block.sentence.order).padStart(2, "0")}</b>
-      <small>{RHYTHM_LABELS[block.sentence.rhythm]}</small>
+      <small>{rhythmLabel(block.sentence.rhythm) ?? "未标"}</small>
     </div>
   );
 }

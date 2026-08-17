@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -22,7 +23,7 @@ import {
 } from "@/lib/prosody-visual";
 import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
 import { TeachingProsodyTrack } from "@/components/TeachingProsodyTrack";
-import { RHYTHM_LABELS } from "@/lib/recitation-schema";
+import { isRhythm, rhythmLabel } from "@/lib/recitation-schema";
 import type {
   BreathMark,
   EndingTone,
@@ -528,6 +529,7 @@ function CompactSentenceRow({
   onSelectToken?: (token: TimedToken, anchor: HTMLElement) => void;
   onPointChange?: (tokenIndex: number, visualLevel: number) => void;
 }) {
+  const label = rhythmLabel(block.sentence.rhythm);
   return (
     <section
       className="compact-sentence-row"
@@ -536,10 +538,12 @@ function CompactSentenceRow({
     >
       <div className="compact-sentence-rail">
         <span className="compact-sentence-number">{String(block.sentence.order).padStart(2, "0")}</span>
-        <span className="compact-rhythm-label" aria-label={`节奏：${RHYTHM_LABELS[block.sentence.rhythm]}`}>
-          {Array.from(RHYTHM_LABELS[block.sentence.rhythm]).map((character, index) => (
-            <span key={index}>{character}</span>
-          ))}
+        <span className="compact-rhythm-label" aria-label={label ? `节奏：${label}` : "节奏未标注"}>
+          {label
+            ? Array.from(label).map((character, index) => (
+              <span key={index}>{character}</span>
+            ))
+            : "未标"}
         </span>
       </div>
       <CompactGraphTrack
@@ -667,6 +671,18 @@ export function CompactRecitationEditor({
     [work.controlSpec],
   );
   const blocksById = useMemo(() => new Map(blocks.map((block) => [block.id, block])), [blocks]);
+  const invalidRhythmBlocks = useMemo(
+    () => blocks.filter((block) => !isRhythm(block.sentence.rhythm)),
+    [blocks],
+  );
+  useEffect(() => {
+    for (const block of invalidRhythmBlocks) {
+      console.warn("[CompactRecitationEditor] 未知或缺失的节奏值，已隐藏节奏标签", {
+        sentenceId: block.sentence.id,
+        invalidRhythm: block.sentence.rhythm,
+      });
+    }
+  }, [invalidRhythmBlocks]);
   const measureRootRef = useRef<HTMLDivElement>(null);
   const pageStackRef = useRef<HTMLDivElement>(null);
   const pageSignatureRef = useRef("");

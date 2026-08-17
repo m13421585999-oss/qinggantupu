@@ -22,7 +22,7 @@ import {
 import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
 import { TeachingProsodyTrack } from "@/components/TeachingProsodyTrack";
 import { mapSceneAssetsToSentences } from "@/lib/visual-assets";
-import { RHYTHM_LABELS } from "@/lib/recitation-schema";
+import { rhythmLabel } from "@/lib/recitation-schema";
 import type {
   BreathMark,
   EndingTone,
@@ -492,6 +492,7 @@ function FullSceneCard({
 }) {
   const [failed, setFailed] = useState<string>();
   const available = Boolean(imageUrl && imageUrl !== failed);
+  const label = rhythmLabel(rhythm);
   return (
     <aside className="full-scene-card" aria-label={imageAlt ?? `第 ${order} 句情景小卡`}>
       {available && imageUrl ? (
@@ -508,8 +509,8 @@ function FullSceneCard({
         <div className="full-scene-placeholder" role="img" aria-label="情景图片生成中" />
       )}
       <span className="full-scene-order">{String(order).padStart(2, "0")}</span>
-      <span className="full-rhythm-label" aria-label={`节奏：${RHYTHM_LABELS[rhythm]}`}>
-        {RHYTHM_LABELS[rhythm]}
+      <span className="full-rhythm-label" aria-label={label ? `节奏：${label}` : "节奏未标注"}>
+        {label ?? "未标"}
       </span>
     </aside>
   );

@@ -1656,23 +1656,39 @@ async function createTextRecitationJob(env: Env, workId: string) {
       throw new Error(`文稿分析服务返回 HTTP ${response.status}：${detail.slice(0, 400)}`);
     }
     const payload = await response.json() as Record<string, unknown>;
-    const controlSpec = payload.control_spec as Record<string, unknown> | undefined;
-    if (!controlSpec) throw new Error("文稿分析服务未返回 control_spec。");
-    validateControlSpec(controlSpec, String(work.source_text));
+    const rawControlSpec = payload.control_spec;
+    if (!rawControlSpec) throw new Error("文稿分析服务未返回 control_spec。");
+
+    // Normalize the service's wire format (nested rhythm {type}, snake_case
+    // annotations, no per-sentence id/tokens/documentProfile) into the
+    // canonical frontend control spec shape — the same importer the audio
+    // analysis callback uses — so every saved RecitationSentence.rhythm is a
+    // legal string and the editors never read a raw nested object.
+    let normalizedSpec: Record<string, unknown>;
+    try {
+      normalizedSpec = importControlSpec(
+        rawControlSpec,
+        String(work.source_text),
+        workId,
+      ) as unknown as Record<string, unknown>;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`文稿分析返回的 control_spec 无法导入：${message}`);
+    }
 
     const latest = await first<Row>(env.DB.prepare(
       "SELECT COALESCE(MAX(version), 0) AS version FROM control_spec_versions WHERE work_id = ?",
     ).bind(workId));
     const version = Number(latest?.version ?? 0) + 1;
     const specId = id("spec");
-    const updated = { ...controlSpec, id: specId, workId, version };
+    const updated = { ...normalizedSpec, id: specId, workId, version };
     const savedAt = nextUpdatedAt(String(work.updated_at));
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO control_spec_versions
            (id, work_id, version, schema_version, source, spec_json, validation_state, created_by, created_at)
          VALUES (?, ?, ?, ?, 'ai', ?, 'valid', 'ai', ?)`,
-      ).bind(specId, workId, version, String(controlSpec.schema_version ?? "2.0"), JSON.stringify(updated), savedAt),
+      ).bind(specId, workId, version, String(normalizedSpec.schemaVersion ?? "2.0"), JSON.stringify(updated), savedAt),
       env.DB.prepare(
         `UPDATE works
             SET current_spec_version_id = ?, status = 'review', audio_sync_status = 'pending',

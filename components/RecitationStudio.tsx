@@ -41,7 +41,7 @@ import { buildCompactControlSpec } from "@/lib/compact-control-spec";
 import {
   ENDING_LABELS,
   PROSODY_LABELS,
-  RHYTHM_LABELS,
+  rhythmLabel,
   type AiTtsProduction,
   type AudioTimeline,
   type AudioTrack,
@@ -1164,7 +1164,7 @@ function GraphSentence({
             )}
             <div className="scene-visual-meta">
               <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
-              <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
+              <span className="soft-tag">{rhythmLabel(sentence.rhythm)}</span>
             </div>
             {editing && onSceneImageEdit ? (
               <button
@@ -1201,7 +1201,7 @@ function GraphSentence({
         ) : null}
         {!isViewerScene ? <div>
           <span className="sentence-number">{String(sentence.order).padStart(2, "0")}</span>
-          <span className="soft-tag">{RHYTHM_LABELS[sentence.rhythm]}</span>
+          <span className="soft-tag">{rhythmLabel(sentence.rhythm)}</span>
         </div> : null}
         {onPlay && !isViewerScene ? (
           <span data-export-exclude="true">

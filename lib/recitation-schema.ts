@@ -538,6 +538,29 @@ export const RHYTHM_LABELS: Record<Rhythm, string> = {
   low: "低沉",
 };
 
+const RHYTHM_KEYS = new Set<Rhythm>([
+  "light",
+  "solemn",
+  "relaxed",
+  "tense",
+  "soaring",
+  "low",
+]);
+
+export function isRhythm(value: unknown): value is Rhythm {
+  return typeof value === "string" && RHYTHM_KEYS.has(value as Rhythm);
+}
+
+/**
+ * Resolve a sentence's rhythm into its Chinese teaching label, or `undefined`
+ * when the value is missing / unknown (e.g. a legacy nested `{ type: "..." }`
+ * object that bypassed importControlSpec). Callers decide how to render the
+ * fallback; this never silently substitutes a business-meaningful rhythm.
+ */
+export function rhythmLabel(value: unknown): string | undefined {
+  return isRhythm(value) ? RHYTHM_LABELS[value] : undefined;
+}
+
 export const VOICE_LABELS: Record<VoiceQuality, string> = {
   solid: "偏实声",
   slightly_breathy: "轻微气声",
