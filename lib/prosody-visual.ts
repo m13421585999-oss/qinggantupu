@@ -5,6 +5,15 @@ export type { ProsodyPointOverride } from "./recitation-schema";
 export const PROSODY_VISUAL_LEVEL_COUNT = 9;
 export const PROSODY_SMOOTHING_WINDOW = 5;
 
+// Shared teaching-prosody stroke spec used by every renderer (Full and
+// Compact) so the curve keeps one visual weight. The main curve is thickened
+// ~45% over the previous 1.65px spec; the node outline ~25%.
+export const PROSODY_COLOR = "#526f82";
+export const PROSODY_STROKE_WIDTH = 2.4;
+export const PROSODY_NODE_STROKE_WIDTH = 2.05;
+export const PROSODY_NODE_FILL = "#fffdf8";
+export const PROSODY_NODE_RADIUS = 3.4;
+
 export interface TeachingProsodyPoint {
   tokenIndex: number;
   sourceLevel: number;

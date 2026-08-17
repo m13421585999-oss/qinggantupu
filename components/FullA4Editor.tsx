@@ -22,6 +22,7 @@ import {
 } from "@/lib/prosody-visual";
 import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
 import { TeachingProsodyTrack } from "@/components/TeachingProsodyTrack";
+import { mapSceneAssetsToSentences } from "@/lib/visual-assets";
 import type {
   BreathMark,
   EndingTone,
@@ -31,23 +32,23 @@ import type {
   TimedToken,
 } from "@/lib/recitation-schema";
 
-const COMPACT_MARGIN_MM = 11;
-const COMPACT_RENDER_DPR = 2.5;
-const COMPACT_CURVE_HEIGHT = 34;
-const COMPACT_CURVE_PADDING = 4.5;
+const FULL_MARGIN_MM = 14;
+const FULL_RENDER_DPR = 2.5;
+const FULL_CURVE_HEIGHT = 52;
+const FULL_CURVE_PADDING = 7;
 
-type CompactSaveState = "unsaved" | "dirty" | "saving" | "saved" | "failed";
+type FullSaveState = "unsaved" | "dirty" | "saving" | "saved" | "failed";
 
-interface CompactSelection {
+interface FullBlock {
+  id: string;
+  sentence: RecitationSentence;
+}
+
+interface FullSelection {
   sentenceId: string;
   tokenIndex: number;
   x: number;
   y: number;
-}
-
-interface CompactBlock {
-  id: string;
-  sentence: RecitationSentence;
 }
 
 function applyPinyinOverrides(sentence: RecitationSentence, overrides: Record<string, string>) {
@@ -63,7 +64,7 @@ function applyPinyinOverrides(sentence: RecitationSentence, overrides: Record<st
 
 function visibleSourceCharacter(value: string) {
   if (/\r|\n/u.test(value)) return "";
-  if (/^\s+$/u.test(value)) return " ";
+  if (/^\s+$/u.test(value)) return " ";
   return value;
 }
 
@@ -91,20 +92,14 @@ function focusIndexes(sentence: RecitationSentence) {
 function pauseAt(sentence: RecitationSentence, tokenIndex: number) {
   return sentence.pauses.find((pause) => pause.afterTokenIndex === tokenIndex);
 }
-
 function breathAt(sentence: RecitationSentence, tokenIndex: number) {
   return sentence.breaths?.find((breath) => breath.afterTokenIndex === tokenIndex);
 }
-
 function prolongAt(sentence: RecitationSentence, tokenIndex: number) {
   return sentence.prolongations.find((prolongation) => prolongation.tokenIndex === tokenIndex);
 }
 
-function setPauseAt(
-  sentence: RecitationSentence,
-  token: TimedToken,
-  type: PauseMark["type"],
-) {
+function setPauseAt(sentence: RecitationSentence, token: TimedToken, type: PauseMark["type"]) {
   const current = pauseAt(sentence, token.index);
   if (current?.type === type) {
     return { ...sentence, pauses: sentence.pauses.filter((pause) => pause.id !== current.id) };
@@ -118,18 +113,12 @@ function setPauseAt(
   };
   return {
     ...sentence,
-    pauses: [
-      ...sentence.pauses.filter((pause) => pause.afterTokenIndex !== token.index),
-      next,
-    ].sort((left, right) => left.afterTokenIndex - right.afterTokenIndex),
+    pauses: [...sentence.pauses.filter((pause) => pause.afterTokenIndex !== token.index), next]
+      .sort((left, right) => left.afterTokenIndex - right.afterTokenIndex),
   };
 }
 
-function setBreathAt(
-  sentence: RecitationSentence,
-  token: TimedToken,
-  type: BreathMark["type"],
-) {
+function setBreathAt(sentence: RecitationSentence, token: TimedToken, type: BreathMark["type"]) {
   const current = breathAt(sentence, token.index);
   if (current?.type === type) {
     const breaths = (sentence.breaths ?? []).filter((breath) => breath.id !== current.id);
@@ -144,10 +133,8 @@ function setBreathAt(
   };
   return {
     ...sentence,
-    breaths: [
-      ...(sentence.breaths ?? []).filter((breath) => breath.afterTokenIndex !== token.index),
-      next,
-    ].sort((left, right) => left.afterTokenIndex - right.afterTokenIndex),
+    breaths: [...(sentence.breaths ?? []).filter((breath) => breath.afterTokenIndex !== token.index), next]
+      .sort((left, right) => left.afterTokenIndex - right.afterTokenIndex),
   };
 }
 
@@ -220,7 +207,7 @@ function setEndingTone(sentence: RecitationSentence, type: EndingTone) {
   };
 }
 
-function CompactTokenUnit({
+function FullTokenUnit({
   unit,
   sentence,
   focused,
@@ -250,33 +237,24 @@ function CompactTokenUnit({
     : undefined;
   const select = (anchor: HTMLElement) => onSelect?.(anchor);
   return (
-    <span
-      className="compact-token-unit"
-      ref={measureRef}
-      data-compact-token-index={unit.token.index}
-    >
-      <span className="compact-token-manuscript">
+    <span className="full-token-unit" ref={measureRef} data-full-token-index={unit.token.index}>
+      <span className="full-token-manuscript">
         {unit.prefixPunctuation.map((token) => (
-          <span className="compact-source-punctuation" key={token.id}>
-            {visibleSourceCharacter(token.char)}
-          </span>
+          <span className="full-source-punctuation" key={token.id}>{visibleSourceCharacter(token.char)}</span>
         ))}
         {breath ? (
-          <span
-            className={breath.type === "breath_major" ? "compact-breath-major" : "compact-breath-minor"}
-            aria-label={breath.type === "breath_major" ? "大换气" : "小换气"}
-          >
+          <span className={breath.type === "breath_major" ? "full-breath-major" : "full-breath-minor"}>
             {breath.type === "breath_major" ? "V" : "v"}
           </span>
         ) : null}
-        <span className="compact-spoken-token">
-          <span className="compact-token-pinyin" aria-hidden="true">
-            {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
+        <span className="full-spoken-token">
+          <span className="full-token-pinyin" aria-hidden="true">
+            {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
           </span>
           {editable ? (
             <button
               type="button"
-              className={`compact-token-char ${focused ? "is-focus" : ""} ${selected ? "is-selected" : ""}`}
+              className={`full-token-char ${focused ? "is-focus" : ""} ${selected ? "is-selected" : ""}`}
               ref={characterRef as (element: HTMLButtonElement | null) => void}
               onClick={(event) => select(event.currentTarget)}
               aria-label={`编辑“${unit.token.char}”及其后方标识`}
@@ -284,37 +262,28 @@ function CompactTokenUnit({
               {unit.token.char}
             </button>
           ) : (
-            <span
-              className={`compact-token-char ${focused ? "is-focus" : ""}`}
-              ref={characterRef}
-            >
+            <span className={`full-token-char ${focused ? "is-focus" : ""}`} ref={characterRef}>
               {unit.token.char}
             </span>
           )}
         </span>
-        {prolongation ? <span className="compact-prolongation" aria-label="拖音">—</span> : null}
+        {prolongation ? <span className="full-prolongation">—</span> : null}
         {tone ? (
-          <span className="compact-ending-tone" aria-label={tone === "rising" ? "上升调" : "下降调"}>
-            {tone === "rising" ? "↗" : "↘"}
-          </span>
+          <span className="full-ending-tone">{tone === "rising" ? "↗" : "↘"}</span>
         ) : null}
         {pause ? (
-          <span className={`compact-pause compact-pause-${pause.type}`} aria-label={pause.type === "long" ? "长停" : "短停"}>
-            {pause.type === "long" ? "///" : "/"}
-          </span>
+          <span className={`full-pause full-pause-${pause.type}`}>{pause.type === "long" ? "///" : "/"}</span>
         ) : null}
         {unit.suffixPunctuation.map((token) => (
-          <span className="compact-source-punctuation" key={token.id}>
-            {visibleSourceCharacter(token.char)}
-          </span>
+          <span className="full-source-punctuation" key={token.id}>{visibleSourceCharacter(token.char)}</span>
         ))}
       </span>
       {editable ? (
         <button
           type="button"
-          className="compact-boundary-trigger"
+          className="full-boundary-trigger"
           data-export-exclude="true"
-          onClick={(event) => select(event.currentTarget.parentElement?.querySelector<HTMLElement>(".compact-token-char") ?? event.currentTarget)}
+          onClick={(event) => select(event.currentTarget.parentElement?.querySelector<HTMLElement>(".full-token-char") ?? event.currentTarget)}
           aria-label={`在“${unit.token.char}”后添加停顿或换气`}
         >
           +
@@ -324,26 +293,7 @@ function CompactTokenUnit({
   );
 }
 
-function CompactProsodyCurve(props: {
-  units: GraphTokenUnit[];
-  points: TeachingProsodyPoint[];
-  characterRefs: React.RefObject<Map<number, HTMLElement>>;
-  rowElement: HTMLDivElement | null;
-  editable: boolean;
-  onPointChange?: (tokenIndex: number, visualLevel: number) => void;
-}) {
-  return (
-    <TeachingProsodyTrack
-      {...props}
-      curveHeight={COMPACT_CURVE_HEIGHT}
-      curvePadding={COMPACT_CURVE_PADDING}
-      className="compact-prosody-curve"
-    />
-  );
-}
-
-
-function CompactGraphLine({
+function FullGraphLine({
   units,
   sentence,
   focused,
@@ -367,10 +317,10 @@ function CompactGraphLine({
   const [rowElement, setRowElement] = useState<HTMLDivElement | null>(null);
   const characterRefs = useRef(new Map<number, HTMLElement>());
   return (
-    <div className="compact-graph-line" ref={setRowElement}>
-      <div className="compact-token-row">
+    <div className="full-graph-line" ref={setRowElement}>
+      <div className="full-token-row">
         {units.map((unit) => (
-          <CompactTokenUnit
+          <FullTokenUnit
             unit={unit}
             sentence={sentence}
             focused={focused.has(unit.token.index)}
@@ -386,19 +336,22 @@ function CompactGraphLine({
           />
         ))}
       </div>
-      <CompactProsodyCurve
+      <TeachingProsodyTrack
         units={units}
         points={points}
         characterRefs={characterRefs}
         rowElement={rowElement}
         editable={editable}
+        curveHeight={FULL_CURVE_HEIGHT}
+        curvePadding={FULL_CURVE_PADDING}
+        className="full-prosody-curve"
         onPointChange={onPointChange}
       />
     </div>
   );
 }
 
-function CompactGraphTrack({
+function FullGraphTrack({
   sentence,
   editable,
   selectedTokenIndex,
@@ -432,7 +385,7 @@ function CompactGraphTrack({
     const track = trackRef.current;
     if (!track || !units.length || track.clientWidth <= 0) return;
     const styles = window.getComputedStyle(track);
-    const unitGap = Number.parseFloat(styles.getPropertyValue("--compact-token-gap")) || 3;
+    const unitGap = Number.parseFloat(styles.getPropertyValue("--full-token-gap")) || 4;
     const widths = new Map(units.flatMap((unit) => {
       const element = probeRefs.current.get(unit.token.index);
       return element ? [[unit.token.index, element.getBoundingClientRect().width]] : [];
@@ -469,15 +422,13 @@ function CompactGraphTrack({
     };
   }, [fitLines]);
 
-  if (!units.length) {
-    return <p className="compact-graph-fallback">{sentence.text}</p>;
-  }
+  if (!units.length) return <p className="full-graph-fallback">{sentence.text}</p>;
 
   return (
-    <div className="compact-graph-track" ref={trackRef} aria-label={sentence.text}>
-      <div className="compact-token-width-probe" aria-hidden="true">
+    <div className="full-graph-track" ref={trackRef} aria-label={sentence.text}>
+      <div className="full-token-width-probe" aria-hidden="true">
         {units.map((unit) => (
-          <CompactTokenUnit
+          <FullTokenUnit
             unit={unit}
             sentence={sentence}
             focused={focused.has(unit.token.index)}
@@ -492,9 +443,9 @@ function CompactGraphTrack({
           />
         ))}
       </div>
-      <div className="compact-graph-lines">
+      <div className="full-graph-lines">
         {lines.map((line, index) => (
-          <CompactGraphLine
+          <FullGraphLine
             units={line}
             sentence={sentence}
             focused={focused}
@@ -504,7 +455,7 @@ function CompactGraphTrack({
             endingTokenIndex={endingTokenIndex}
             onSelectToken={onSelectToken}
             onPointChange={onPointChange}
-            key={`${sentence.id}-compact-line-${index}-${line[0]?.token.index}`}
+            key={`${sentence.id}-full-line-${index}-${line[0]?.token.index}`}
           />
         ))}
       </div>
@@ -512,15 +463,50 @@ function CompactGraphTrack({
   );
 }
 
-function CompactSentenceRow({
+function FullSceneCard({
+  imageUrl,
+  imageAlt,
+  order,
+}: {
+  imageUrl?: string;
+  imageAlt?: string;
+  order: number;
+}) {
+  const [failed, setFailed] = useState<string>();
+  const available = Boolean(imageUrl && imageUrl !== failed);
+  return (
+    <aside className="full-scene-card" aria-label={imageAlt ?? `第 ${order} 句情景小卡`}>
+      {available && imageUrl ? (
+        // Generated scene assets are same-origin persisted R2 objects.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={imageUrl}
+          alt={imageAlt ?? ""}
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailed(imageUrl)}
+        />
+      ) : (
+        <div className="full-scene-placeholder" role="img" aria-label="情景图片生成中" />
+      )}
+      <span className="full-scene-order">{String(order).padStart(2, "0")}</span>
+    </aside>
+  );
+}
+
+function FullSentenceRow({
   block,
+  sceneImageUrl,
+  sceneImageAlt,
   measure = false,
   editable = false,
   selectedTokenIndex,
   onSelectToken,
   onPointChange,
 }: {
-  block: CompactBlock;
+  block: FullBlock;
+  sceneImageUrl?: string;
+  sceneImageAlt?: string;
   measure?: boolean;
   editable?: boolean;
   selectedTokenIndex?: number;
@@ -529,56 +515,71 @@ function CompactSentenceRow({
 }) {
   return (
     <section
-      className="compact-sentence-row"
-      data-compact-block-id={measure ? undefined : block.id}
-      data-compact-measure-id={measure ? block.id : undefined}
+      className="full-sentence-row"
+      data-full-block-id={measure ? undefined : block.id}
+      data-full-measure-id={measure ? block.id : undefined}
     >
-      <span className="compact-sentence-number">{String(block.sentence.order).padStart(2, "0")}</span>
-      <CompactGraphTrack
-        sentence={block.sentence}
-        editable={editable}
-        selectedTokenIndex={selectedTokenIndex}
-        onSelectToken={onSelectToken}
-        onPointChange={onPointChange}
-      />
+      <FullSceneCard imageUrl={sceneImageUrl} imageAlt={sceneImageAlt} order={block.sentence.order} />
+      <div className="full-sentence-body">
+        <FullGraphTrack
+          sentence={block.sentence}
+          editable={editable}
+          selectedTokenIndex={selectedTokenIndex}
+          onSelectToken={onSelectToken}
+          onPointChange={onPointChange}
+        />
+      </div>
     </section>
   );
 }
 
-function CompactPageHeader({ work, page, total }: {
+function FullPageHeader({ work, page, total, first }: {
   work: RecitationWork;
   page: number;
   total: number;
+  first: boolean;
 }) {
   const displayTitle = (work.title || "未命名作品")
     .replace(/^《+\s*/, "")
     .replace(/\s*》+$/, "");
+  if (first) {
+    return (
+      <header className="full-page-header full-page-header-first">
+        <div>
+          <p className="full-header-kicker">朗诵情感图谱</p>
+          <h1 className="full-header-title">《{displayTitle}》</h1>
+          {work.author ? <p className="full-header-author">作者：{work.author}</p> : null}
+        </div>
+        <span className="full-header-page">{page} / {total}</span>
+      </header>
+    );
+  }
   return (
-    <header className="compact-page-header">
-      <strong>《{displayTitle}》</strong>
-      <span><span>朗诵情感图谱</span><span>（{page}/{total}）</span></span>
-      {work.author ? <small>作者：{work.author}</small> : null}
+    <header className="full-page-header full-page-header-running">
+      <span>《{displayTitle}》 · 朗诵情感图谱</span>
+      <span className="full-header-page">{page} / {total}</span>
     </header>
   );
 }
 
-function CompactPageLegend() {
+function FullPageLegend() {
   return (
-    <footer className="compact-page-legend">
-      <span><b className="compact-legend-major">V</b> 换气</span>
-      <span><b className="compact-legend-minor">v</b> 偷气</span>
+    <footer className="full-page-legend">
+      <span><b className="full-legend-major">V</b> 换气</span>
+      <span><b className="full-legend-minor">v</b> 偷气</span>
       <span><b>/</b> 短停</span>
       <span><b>{"///"}</b> 长停</span>
-      <span><b className="compact-legend-focus">红</b> 重音</span>
-      <span><i className="compact-legend-curve" aria-hidden="true" /> 语势曲线</span>
+      <span><b className="full-legend-focus">红</b> 重音</span>
+      <span><i className="full-legend-curve" aria-hidden="true" /> 语势曲线</span>
     </footer>
   );
 }
 
-function CompactA4Page({
+function FullA4Page({
   work,
   plan,
   blocksById,
+  sceneAssetsBySentenceId,
   total,
   selection,
   onSelectToken,
@@ -586,35 +587,42 @@ function CompactA4Page({
 }: {
   work: RecitationWork;
   plan: PrintPagePlan;
-  blocksById: ReadonlyMap<string, CompactBlock>;
+  blocksById: ReadonlyMap<string, FullBlock>;
+  sceneAssetsBySentenceId: ReadonlyMap<string, { url?: string; alt?: string }>;
   total: number;
-  selection?: CompactSelection;
+  selection?: FullSelection;
   onSelectToken: (sentence: RecitationSentence, token: TimedToken, anchor: HTMLElement) => void;
   onPointChange: (sentence: RecitationSentence, tokenIndex: number, visualLevel: number) => void;
 }) {
   return (
     <article
-      className="compact-a4-page"
-      data-compact-pdf-page={plan.index + 1}
+      className="full-a4-page"
+      data-full-pdf-page={plan.index + 1}
       aria-label={`A4 第 ${plan.index + 1} 页，共 ${total} 页`}
     >
-      <CompactPageHeader work={work} page={plan.index + 1} total={total} />
-      <div className="compact-page-body">
-        {plan.blockIds.map((blockId) => {
-          const block = blocksById.get(blockId);
-          return block ? (
-            <CompactSentenceRow
-              block={block}
-              editable
-              selectedTokenIndex={selection?.sentenceId === block.sentence.id ? selection.tokenIndex : undefined}
-              onSelectToken={(token, anchor) => onSelectToken(block.sentence, token, anchor)}
-              onPointChange={(tokenIndex, visualLevel) => onPointChange(block.sentence, tokenIndex, visualLevel)}
-              key={block.id}
-            />
-          ) : null;
-        })}
+      <div className="full-a4-background" aria-hidden="true" />
+      <div className="full-a4-content">
+        <FullPageHeader work={work} page={plan.index + 1} total={total} first={plan.index === 0} />
+        <div className="full-page-body">
+          {plan.blockIds.map((blockId) => {
+            const block = blocksById.get(blockId);
+            const scene = sceneAssetsBySentenceId.get(blockId);
+            return block ? (
+              <FullSentenceRow
+                block={block}
+                sceneImageUrl={scene?.url}
+                sceneImageAlt={scene?.alt}
+                editable
+                selectedTokenIndex={selection?.sentenceId === block.sentence.id ? selection.tokenIndex : undefined}
+                onSelectToken={(token, anchor) => onSelectToken(block.sentence, token, anchor)}
+                onPointChange={(tokenIndex, visualLevel) => onPointChange(block.sentence, tokenIndex, visualLevel)}
+                key={block.id}
+              />
+            ) : null;
+          })}
+        </div>
+        <FullPageLegend />
       </div>
-      <CompactPageLegend />
     </article>
   );
 }
@@ -626,7 +634,7 @@ function contentCapacity(element: HTMLElement) {
   return Math.max(0, element.clientHeight - padding);
 }
 
-function saveStateLabel(state: CompactSaveState) {
+function saveStateLabel(state: FullSaveState) {
   if (state === "saving") return "正在保存…";
   if (state === "dirty") return "有未保存修改";
   if (state === "failed") return "保存失败，请重试";
@@ -634,45 +642,55 @@ function saveStateLabel(state: CompactSaveState) {
   return "等待编辑";
 }
 
-export function CompactRecitationEditor({
+export function FullA4Editor({
   work,
   saveState,
   onSentenceChange,
   onPinyinOverrideChange,
   onSave,
   onOpenLibrary,
-  onSwitchFull,
+  onSwitchCompact,
 }: {
   work: RecitationWork;
-  saveState: CompactSaveState;
+  saveState: FullSaveState;
   onSentenceChange: (sentence: RecitationSentence) => void;
   onPinyinOverrideChange: (tokenId: string, value: string) => void;
   onSave: () => void;
   onOpenLibrary: () => void;
-  onSwitchFull: () => void;
+  onSwitchCompact: () => void;
 }) {
-  const blocks = useMemo<CompactBlock[]>(
-    () => (work.controlSpec?.sentences ?? []).map((sentence) => ({
+  const spec = work.controlSpec;
+  const blocks = useMemo<FullBlock[]>(
+    () => (spec?.sentences ?? []).map((sentence) => ({
       id: sentence.id,
-      sentence: applyPinyinOverrides(sentence, work.controlSpec?.pinyinOverrides ?? {}),
+      sentence: applyPinyinOverrides(sentence, spec?.pinyinOverrides ?? {}),
     })),
-    [work.controlSpec],
+    [spec],
   );
   const blocksById = useMemo(() => new Map(blocks.map((block) => [block.id, block])), [blocks]);
+  const sceneAssetsBySentenceId = useMemo(
+    () => mapSceneAssetsToSentences(work.visuals, spec?.sentences ?? []),
+    [work.visuals, spec],
+  );
+  const sceneAssetsView = useMemo(
+    () => new Map([...sceneAssetsBySentenceId.entries()].map(([id, asset]) => [
+      id,
+      { url: asset.url, alt: asset.prompt },
+    ])),
+    [sceneAssetsBySentenceId],
+  );
   const measureRootRef = useRef<HTMLDivElement>(null);
   const pageStackRef = useRef<HTMLDivElement>(null);
   const pageSignatureRef = useRef("");
   const [pages, setPages] = useState<PrintPagePlan[]>([]);
-  const [selection, setSelection] = useState<CompactSelection>();
+  const [selection, setSelection] = useState<FullSelection>();
   const [pinyinEditorOpen, setPinyinEditorOpen] = useState(false);
   const [pinyinDraft, setPinyinDraft] = useState("");
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [layoutMessage, setLayoutMessage] = useState("正在按整句计算 A4 分页…");
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportError, setExportError] = useState<string>();
-  const workspaceStyle = {
-    "--compact-a4-margin": `${COMPACT_MARGIN_MM}mm`,
-  } as CSSProperties;
+  const workspaceStyle = { "--full-a4-margin": `${FULL_MARGIN_MM}mm` } as CSSProperties;
 
   const calculatePagination = useCallback(() => {
     const root = measureRootRef.current;
@@ -681,12 +699,12 @@ export function CompactRecitationEditor({
       setPages([]);
       return;
     }
-    const firstBody = root.querySelector<HTMLElement>("[data-compact-measure-capacity='first']");
-    const continuationBody = root.querySelector<HTMLElement>("[data-compact-measure-capacity='continuation']");
-    const measuredElements = Array.from(root.querySelectorAll<HTMLElement>("[data-compact-measure-id]"));
+    const firstBody = root.querySelector<HTMLElement>("[data-full-measure-capacity='first']");
+    const continuationBody = root.querySelector<HTMLElement>("[data-full-measure-capacity='continuation']");
+    const measuredElements = Array.from(root.querySelectorAll<HTMLElement>("[data-full-measure-id]"));
     if (!firstBody || !continuationBody || measuredElements.length !== blocks.length) return;
     const measured = measuredElements.map((element) => ({
-      id: element.dataset.compactMeasureId ?? "",
+      id: element.dataset.fullMeasureId ?? "",
       heightPx: element.getBoundingClientRect().height,
     }));
     if (measured.some((block) => block.heightPx <= 0)) return;
@@ -722,7 +740,7 @@ export function CompactRecitationEditor({
     schedule();
     const observer = new ResizeObserver(schedule);
     observer.observe(root);
-    root.querySelectorAll<HTMLElement>("[data-compact-measure-id], [data-compact-measure-capacity]")
+    root.querySelectorAll<HTMLElement>("[data-full-measure-id], [data-full-measure-capacity]")
       .forEach((element) => observer.observe(element));
     document.fonts?.addEventListener("loadingdone", schedule);
     void document.fonts?.ready.then(schedule);
@@ -776,6 +794,8 @@ export function CompactRecitationEditor({
     setPinyinEditorOpen(false);
   };
 
+  const scenesIncomplete = blocks.some((block) => !sceneAssetsBySentenceId.get(block.id)?.url);
+
   const exportPdf = async () => {
     if (exportingPdf || !pages.length) return;
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -788,34 +808,25 @@ export function CompactRecitationEditor({
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       const stack = pageStackRef.current;
       const pageElements = stack
-        ? Array.from(stack.querySelectorAll<HTMLElement>("[data-compact-pdf-page]"))
+        ? Array.from(stack.querySelectorAll<HTMLElement>("[data-full-pdf-page]"))
         : [];
       if (!pageElements.length) throw new Error("A4 页面还没有排版完成");
       const [{ toCanvas }, { jsPDF }] = await Promise.all([
         import("html-to-image"),
         import("jspdf"),
       ]);
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-        compress: true,
-      });
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
       for (let index = 0; index < pageElements.length; index += 1) {
         const page = pageElements[index];
         const canvas = await toCanvas(page, {
           backgroundColor: "#fffdf8",
           cacheBust: true,
-          pixelRatio: COMPACT_RENDER_DPR,
+          pixelRatio: FULL_RENDER_DPR,
           width: page.scrollWidth,
           height: page.scrollHeight,
           filter: (node) => !(node instanceof Element)
             || node.getAttribute("data-export-exclude") !== "true",
-          style: {
-            boxShadow: "none",
-            margin: "0",
-            transform: "none",
-          },
+          style: { boxShadow: "none", margin: "0", transform: "none" },
         });
         if (index > 0) pdf.addPage("a4", "portrait");
         pdf.addImage(canvas, "PNG", 0, 0, 210, 297, undefined, "FAST");
@@ -833,34 +844,34 @@ export function CompactRecitationEditor({
     }
   };
 
-  if (!blocks.length) {
+  if (!spec || !blocks.length) {
     return (
-      <section className="compact-editor-empty">
-        <h1>紧凑版还没有可编辑文稿</h1>
-        <p>请先在完整版填写作品标题与正文，再切换回来。</p>
-        <button type="button" className="primary-button" onClick={onSwitchFull}>返回完整版</button>
+      <section className="full-editor-empty">
+        <h1>完整版还没有可编辑文稿</h1>
+        <p>请先在准备作品阶段生成朗诵图谱，再进入完整版编辑。</p>
+        <button type="button" className="primary-button" onClick={onSwitchCompact}>切换到紧凑版</button>
       </section>
     );
   }
 
   return (
     <section
-      className={`compact-editor-workspace ${exportingPdf ? "is-exporting" : ""}`}
+      className={`full-editor-workspace ${exportingPdf ? "is-exporting" : ""}`}
       style={workspaceStyle}
-      aria-label="紧凑版 A4 朗诵谱编辑器"
+      aria-label="完整版 A4 朗诵谱编辑器"
     >
-      <div className="compact-editor-toolbar" data-export-exclude="true">
-        <div className="compact-toolbar-title">
-          <p>紧凑版 · 人工朗诵谱</p>
+      <div className="full-editor-toolbar" data-export-exclude="true">
+        <div className="full-toolbar-title">
+          <p>完整版 · 朗诵情感图谱</p>
           <strong>{work.title || "未命名作品"}</strong>
           <small>{layoutMessage}</small>
         </div>
-        <div className="compact-toolbar-status" aria-live="polite">
-          <span className={`compact-save-state state-${saveState}`}>{saveStateLabel(saveState)}</span>
+        <div className="full-toolbar-status" aria-live="polite">
+          <span className={`full-save-state state-${saveState}`}>{saveStateLabel(saveState)}</span>
           <span>A4 纵向</span>
           <span>{pages.length || "计算中"} 页</span>
         </div>
-        <div className="compact-toolbar-actions">
+        <div className="full-toolbar-actions">
           <button type="button" className="text-button" onClick={onOpenLibrary}>作品库</button>
           <button
             type="button"
@@ -880,8 +891,11 @@ export function CompactRecitationEditor({
           </button>
           <button
             type="button"
-            className="primary-button compact-export-button"
-            onClick={() => void exportPdf()}
+            className="primary-button full-export-button"
+            onClick={() => {
+              if (scenesIncomplete && !window.confirm("部分情景图片尚未完成，将使用当前占位状态导出。")) return;
+              void exportPdf();
+            }}
             disabled={!pages.length || exportingPdf}
           >
             {exportingPdf ? "正在导出…" : "导出 PDF"}
@@ -889,36 +903,37 @@ export function CompactRecitationEditor({
         </div>
       </div>
 
-      {exportError ? <p className="compact-export-error" role="alert">{exportError}</p> : null}
+      {exportError ? <p className="full-export-error" role="alert">{exportError}</p> : null}
 
-      <div className="compact-page-stack" ref={pageStackRef}>
+      <div className="full-page-stack" ref={pageStackRef}>
         {pages.map((page) => (
-          <CompactA4Page
+          <FullA4Page
             work={work}
             plan={page}
             blocksById={blocksById}
+            sceneAssetsBySentenceId={sceneAssetsView}
             total={pages.length}
             selection={selection}
             onSelectToken={openSelection}
             onPointChange={changePoint}
-            key={`compact-page-${page.index}-${page.blockIds.join("-")}`}
+            key={`full-page-${page.index}-${page.blockIds.join("-")}`}
           />
         ))}
       </div>
 
       {selectedSentence && selectedToken && selection ? (
         <aside
-          className="compact-marker-popover"
+          className="full-marker-popover"
           data-export-exclude="true"
           style={{ left: selection.x, top: selection.y }}
           role="dialog"
           aria-label={`编辑“${selectedToken.char}”的朗诵标识`}
         >
-          <div className="compact-popover-heading">
+          <div className="full-popover-heading">
             <span>“{selectedToken.char}”及字后位置</span>
             <button type="button" onClick={() => { setSelection(undefined); setPinyinEditorOpen(false); }} aria-label="关闭标识工具">×</button>
           </div>
-          <div className="compact-marker-groups">
+          <div className="full-marker-groups">
             <div>
               <small>停顿</small>
               <button
@@ -945,7 +960,7 @@ export function CompactRecitationEditor({
                 onClick={() => editSelected((sentence, token) => setBreathAt(sentence, token, "breath_minor"))}
               >v</button>
             </div>
-            <div className="compact-other-markers">
+            <div className="full-other-markers">
               <small>其他</small>
               <button
                 type="button"
@@ -978,7 +993,7 @@ export function CompactRecitationEditor({
             </div>
           </div>
           {pinyinEditorOpen ? (
-            <div className="compact-pinyin-editor">
+            <div className="full-pinyin-editor">
               <label>拼音
                 <input
                   value={pinyinDraft}
@@ -995,20 +1010,26 @@ export function CompactRecitationEditor({
         </aside>
       ) : null}
 
-      <div className="compact-measure-layer" aria-hidden="true" ref={measureRootRef}>
-        <article className="compact-a4-page compact-measure-page">
-          <CompactPageHeader work={work} page={1} total={1} />
-          <div className="compact-page-body" data-compact-measure-capacity="first" />
-          <CompactPageLegend />
+      <div className="full-measure-layer" aria-hidden="true" ref={measureRootRef}>
+        <article className="full-a4-page full-measure-page">
+          <div className="full-a4-background" aria-hidden="true" />
+          <div className="full-a4-content">
+            <FullPageHeader work={work} page={1} total={1} first />
+            <div className="full-page-body" data-full-measure-capacity="first" />
+            <FullPageLegend />
+          </div>
         </article>
-        <article className="compact-a4-page compact-measure-page">
-          <CompactPageHeader work={work} page={2} total={2} />
-          <div className="compact-page-body" data-compact-measure-capacity="continuation" />
-          <CompactPageLegend />
+        <article className="full-a4-page full-measure-page">
+          <div className="full-a4-background" aria-hidden="true" />
+          <div className="full-a4-content">
+            <FullPageHeader work={work} page={2} total={2} first={false} />
+            <div className="full-page-body" data-full-measure-capacity="continuation" />
+            <FullPageLegend />
+          </div>
         </article>
-        <div className="compact-block-measure-list">
+        <div className="full-block-measure-list">
           {blocks.map((block) => (
-            <CompactSentenceRow block={block} measure key={`compact-measure-${block.id}`} />
+            <FullSentenceRow block={block} measure key={`full-measure-${block.id}`} />
           ))}
         </div>
       </div>

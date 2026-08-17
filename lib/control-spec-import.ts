@@ -790,6 +790,12 @@ export function importControlSpec(
     throw new Error("控制谱至少需要包含一个句子。");
   }
 
+  const isLineBreakToken = (index: number) => /[\r\n]/.test(tokens[index]?.char ?? "");
+  const skipLineBreaks = (cursor: number) => {
+    let next = cursor;
+    while (next < tokens.length && isLineBreakToken(next)) next += 1;
+    return next;
+  };
   let sentenceCursor = 0;
   const sentences: RecitationSentence[] = rawSentences.map((value, position) => {
     const sentenceNumber = position + 1;
@@ -797,6 +803,7 @@ export function importControlSpec(
     const explicitStart = integer(entry.start_index ?? entry.startIndex);
     const explicitEnd = integer(entry.end_index ?? entry.endIndex);
     const sentenceText = typeof entry.text === "string" ? entry.text : undefined;
+    sentenceCursor = skipLineBreaks(sentenceCursor);
     const min = explicitStart ?? sentenceCursor;
     let max = explicitEnd;
     if (min !== sentenceCursor) {
@@ -868,7 +875,7 @@ export function importControlSpec(
     };
   });
 
-  if (sentenceCursor !== tokens.length) {
+  if (skipLineBreaks(sentenceCursor) !== tokens.length) {
     throw new Error(`句子只覆盖到 token ${sentenceCursor - 1}，未完整覆盖网站正文。`);
   }
 

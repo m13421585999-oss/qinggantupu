@@ -16,19 +16,22 @@ test("compact editor is a sibling edition and keeps the full studio branch intac
 
 test("compact editor exposes formal V and v markers plus one editable node per spoken token", async () => {
   const component = await readFile(new URL("components/CompactRecitationEditor.tsx", root), "utf8");
+  const track = await readFile(new URL("components/TeachingProsodyTrack.tsx", root), "utf8");
   const studio = await readFile(new URL("components/RecitationStudio.tsx", root), "utf8");
   assert.match(component, /"breath_major"/);
   assert.match(component, /"breath_minor"/);
   assert.match(component, /compact-breath-major/);
   assert.match(component, /compact-breath-minor/);
   assert.match(component, /\{breath \? \([\s\S]*?className="compact-spoken-token"/);
-  assert.match(component, /new MutationObserver\(schedule\)/);
-  assert.match(component, /element\.getBoundingClientRect\(\)/);
+  assert.match(component, /<TeachingProsodyTrack/);
+  assert.match(component, /className="compact-prosody-curve"/);
+  assert.match(track, /new MutationObserver\(schedule\)/);
+  assert.match(track, /element\.getBoundingClientRect\(\)/);
   assert.match(component, /buildTeachingProsodyPoints/);
   assert.match(component, /className="compact-token-pinyin"/);
-  assert.match(component, /compact-curve-node is-editable/);
-  assert.match(component, /onPointerMove/);
-  assert.match(component, /prosodyVisualLevelFromPointerY/);
+  assert.match(track, /teaching-curve-node is-editable/);
+  assert.match(track, /onPointerMove/);
+  assert.match(track, /prosodyVisualLevelFromPointerY/);
   assert.match(component, /upsertProsodyPointOverride/);
   assert.match(component, /pinyinEditorOpen/);
   assert.match(component, /saveSelectedPinyin/);
@@ -40,6 +43,8 @@ test("compact editor exposes formal V and v markers plus one editable node per s
 
 test("compact editor paginates measured sentence rows and exports one A4 PDF", async () => {
   const component = await readFile(new URL("components/CompactRecitationEditor.tsx", root), "utf8");
+  const track = await readFile(new URL("components/TeachingProsodyTrack.tsx", root), "utf8");
+  const prosodyVisual = await readFile(new URL("lib/prosody-visual.ts", root), "utf8");
   const css = await readFile(new URL("app/globals.css", root), "utf8");
   assert.match(component, /data-compact-measure-id/);
   assert.match(component, /paginateMeasuredPrintBlocks\(measured/);
@@ -61,7 +66,10 @@ test("compact editor paginates measured sentence rows and exports one A4 PDF", a
   assert.match(component, /replace\(\/\^《\+/);
   assert.match(css, /compact-a4-background\.png/);
   assert.match(css, /\.compact-a4-page::before/);
-  assert.match(component, /stroke="#526f82"/);
+  assert.match(track, /stroke=\{PROSODY_COLOR\}/);
+  assert.match(prosodyVisual, /PROSODY_COLOR = "#526f82"/);
+  assert.match(prosodyVisual, /PROSODY_STROKE_WIDTH = 2\.4/);
+  assert.match(prosodyVisual, /PROSODY_NODE_STROKE_WIDTH = 2\.05/);
   assert.match(component, /\{"\/\/\/"\}/);
   assert.match(component, /compact-legend-focus/);
   assert.match(component, /> 语势曲线</);

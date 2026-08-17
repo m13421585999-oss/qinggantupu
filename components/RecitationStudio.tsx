@@ -36,6 +36,7 @@ import { ViewerScaleWrapper } from "@/components/ViewerScaleWrapper";
 import { WorkVisualPanel } from "@/components/WorkVisualPanel";
 import { A4PrintPreview } from "@/components/A4PrintPreview";
 import { CompactRecitationEditor } from "@/components/CompactRecitationEditor";
+import { FullA4Editor } from "@/components/FullA4Editor";
 import { buildCompactControlSpec } from "@/lib/compact-control-spec";
 import {
   ENDING_LABELS,
@@ -3806,6 +3807,17 @@ export function RecitationStudio() {
       </header>
 
       {mode === "studio" && studioEdition === "full" ? (
+        step === 2 ? (
+          <FullA4Editor
+            work={work}
+            saveState={saveState}
+            onSentenceChange={updateCompactSentence}
+            onPinyinOverrideChange={updateCompactPinyinOverride}
+            onSave={() => void performSaveCurrentWork()}
+            onOpenLibrary={() => setLibraryOpen(true)}
+            onSwitchCompact={() => void switchStudioEdition("compact")}
+          />
+        ) : (
         <StudioView
           work={work}
           step={step}
@@ -3839,6 +3851,7 @@ export function RecitationStudio() {
           onOpenLibrary={() => setLibraryOpen(true)}
           onSaveWork={() => void performSaveCurrentWork()}
         />
+        )
       ) : mode === "studio" ? (
         <CompactRecitationEditor
           work={work}

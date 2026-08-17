@@ -57,13 +57,40 @@ def test_build_tokens_human_override_wins():
     assert tokens[0]["display_pinyin"] == "chuáng"
 
 
-def test_split_sentences_covers_full_text():
-    text = "第一句。第二句！第三句？"
+def test_split_sentences_split_by_creator_line_breaks():
+    # 用户输入的换行就是 Sentence Row 边界；\n 不进入 sentence.text
+    text = "君不见黄河之水天上来\n奔流到海不复回\n君不见高堂明镜悲白发"
     ranges = split_sentences(text)
-    assert ranges[0] == (0, 3)
-    assert ranges[-1][1] == len(text) - 1
-    joined = "".join(text[start : end + 1] for start, end in ranges)
-    assert joined == text
+    assert len(ranges) == 3
+    texts = [text[start : end + 1] for start, end in ranges]
+    assert texts == [
+        "君不见黄河之水天上来",
+        "奔流到海不复回",
+        "君不见高堂明镜悲白发",
+    ]
+    assert all("\n" not in piece for piece in texts)
+
+
+def test_split_sentences_empty_lines_only_separate_paragraphs():
+    text = "第一句。\n\n第二句。\n\n\n第三句。"
+    ranges = split_sentences(text)
+    assert len(ranges) == 3
+    texts = [text[start : end + 1] for start, end in ranges]
+    assert texts == ["第一句。", "第二句。", "第三句。"]
+
+
+def test_split_sentences_trims_line_whitespace_but_keeps_punctuation():
+    text = "  床前明月光，疑是地上霜。  \n  举头望明月，低头思故乡。"
+    ranges = split_sentences(text)
+    texts = [text[start : end + 1] for start, end in ranges]
+    assert texts == ["床前明月光，疑是地上霜。", "举头望明月，低头思故乡。"]
+
+
+def test_split_sentences_single_line_punctuation_not_split():
+    text = "君不见，黄河之水天上来，奔流到海不复回。"
+    ranges = split_sentences(text)
+    assert len(ranges) == 1
+    assert text[ranges[0][0] : ranges[0][1] + 1] == text
 
 
 def test_compile_prosody_amplitude_at_least_three():

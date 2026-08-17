@@ -22,7 +22,6 @@ class TextRecitationError(RuntimeError):
 
 
 PUNCTUATION = set("，。！？、；：,.!?;:\n\r\t ‘’“”\"'（）()【】[]《》〈〉—…·")
-SENTENCE_ENDINGS = set("。！？!?；;\n")
 HAN = re.compile(r"[\u3400-\u9fff]")
 PIPELINE_VERSION = "text-recitation-1.0"
 # Synthetic pacing for a manuscript-only timeline. There is no audio, but the
@@ -87,16 +86,30 @@ def build_tokens(
 
 
 def split_sentences(text: str) -> list[tuple[int, int]]:
+    """Split by the creator's own line breaks.
+
+    Every non-empty line becomes one Sentence Row. The newline character never
+    enters a sentence's token range; each line's leading/trailing whitespace is
+    trimmed; punctuation inside a line is preserved verbatim; empty lines only
+    separate paragraphs. The source text itself is never modified.
+    """
     ranges: list[tuple[int, int]] = []
     start = 0
+    length = len(text)
     for index, char in enumerate(text):
-        if char in SENTENCE_ENDINGS and text[start : index + 1].strip():
-            ranges.append((start, index))
+        if char == "\n":
+            line = text[start:index]
+            if line.strip():
+                leading = len(line) - len(line.lstrip())
+                ranges.append((start + leading, start + len(line.rstrip()) - 1))
             start = index + 1
-    if start < len(text):
-        ranges.append((start, len(text) - 1))
+    if start < length:
+        line = text[start:]
+        if line.strip():
+            leading = len(line) - len(line.lstrip())
+            ranges.append((start + leading, start + len(line.rstrip()) - 1))
     if not ranges:
-        ranges = [(0, len(text) - 1)]
+        ranges = [(0, length - 1)]
     return ranges
 
 
