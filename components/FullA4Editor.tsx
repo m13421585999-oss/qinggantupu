@@ -572,8 +572,6 @@ function FullPageHeader({ work, page, total, first }: {
   if (first) {
     return (
       <header className="full-page-header full-page-header-first">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="full-page-logo" src="/full-logo.jpeg" alt="忆岁朗诵院品牌标识" />
         <div>
           <p className="full-header-kicker">朗诵情感图谱</p>
           <h1 className="full-header-title">《{displayTitle}》</h1>
@@ -585,8 +583,6 @@ function FullPageHeader({ work, page, total, first }: {
   }
   return (
     <header className="full-page-header full-page-header-running">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img className="full-page-logo full-page-logo-running" src="/full-logo.jpeg" alt="" />
       <span>《{displayTitle}》 · 朗诵情感图谱</span>
       <span className="full-header-page">{page} / {total}</span>
     </header>
@@ -664,6 +660,10 @@ function FullA4Page({
           })}
         </div>
         <FullPageLegend />
+      </div>
+      <div className="full-logo-footer" aria-hidden="true">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/full-logo.jpeg" alt="忆岁朗诵院" />
       </div>
     </article>
   );
