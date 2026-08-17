@@ -19,7 +19,6 @@ import { sameVisualGenerationTarget } from "@/lib/visual-job-target";
 import {
   buildSceneUnits,
   summarizeControlSpec,
-  type HeroVisualSpec,
   type SceneVisualSpec,
   type VisualAssetKind,
   type WorkVisualProfile,
@@ -2893,10 +2892,11 @@ async function planWorkVisuals(env: Env, workId: string, activeJobId?: string) {
       createdAt,
     ),
   ];
-  const specs: Array<{ kind: VisualAssetKind; sceneId?: string; spec: HeroVisualSpec | SceneVisualSpec }> = [
-    { kind: "hero", spec: direction.hero_visual_spec },
-    ...direction.scene_visual_specs.map((spec) => ({ kind: "scene" as const, sceneId: spec.scene_id, spec })),
-  ];
+  // Hero / cover art is removed from the generation flow — only per-sentence
+  // Scene Cards are planned. Any hero spec returned by the director is ignored.
+  const specs: Array<{ kind: VisualAssetKind; sceneId?: string; spec: SceneVisualSpec }> = direction.scene_visual_specs.map(
+    (spec) => ({ kind: "scene" as const, sceneId: spec.scene_id, spec }),
+  );
   for (const entry of specs) {
     const latest = await first<Row>(env.DB.prepare(
       `SELECT COALESCE(MAX(version), 0) AS version FROM visual_specs
@@ -3306,13 +3306,11 @@ async function runVisualGenerationJob(env: Env, jobId: string) {
         AND (? != 'scene' OR scene_id = ?)
         ORDER BY CASE WHEN kind = 'hero' THEN 0 ELSE 1 END, scene_id`,
     ).bind(work.id, target.type, target.type, target.type, target.sceneId ?? "").all<Row>();
-    const specs = result.results ?? [];
+    const specs = (result.results ?? []).filter((spec) => spec.kind === "scene");
     if (!specs.length) throw new Error("请先生成作品视觉方案。");
 
     const generated: string[] = [];
     const failures: Array<{ specId: string; kind: string; sceneId?: string; message: string }> = [];
-    const heroSpecs = specs.filter((spec) => spec.kind === "hero");
-    const sceneSpecs = specs.filter((spec) => spec.kind === "scene");
     let completed = 0;
     const progressBase = target.includePlan ? 10 : 1;
     const recordCompletion = async () => {
@@ -3353,11 +3351,9 @@ async function runVisualGenerationJob(env: Env, jobId: string) {
       }
     };
 
-    // Hero establishes the work's main visual before scene generation begins.
-    if (heroSpecs.length) await setVisualJobStage(env, jobId, "generating_hero", Math.max(progressBase, 12));
-    for (const spec of heroSpecs) await generateSpec(spec);
-    if (sceneSpecs.length) await setVisualJobStage(env, jobId, "generating_scenes", Math.max(progressBase, 20));
-    await mapWithConcurrency(sceneSpecs, VISUAL_SCENE_CONCURRENCY, generateSpec);
+    // Hero is removed from the generation flow — only Scene Cards are produced.
+    if (specs.length) await setVisualJobStage(env, jobId, "generating_scenes", Math.max(progressBase, 20));
+    await mapWithConcurrency(specs, VISUAL_SCENE_CONCURRENCY, generateSpec);
     await setVisualJobStage(env, jobId, "uploading", 99);
 
     const status = failures.length === 0

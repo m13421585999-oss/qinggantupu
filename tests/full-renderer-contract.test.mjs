@@ -27,18 +27,18 @@ test("Full A4 only renders the four primary recitation cues in the token rendere
   assert.doesNotMatch(editor, /pause\.type === "long" \? "\/\/\/"/);
 });
 
-test("Full marker slot lives inside the spoken-token grid and not in the pinyin layer", async () => {
+test("Full marker is a boundary gutter outside the spoken-token, keeping pinyin centered over its character", async () => {
   const css = await read("app/globals.css");
-  // The spoken-token becomes a 2-column grid so pinyin/char are in column 1
-  // and the marker slot is in column 2 / row 2.
-  assert.match(css, /\.full-spoken-token\s*\{[^}]*grid-template-columns:\s*auto\s+auto/s);
-  assert.match(css, /grid-template-areas:\s*"pinyin pinyin"\s*"char marker"/s);
+  // The spoken-token is a single indivisible column: pinyin on top, character
+  // below, both sharing one horizontal center.
+  assert.match(css, /\.full-spoken-token\s*\{[^}]*grid-template-columns:\s*auto\s*;/s);
+  assert.match(css, /grid-template-areas:\s*"pinyin"\s*"char"/s);
   assert.match(css, /\.full-token-pinyin\s*\{[^}]*grid-area:\s*pinyin/s);
   assert.match(css, /\.full-token-char\s*\{[^}]*grid-area:\s*char/s);
-  assert.match(css, /\.full-token-marker\s*\{[^}]*grid-area:\s*marker/s);
-  // Pinyin and char still share the same column so pinyin only centres over
-  // the character, never over the marker column.
-  assert.match(css, /"pinyin pinyin"[\s\S]*"char marker"/);
+  // The marker is a sibling gutter pinned to the character row, not a grid
+  // column, so /, ↗, ↘ never shift pinyin away from its character.
+  assert.doesNotMatch(css, /\.full-token-marker\s*\{[^}]*grid-area:\s*marker/s);
+  assert.match(css, /\.full-token-marker\s*\{[^}]*height:\s*11mm/s);
 });
 
 test("characterRef stays attached only to the real character element", async () => {

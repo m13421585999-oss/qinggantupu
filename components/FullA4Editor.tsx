@@ -281,15 +281,15 @@ function FullTokenUnit({
               {unit.token.char}
             </span>
           )}
-          {shortPause || tone ? (
-            <span className="full-token-marker">
-              {shortPause ? <span className="full-pause">/</span> : null}
-              {tone ? (
-                <span className="full-ending-tone">{tone === "rising" ? "↗" : "↘"}</span>
-              ) : null}
-            </span>
-          ) : null}
         </span>
+        {shortPause || tone ? (
+          <span className="full-token-marker">
+            {shortPause ? <span className="full-pause">/</span> : null}
+            {tone ? (
+              <span className="full-ending-tone">{tone === "rising" ? "↗" : "↘"}</span>
+            ) : null}
+          </span>
+        ) : null}
         {unit.suffixPunctuation.map((token) => (
           <span className="full-source-punctuation" key={token.id}>{visibleSourceCharacter(token.char)}</span>
         ))}

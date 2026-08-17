@@ -216,11 +216,13 @@ p {
 
 .a4-first-page-header {
   position: relative;
-  display: block;
+  display: flex;
   width: 100%;
-  height: 34mm;
+  min-height: 18mm;
   flex: none;
+  align-items: center;
   overflow: hidden;
+  padding: 3mm 5mm;
   border-bottom: 0.3mm solid rgba(111, 84, 56, 0.18);
 }
 
@@ -6555,16 +6557,17 @@ button.compact-token-char.is-selected {
 
 .full-token-unit { position: relative; display: inline-flex; flex: 0 0 auto; align-items: flex-end; white-space: nowrap; }
 .full-token-manuscript { display: inline-flex; min-height: 26mm; align-items: flex-end; color: #27231f; font-size: 29pt; font-weight: 620; line-height: 1; }
-/* Full spoken token: two columns — pinyin/char in column 1, marker in column 2.
-   Pinyin stays centered over the character only (never over the marker). */
+/* Full spoken token: a single indivisible column — pinyin on top, character
+   below, both sharing the same horizontal center. Markers never live inside
+   this grid, so /, ↗, ↘ can never shift pinyin away from its character. */
 .full-spoken-token {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: auto auto;
+  grid-template-columns: auto;
   grid-template-rows: 7.5mm 11mm;
   grid-template-areas:
-    "pinyin pinyin"
-    "char marker";
+    "pinyin"
+    "char";
   justify-items: center;
   align-items: end;
 }
@@ -6587,14 +6590,14 @@ button.compact-token-char.is-selected {
 button.full-token-char:hover, button.full-token-char.is-selected { background: rgba(185, 64, 46, 0.09); box-shadow: inset 0 0 0 0.25mm rgba(185, 64, 46, 0.2); }
 .full-token-char.is-focus { color: #c33f2d; font-weight: 800; }
 
-/* Marker slot sits in column 2 / row 2 (the character row), vertically
-   centered against the character so /, ↗, ↘ read as part of the same
-   text band as the manuscript. It never renders V, v, /// or —. */
+/* Boundary/tail gutter: a sibling AFTER .full-spoken-token (not a grid column).
+   It occupies layout width so the following token shifts right as a whole, but
+   its own height is pinned to the character row so /, ↗, ↘ sit on the same
+   text band without disturbing the pinyin/char center. */
 .full-token-marker {
-  grid-area: marker;
-  align-self: center;
   display: inline-flex;
   align-items: center;
+  height: 11mm;
   gap: 0.02em;
   line-height: 1;
   white-space: nowrap;

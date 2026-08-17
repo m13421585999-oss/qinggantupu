@@ -91,7 +91,7 @@ test("visual generation is resumable, bounded and reports partial failure", () =
   assert.match(worker, /VISUAL_SCENE_CONCURRENCY = 3/);
   assert.match(worker, /VISUAL_GENERATION_RETRY_LIMIT = 1/);
   assert.match(worker, /status = 'planning'/);
-  assert.match(worker, /"generating_hero"/);
+  assert.doesNotMatch(worker, /"generating_hero"/);
   assert.match(worker, /"generating_scenes"/);
   assert.match(worker, /"uploading"/);
   assert.match(worker, /"completed"/);

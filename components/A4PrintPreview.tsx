@@ -102,41 +102,14 @@ function PrintSentenceBlock({
 }
 
 function FirstPageHeader({ work }: { work: RecitationWork }) {
-  const heroUrl = work.visuals?.heroAsset?.url;
-  const [failedUrl, setFailedUrl] = useState<string>();
-  const showHero = Boolean(heroUrl && heroUrl !== failedUrl);
   return (
     <>
-      <header className={`a4-first-page-header ${showHero ? "has-generated-hero" : "uses-fallback-hero"}`}>
-        {showHero && heroUrl ? (
-          <div className="a4-hero-visual has-image">
-            {/* Persisted Hero assets are same-origin images and are safe to rasterize for PDF. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={heroUrl}
-              alt={`${work.title}的作品主视觉`}
-              loading="eager"
-              decoding="async"
-              onError={() => setFailedUrl(heroUrl)}
-            />
-            <div className="visually-hidden">
-              <p>朗诵情感图谱</p>
-              <h3>{work.title}</h3>
-              {work.author ? <strong>作者 · {work.author}</strong> : null}
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="a4-title-lockup">
-              <p><span aria-hidden="true" />朗诵情感图谱</p>
-              <h3>{work.title}</h3>
-              {work.author ? <strong>作者 · {work.author}</strong> : <strong>作品朗诵教学谱</strong>}
-            </div>
-            <div className="a4-hero-visual uses-fallback">
-              <span aria-hidden="true" />
-            </div>
-          </>
-        )}
+      <header className="a4-first-page-header">
+        <div className="a4-title-lockup">
+          <p><span aria-hidden="true" />朗诵情感图谱</p>
+          <h3>{work.title}</h3>
+          {work.author ? <strong>作者 · {work.author}</strong> : <strong>作品朗诵教学谱</strong>}
+        </div>
       </header>
       <div className="a4-print-legend" aria-label="图谱符号说明">
         <span><b>春</b> 红字：表达焦点</span>
