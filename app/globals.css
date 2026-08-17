@@ -6524,7 +6524,7 @@ button.compact-token-char.is-selected {
 .full-sentence-body { min-width: 0; }
 
 .full-graph-track {
-  --full-token-gap: 4px;
+  --full-token-gap: 2px;
   position: relative;
   width: 100%;
   min-width: 0;
@@ -6554,7 +6554,7 @@ button.compact-token-char.is-selected {
 }
 
 .full-token-unit { position: relative; display: inline-flex; flex: 0 0 auto; align-items: flex-end; white-space: nowrap; }
-.full-token-manuscript { display: inline-flex; min-height: 26mm; align-items: flex-end; color: #27231f; font-size: 27pt; font-weight: 620; line-height: 1; }
+.full-token-manuscript { display: inline-flex; min-height: 26mm; align-items: flex-end; color: #27231f; font-size: 28pt; font-weight: 620; line-height: 1; }
 .full-spoken-token { display: grid; flex: 0 0 auto; grid-template-rows: 7.5mm 19mm; justify-items: center; }
 .full-token-pinyin { align-self: end; color: #554f49; font-family: "Kaiti SC", STKaiti, "Songti SC", serif; font-size: 15pt; font-weight: 650; line-height: 1; white-space: nowrap; }
 .full-token-char {
@@ -6584,13 +6584,19 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
   align-self: flex-end;
 }
 .full-source-punctuation { white-space: pre; }
-.full-prolongation, .full-ending-tone, .full-pause { color: #b9402e; font-family: Arial, sans-serif; font-size: 1em; font-weight: 800; }
-.full-prolongation { min-width: 0.72em; overflow: hidden; }
-.full-pause { margin: 0 0.02em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -0.12em; }
+.full-prolongation, .full-ending-tone, .full-pause { color: #b9402e; font-family: Arial, sans-serif; font-weight: 800; }
+.full-prolongation { font-size: 0.9em; min-width: 0.6em; overflow: hidden; }
+.full-pause { font-size: 0.9em; margin: 0 0.02em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -0.12em; }
 .full-pause-long { letter-spacing: -0.2em; }
+/* Arrows (↗/↘): shrink so their visual centre lands in the character band
+   instead of flying above it. baseline-end keeps them flush with the
+   manuscript baseline. */
+.full-ending-tone { font-size: 0.82em; }
+/* V/v: shrink to bring cap-height / x-height visual centre into the
+   character band. */
 .full-breath-major, .full-breath-minor { margin: 0 0.04em; font-family: Arial, sans-serif; font-weight: 900; line-height: 1; }
-.full-breath-major { color: #c33324; font-size: 1em; }
-.full-breath-minor { color: #d87934; font-size: 1em; }
+.full-breath-major { color: #c33324; font-size: 0.82em; }
+.full-breath-minor { color: #d87934; font-size: 0.88em; }
 
 .full-boundary-trigger {
   position: absolute;
@@ -6632,13 +6638,13 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4mm;
-  max-width: calc(100% - 52mm);
+  gap: 4.6mm;
+  max-width: calc(100% - 54mm);
   padding-top: 2mm;
   border-top: 0.3mm solid rgba(82, 111, 130, 0.2);
   color: #594d43;
   font-family: system-ui, sans-serif;
-  font-size: 8pt;
+  font-size: 10pt;
 }
 .full-page-legend b { font-weight: 800; }
 .full-legend-major { color: #c33324; }
@@ -6646,8 +6652,8 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
 .full-legend-focus { color: #c33f2d; }
 .full-legend-curve {
   display: inline-block;
-  width: 7mm;
-  height: 0.7mm;
+  width: 8mm;
+  height: 0.85mm;
   border-radius: 1mm;
   background: #526f82;
   vertical-align: middle;
