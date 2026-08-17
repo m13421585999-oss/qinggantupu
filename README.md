@@ -29,6 +29,23 @@
 
 ## 本地启动
 
+### 一键启动（推荐）
+
+首次先完成下面「环境要求」以及「1. 启动网站」「2. 启动分析服务」中的安装步骤（`npm ci`、创建 `analysis-service/.venv`、安装 Python 依赖、配置 `.dev.vars` 与 `analysis-service/.env`），之后在项目根目录只需：
+
+```text
+npm run local
+```
+
+启动器会自动：检查环境 → 启动分析服务 → 启动前端 → 等待两个服务就绪 → 打开浏览器。按 `Ctrl+C` 关闭全部服务。
+
+也可以直接双击项目根目录的入口文件（无需打开终端）：
+
+- Windows：`start-local.bat`
+- macOS：`start-local.command`
+
+真正启动逻辑统一在 `scripts/start-local.mjs`，双击入口只负责切到项目根目录并调用 `npm run local`。
+
 ### 环境要求
 
 - Node.js 22.13 或更高版本；
