@@ -97,27 +97,6 @@ export function buildSceneUnits(
   controlSpec?: Record<string, unknown>,
 ): SceneUnit[] {
   const chars = Array.from(fullText);
-  const ranges: Array<{ start: number; end: number; text: string }> = [];
-  let start = 0;
-  for (let index = 0; index < chars.length; index += 1) {
-    // A scene is a complete semantic unit: split on terminal punctuation so
-    // one full-stop sentence becomes one scene, and adjacent sentences that
-    // continue the same imagery share one scene (grouped by sourceSentenceIds).
-    // This is semantic grouping — NOT one scene per line.
-    if (!/[。！？]/u.test(chars[index])) continue;
-    let end = index;
-    while (end + 1 < chars.length && /[”’」』）》】]/u.test(chars[end + 1])) end += 1;
-    const text = chars.slice(start, end + 1).join("");
-    if (text.trim()) ranges.push({ start, end, text });
-    start = end + 1;
-    index = end;
-  }
-  if (start < chars.length) {
-    const text = chars.slice(start).join("");
-    if (text.trim()) ranges.push({ start, end: chars.length - 1, text });
-  }
-  if (!ranges.length && fullText.trim()) ranges.push({ start: 0, end: chars.length - 1, text: fullText });
-
   const sentences = Array.isArray(controlSpec?.sentences)
     ? controlSpec.sentences as Array<Record<string, unknown>>
     : [];
@@ -137,8 +116,44 @@ export function buildSceneUnits(
       id: String(sentence.id ?? `sentence-${index + 1}`),
       start: sentenceStart,
       end: sentenceEnd,
+      text,
     };
   });
+
+  // One scene unit per manuscript row (ControlSpec sentence). Each non-empty
+  // line is its own Sentence = Scene = one Scene Card image. Blank lines only
+  // separate paragraphs and never produce a scene. Adjacent sentences are NOT
+  // merged; the visual director only enriches this single scene's prompt.
+  if (sentenceRanges.length) {
+    return sentenceRanges.map((sentence, index) => ({
+      scene_id: `scene-${index + 1}`,
+      source_sentence_ids: [sentence.id],
+      source_text: sentence.text,
+      previous_text: index > 0 ? sentenceRanges[index - 1].text : undefined,
+      next_text: index + 1 < sentenceRanges.length ? sentenceRanges[index + 1].text : undefined,
+      position: index,
+    }));
+  }
+
+  // Fallback: no parsed control spec — split the raw text on terminal
+  // punctuation so a standalone planning flow still yields one unit per
+  // completed sentence (never empty blank-line scenes).
+  const ranges: Array<{ start: number; end: number; text: string }> = [];
+  let start = 0;
+  for (let index = 0; index < chars.length; index += 1) {
+    if (!/[。！？]/u.test(chars[index])) continue;
+    let end = index;
+    while (end + 1 < chars.length && /[”’」』）》】]/u.test(chars[end + 1])) end += 1;
+    const text = chars.slice(start, end + 1).join("");
+    if (text.trim()) ranges.push({ start, end, text });
+    start = end + 1;
+    index = end;
+  }
+  if (start < chars.length) {
+    const text = chars.slice(start).join("");
+    if (text.trim()) ranges.push({ start, end: chars.length - 1, text });
+  }
+  if (!ranges.length && fullText.trim()) ranges.push({ start: 0, end: chars.length - 1, text: fullText });
 
   return ranges.map((range, index) => ({
     scene_id: `scene-${index + 1}`,
