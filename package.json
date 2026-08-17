@@ -15,7 +15,10 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "db:init": "node scripts/init-local-db.mjs",
-    "local": "node scripts/start-local.mjs"
+    "local": "node scripts/start-local.mjs",
+    "batch:parse": "node batch/parse.mjs",
+    "batch": "node batch/index.mjs",
+    "batch:status": "node batch/index.mjs --status"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

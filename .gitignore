@@ -50,6 +50,11 @@ analysis-service/.env.local
 # local Sites deployment binding (contains project/resource identifiers)
 .openai/hosting.json
 
+# batch runner generated artifacts (PDFs + checkpoint/report)
+/batch/output/
+/batch/batch-state.json
+/batch/batch-report.json
+
 # generated Cloudflare binding declarations
 cloudflare-env.d.ts
 
