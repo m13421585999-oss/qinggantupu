@@ -6396,12 +6396,13 @@ button.compact-token-char.is-selected {
   flex-direction: column;
   min-height: 0;
   padding: var(--full-a4-margin);
-  /* Light content-protection layer over the provided background. */
+  /* Light content-protection layer over the provided background. Kept light
+     so the page-level watermark layer can show through the empty margins. */
   background: linear-gradient(
     180deg,
-    rgba(255, 253, 247, 0.66) 0%,
-    rgba(255, 253, 247, 0.72) 46%,
-    rgba(255, 253, 247, 0.82) 100%
+    rgba(255, 253, 247, 0.38) 0%,
+    rgba(255, 253, 247, 0.48) 46%,
+    rgba(255, 253, 247, 0.62) 100%
   );
 }
 
@@ -6413,7 +6414,7 @@ button.compact-token-char.is-selected {
   gap: 4mm;
   overflow: hidden;
   border-bottom: 0.3mm solid rgba(82, 111, 130, 0.28);
-  padding-bottom: 2mm;
+  padding-bottom: 1.4mm;
   color: #594d43;
   white-space: nowrap;
 }
@@ -6421,7 +6422,7 @@ button.compact-token-char.is-selected {
 .full-page-header-first h1.full-header-title {
   margin: 0.5mm 0 0;
   color: #2f2a25;
-  font-size: 24pt;
+  font-size: 26pt;
   font-weight: 800;
   line-height: 1.1;
 }
@@ -6436,8 +6437,8 @@ button.compact-token-char.is-selected {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: 3mm;
-  padding: 3mm 0;
+  gap: 1.6mm;
+  padding: 1.5mm 0 2mm;
   overflow: hidden;
 }
 
@@ -6446,9 +6447,9 @@ button.compact-token-char.is-selected {
   box-sizing: border-box;
   flex: 0 0 auto;
   grid-template-columns: 34mm minmax(0, 1fr);
-  gap: 4mm;
+  gap: 3.2mm;
   align-items: start;
-  padding: 1.2mm 0;
+  padding: 0.6mm 0;
   border-bottom: 0.2mm solid rgba(111, 84, 56, 0.14);
   break-inside: avoid;
   page-break-inside: avoid;
@@ -6517,26 +6518,26 @@ button.compact-token-char.is-selected {
   pointer-events: none;
 }
 
-.full-graph-lines { display: grid; gap: 2.2mm; }
+.full-graph-lines { display: grid; gap: 1.4mm; }
 .full-graph-line { position: relative; width: 100%; min-width: 0; }
 
 .full-token-row {
   display: flex;
   width: max-content;
   max-width: 100%;
-  min-height: 12mm;
+  min-height: 14mm;
   align-items: flex-end;
   gap: var(--full-token-gap);
 }
 
 .full-token-unit { position: relative; display: inline-flex; flex: 0 0 auto; align-items: flex-end; white-space: nowrap; }
-.full-token-manuscript { display: inline-flex; min-height: 20mm; align-items: flex-end; color: #27231f; font-size: 21pt; font-weight: 620; line-height: 1; }
-.full-spoken-token { display: grid; flex: 0 0 auto; grid-template-rows: 6mm 14mm; justify-items: center; }
-.full-token-pinyin { align-self: end; color: #554f49; font-family: "Kaiti SC", STKaiti, "Songti SC", serif; font-size: 12pt; font-weight: 650; line-height: 1; white-space: nowrap; }
+.full-token-manuscript { display: inline-flex; min-height: 22mm; align-items: flex-end; color: #27231f; font-size: 23pt; font-weight: 620; line-height: 1; }
+.full-spoken-token { display: grid; flex: 0 0 auto; grid-template-rows: 6.8mm 16mm; justify-items: center; }
+.full-token-pinyin { align-self: end; color: #554f49; font-family: "Kaiti SC", STKaiti, "Songti SC", serif; font-size: 13pt; font-weight: 650; line-height: 1; white-space: nowrap; }
 .full-token-char {
   display: inline-flex;
   min-width: 1em;
-  height: 14mm;
+  height: 16mm;
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -6595,8 +6596,8 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
 .full-prosody-curve-placeholder {
   display: block;
   width: 100%;
-  height: 16mm;
-  margin-top: 0.4mm;
+  height: 18mm;
+  margin-top: 0.2mm;
   overflow: visible;
   background: transparent;
 }
@@ -6718,4 +6719,41 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
   font-size: 7.3pt;
   font-weight: 700;
   letter-spacing: 0.08em;
+}
+
+/* ============ Full 品牌水印（忆岁朗诵院） ============ */
+.full-watermark-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.full-watermark {
+  position: absolute;
+  transform: rotate(-42deg);
+  transform-origin: 0 0;
+  color: rgba(120, 100, 80, 0.18);
+  font-family: "Songti SC", STSong, SimSun, serif;
+  font-size: 16pt;
+  font-weight: 700;
+  letter-spacing: 0.45em;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ============ Full 品牌 logo（页头主标识） ============ */
+.full-page-logo {
+  display: block;
+  height: 11mm;
+  width: auto;
+  flex: none;
+  object-fit: contain;
+  align-self: center;
+  margin-right: 1mm;
+}
+.full-page-logo-running {
+  height: 6.5mm;
+  margin-right: 0.5mm;
+  opacity: 0.9;
 }

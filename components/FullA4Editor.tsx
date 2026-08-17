@@ -39,6 +39,21 @@ const FULL_RENDER_DPR = 2.5;
 const FULL_CURVE_HEIGHT = 52;
 const FULL_CURVE_PADDING = 7;
 
+// Scattered diagonal watermark positions; one per A4 page (re-rendered per page).
+const FULL_WATERMARKS: Array<{ x: string; y: string }> = [
+  { x: "8%",  y: "9%"  },
+  { x: "62%", y: "11%" },
+  { x: "28%", y: "19%" },
+  { x: "86%", y: "26%" },
+  { x: "5%",  y: "36%" },
+  { x: "48%", y: "42%" },
+  { x: "22%", y: "54%" },
+  { x: "74%", y: "61%" },
+  { x: "38%", y: "74%" },
+  { x: "12%", y: "84%" },
+  { x: "82%", y: "88%" },
+];
+
 type FullSaveState = "unsaved" | "dirty" | "saving" | "saved" | "failed";
 
 interface FullBlock {
@@ -557,6 +572,8 @@ function FullPageHeader({ work, page, total, first }: {
   if (first) {
     return (
       <header className="full-page-header full-page-header-first">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="full-page-logo" src="/full-logo.jpeg" alt="忆岁朗诵院品牌标识" />
         <div>
           <p className="full-header-kicker">朗诵情感图谱</p>
           <h1 className="full-header-title">《{displayTitle}》</h1>
@@ -568,6 +585,8 @@ function FullPageHeader({ work, page, total, first }: {
   }
   return (
     <header className="full-page-header full-page-header-running">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="full-page-logo full-page-logo-running" src="/full-logo.jpeg" alt="" />
       <span>《{displayTitle}》 · 朗诵情感图谱</span>
       <span className="full-header-page">{page} / {total}</span>
     </header>
@@ -614,6 +633,17 @@ function FullA4Page({
     >
       <div className="full-a4-background" aria-hidden="true" />
       <div className="full-a4-content">
+        <div className="full-watermark-layer" aria-hidden="true">
+          {FULL_WATERMARKS.map((position, index) => (
+            <span
+              key={index}
+              className="full-watermark"
+              style={{ left: position.x, top: position.y }}
+            >
+              忆岁朗诵院
+            </span>
+          ))}
+        </div>
         <FullPageHeader work={work} page={plan.index + 1} total={total} first={plan.index === 0} />
         <div className="full-page-body">
           {plan.blockIds.map((blockId) => {
