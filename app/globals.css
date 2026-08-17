@@ -6561,7 +6561,7 @@ button.compact-token-char.is-selected {
   display: grid;
   flex: 0 0 auto;
   grid-template-columns: auto auto;
-  grid-template-rows: 7.5mm 17mm;
+  grid-template-rows: 7.5mm 11mm;
   grid-template-areas:
     "pinyin pinyin"
     "char marker";
@@ -6573,7 +6573,7 @@ button.compact-token-char.is-selected {
   grid-area: char;
   display: inline-flex;
   min-width: 1em;
-  height: 17mm;
+  height: 11mm;
   align-items: center;
   justify-content: center;
   padding: 0;
