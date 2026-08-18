@@ -257,6 +257,10 @@ async def generate_image(
     }
     images_failure: httpx.Response | None = None
     try:
+        # Upstream image generation must stay below the worker-side fetch
+        # timeout (150s) so this inner layer aborts first and the worker's
+        # per-scene slot is released promptly instead of racing at the same
+        # boundary. connect stays at 30s.
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds, connect=30)
         ) as client:

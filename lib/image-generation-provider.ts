@@ -44,6 +44,16 @@ export interface ImageDimensions {
 
 type ImageApiMode = "auto" | "images" | "responses";
 
+/**
+ * Per-request total timeout for image *generation* calls (model inference).
+ * A hung upstream must release its worker slot so sibling scenes can still be
+ * dispatched; the analysis-service upstream timeout is kept lower (120s) so
+ * the inner layer aborts first and the worker never races it at the boundary.
+ */
+const GENERATION_REQUEST_TIMEOUT_MS = 150_000;
+/** Timeout for downloading an already-generated image (not model inference). */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+
 export class ImageGenerationError extends Error {
   readonly status: number;
 
@@ -260,7 +270,7 @@ function safeErrorDetail(value: string, secret?: string) {
 }
 
 async function downloadedImage(url: string) {
-  const image = await fetch(url);
+  const image = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
   if (!image.ok) throw new ImageGenerationError("无法下载图片生成服务返回的临时图片。", 502);
   return {
     bytes: await image.arrayBuffer(),
@@ -307,11 +317,15 @@ class AnalysisServiceImageProvider implements ImageGenerationProvider {
             author: input.author,
             scene_id: input.sceneId,
           }),
+          signal: AbortSignal.timeout(GENERATION_REQUEST_TIMEOUT_MS),
         },
       );
     } catch (error) {
+      const timedOut = error instanceof DOMException && error.name === "TimeoutError";
       throw new ImageGenerationError(
-        `无法连接图片生成代理：${error instanceof Error ? error.message : String(error)}`,
+        timedOut
+          ? `图片生成超时（${Math.round(GENERATION_REQUEST_TIMEOUT_MS / 1000)}s 无响应）`
+          : `无法连接图片生成代理：${error instanceof Error ? error.message : String(error)}`,
       );
     }
     if (!response.ok) {
@@ -404,10 +418,14 @@ class OpenAiCompatibleImageProvider implements ImageGenerationProvider {
           "content-type": "application/json",
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(GENERATION_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
+      const timedOut = error instanceof DOMException && error.name === "TimeoutError";
       throw new ImageGenerationError(
-        `无法连接图片生成服务：${error instanceof Error ? error.message : String(error)}`,
+        timedOut
+          ? `图片生成超时（${Math.round(GENERATION_REQUEST_TIMEOUT_MS / 1000)}s 无响应）`
+          : `无法连接图片生成服务：${error instanceof Error ? error.message : String(error)}`,
       );
     }
     const detail = response.ok ? "" : safeErrorDetail(await response.text(), this.config.apiKey);

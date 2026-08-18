@@ -3204,26 +3204,6 @@ async function rejectWhileVisualGenerationIsActive(env: Env, workId: string) {
     : null;
 }
 
-async function generateOneVisualWithRetry(env: Env, work: Row, spec: Row) {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= VISUAL_GENERATION_RETRY_LIMIT; attempt += 1) {
-    try {
-      return await generateOneVisual(env, work, spec, false);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  const provider = imageProvider(env);
-  const kind = String(spec.kind) as VisualAssetKind;
-  const sceneId = spec.scene_id == null ? undefined : String(spec.scene_id);
-  const latest = await first<Row>(env.DB.prepare(
-    `SELECT COALESCE(MAX(version), 0) AS version FROM visual_assets
-      WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?`,
-  ).bind(work.id, kind, sceneId ?? ""));
-  await storeFailedVisual(env, work, spec, provider, Number(latest?.version ?? 0) + 1, lastError);
-  throw lastError instanceof Error ? lastError : new ImageGenerationError(String(lastError));
-}
-
 async function mapWithConcurrency<T>(
   items: T[],
   limit: number,
@@ -3345,6 +3325,8 @@ async function runVisualGenerationJob(env: Env, jobId: string) {
       );
     };
     const generateSpec = async (spec: Row) => {
+      const sceneId = spec.scene_id == null ? undefined : String(spec.scene_id);
+      console.log(`[${work.index}] ${sceneId ?? spec.id} dispatched`);
       const existing = await visualResultSince(env, String(spec.id), String(job.created_at));
       if (existing) {
         if (existing.generation_status === "failed") {
@@ -3360,18 +3342,36 @@ async function runVisualGenerationJob(env: Env, jobId: string) {
         await recordCompletion();
         return;
       }
-      try {
-        generated.push(await generateOneVisualWithRetry(env, work, spec));
-      } catch (error) {
-        failures.push({
-          specId: String(spec.id),
-          kind: String(spec.kind),
-          sceneId: spec.scene_id == null ? undefined : String(spec.scene_id),
-            message: safeVisualErrorMessage(env, error),
-        });
-      } finally {
-        await recordCompletion();
+      const startedAt = Date.now();
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= VISUAL_GENERATION_RETRY_LIMIT + 1; attempt += 1) {
+        try {
+          const assetId = await generateOneVisual(env, work, spec, false);
+          generated.push(assetId);
+          console.log(`[${work.index}] ${sceneId ?? spec.id} success attempt=${attempt} duration=${Date.now() - startedAt}ms`);
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt <= VISUAL_GENERATION_RETRY_LIMIT) {
+            console.log(`[${work.index}] ${sceneId ?? spec.id} retry attempt=${attempt + 1} duration=${Date.now() - startedAt}ms`);
+            continue;
+          }
+          const provider = imageProvider(env);
+          const latest = await first<Row>(env.DB.prepare(
+            `SELECT COALESCE(MAX(version), 0) AS version FROM visual_assets
+              WHERE work_id = ? AND kind = ? AND COALESCE(scene_id, '') = ?`,
+          ).bind(work.id, spec.kind, sceneId ?? ""));
+          await storeFailedVisual(env, work, spec, provider, Number(latest?.version ?? 0) + 1, lastError);
+          console.log(`[${work.index}] ${sceneId ?? spec.id} failed duration=${Date.now() - startedAt}ms: ${safeVisualErrorMessage(env, lastError)}`);
+          failures.push({
+            specId: String(spec.id),
+            kind: String(spec.kind),
+            sceneId: spec.scene_id == null ? undefined : String(spec.scene_id),
+            message: safeVisualErrorMessage(env, lastError),
+          });
+        }
       }
+      await recordCompletion();
     };
 
     // Hero is removed from the generation flow — only Scene Cards are produced.

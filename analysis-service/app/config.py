@@ -241,7 +241,7 @@ class Settings:
             llm_model=configured_model(provider),
             llm_thinking=DEEPSEEK_THINKING,
             llm_reasoning_effort=configured_reasoning_effort(),
-            request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "270")),
+            request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "120")),
             visual_reasoning_effort=configured_visual_reasoning_effort(),
             tts_director_reasoning_effort=configured_tts_reasoning_effort(),
             recitation_llm_api_key=recitation_llm_api_key,
