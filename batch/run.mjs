@@ -237,11 +237,27 @@ export async function runBatch({ maxWorks } = {}) {
       saveState(state);
       console.log(`[${work.index}] Scene ready: ${entry.sceneReady}/${entry.sceneTotal}`);
 
-      // 4. PDF export
+      // 4. PDF export (retry up to 3 times, PDF-only — never re-run LLM/images)
       if (!entry.pdfReady || !entry.pdfPath) {
         entry.status = STATUS.PDF_RUNNING;
         saveState(state);
-        const pdfPath = await exportPdf({ workId: entry.workId, index: work.index, title: work.title, author: work.author });
+        let pdfPath = null;
+        let lastPdfError = null;
+        const pdfDelays = [2000, 5000, 10000];
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            pdfPath = await exportPdf({ workId: entry.workId, index: work.index, title: work.title, author: work.author });
+            break;
+          } catch (err) {
+            lastPdfError = err;
+            if (attempt < 3) {
+              const delay = pdfDelays[attempt - 1];
+              console.log(`[${work.index}] PDF 失败(第${attempt}次): ${err.message}，${delay / 1000}s 后重试`);
+              await sleep(delay);
+            }
+          }
+        }
+        if (!pdfPath) throw lastPdfError || new Error("PDF 导出失败");
         entry.pdfPath = pdfPath;
         entry.pdfReady = true;
         entry.status = STATUS.COMPLETED;
