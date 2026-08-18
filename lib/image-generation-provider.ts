@@ -15,6 +15,8 @@ export interface GenerateImageInput {
   title?: string;
   author?: string;
   sceneId?: string;
+  /** Stable per-scene identity; part of the deterministic request key. */
+  workId?: string;
 }
 
 export interface GeneratedImage {
@@ -278,12 +280,6 @@ async function downloadedImage(url: string) {
   };
 }
 
-function imageDataFromPayload(payload: Record<string, unknown>) {
-  const data = Array.isArray(payload.data) ? payload.data[0] as Record<string, unknown> | undefined : undefined;
-  if (data) return data;
-  return payload;
-}
-
 class AnalysisServiceImageProvider implements ImageGenerationProvider {
   readonly provider = "analysis-service";
   readonly model: string;
@@ -296,100 +292,147 @@ class AnalysisServiceImageProvider implements ImageGenerationProvider {
   }
 
   async generate(input: GenerateImageInput): Promise<GeneratedImage> {
-    let response: Response;
+    const baseUrl = this.config.baseUrl.trim().replace(/\/+$/, "");
+    // 1. Submit — idempotent by scene_request_key (workId+sceneId+model+size+prompt).
+    //    A repeated submit returns the SAME task id, never a second generation.
+    let submitted: Response;
     try {
-      response = await fetch(
-        `${this.config.baseUrl.trim().replace(/\/+$/, "")}/v1/image-generation`,
-        {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${this.config.apiKey}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model: this.model === "service-configured" ? undefined : this.model,
-            kind: input.kind,
-            prompt: input.prompt,
-            negative_prompt: input.negativePrompt,
-            width: input.width,
-            height: input.height,
-            title: input.title,
-            author: input.author,
-            scene_id: input.sceneId,
-          }),
-          signal: AbortSignal.timeout(GENERATION_REQUEST_TIMEOUT_MS),
+      submitted = await fetch(`${baseUrl}/v1/image-tasks`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.config.apiKey}`,
+          "content-type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          work_id: input.workId ?? "",
+          scene_id: input.sceneId,
+          kind: input.kind,
+          prompt: input.prompt,
+          negative_prompt: input.negativePrompt,
+          width: input.width,
+          height: input.height,
+          model: this.model === "service-configured" ? undefined : this.model,
+          title: input.title,
+          author: input.author,
+        }),
+        signal: AbortSignal.timeout(GENERATION_REQUEST_TIMEOUT_MS),
+      });
     } catch (error) {
       const timedOut = error instanceof DOMException && error.name === "TimeoutError";
       throw new ImageGenerationError(
         timedOut
-          ? `图片生成超时（${Math.round(GENERATION_REQUEST_TIMEOUT_MS / 1000)}s 无响应）`
+          ? `图片任务提交超时（${Math.round(GENERATION_REQUEST_TIMEOUT_MS / 1000)}s 无响应）`
           : `无法连接图片生成代理：${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (!response.ok) {
+    if (!submitted.ok) {
       throw new ImageGenerationError(
-        `图片生成代理请求失败（HTTP ${response.status}）：${safeErrorDetail(
-          await response.text(),
+        `图片任务提交失败（HTTP ${submitted.status}）：${safeErrorDetail(
+          await submitted.text(),
           this.config.apiKey,
         )}`,
-        response.status >= 500 ? 502 : response.status,
+        submitted.status >= 500 ? 502 : submitted.status,
       );
     }
-    const contentType = response.headers.get("content-type")?.split(";")[0] || "";
-    if (contentType.startsWith("image/")) {
-      return {
-        bytes: await response.arrayBuffer(),
-        mimeType: contentType,
-        provider: this.provider,
-        model: this.model,
-        width: input.width,
-        height: input.height,
-        isPlaceholder: false,
-      };
+    const submitPayload = await submitted.json() as Record<string, unknown>;
+    const taskId = String(submitPayload.image_task_id ?? "");
+    if (!taskId) throw new ImageGenerationError("图片任务提交响应缺少 image_task_id。", 502);
+
+    // The submit response may already carry a completed asset (idempotent
+    // reuse of a previously finished task) — return it immediately.
+    const submitAsset = submitPayload.asset as Record<string, unknown> | undefined;
+    if (String(submitPayload.status ?? "") === "completed" && submitAsset) {
+      return await imageFromTaskAsset(submitAsset, input, this);
     }
-    const payload = await response.json() as Record<string, unknown>;
-    const data = imageDataFromPayload(payload);
-    const seed = data.seed == null ? undefined : String(data.seed);
-    const returnedModel = String(payload.model ?? data.model ?? this.model);
-    const returnedProvider = String(payload.provider ?? data.provider ?? "openai-compatible");
-    const returnedEndpoint = String(payload.endpoint ?? data.endpoint ?? "").trim();
-    const width = Number(payload.width ?? data.width ?? input.width);
-    const height = Number(payload.height ?? data.height ?? input.height);
-    const encoded = data.b64_json ?? data.image_base64 ?? data.result;
-    if (typeof encoded === "string" && encoded) {
-      const image = decodedBase64Image(encoded);
-      return {
-        ...image,
-        provider: returnedProvider,
-        model: returnedModel,
-        endpoint: returnedEndpoint === "images/generations" || returnedEndpoint === "responses"
-          ? returnedEndpoint
-          : undefined,
-        width: Number.isFinite(width) ? width : input.width,
-        height: Number.isFinite(height) ? height : input.height,
-        seed,
-        isPlaceholder: false,
-      };
+
+    // 2. Poll until completed / failed / uncertain.
+    const deadline = Date.now() + GENERATION_REQUEST_TIMEOUT_MS;
+    let lastStatus = "";
+    while (Date.now() < deadline) {
+      let task: Record<string, unknown>;
+      try {
+        const poll = await fetch(`${baseUrl}/v1/image-tasks/${taskId}`, {
+          headers: { authorization: `Bearer ${this.config.apiKey}` },
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!poll.ok) {
+          throw new ImageGenerationError(
+            `图片任务查询失败（HTTP ${poll.status}）：${safeErrorDetail(
+              await poll.text(),
+              this.config.apiKey,
+            )}`,
+            poll.status >= 500 ? 502 : poll.status,
+          );
+        }
+        task = await poll.json() as Record<string, unknown>;
+      } catch (error) {
+        if (error instanceof ImageGenerationError) throw error;
+        // transient poll failure: keep polling until the deadline
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        continue;
+      }
+      lastStatus = String(task.status ?? "");
+      if (lastStatus === "completed") {
+        const asset = task.asset as Record<string, unknown> | undefined;
+        if (!asset) throw new ImageGenerationError("图片任务已完成但缺少 asset。", 502);
+        return await imageFromTaskAsset(asset, input, this);
+      }
+      if (lastStatus === "failed") {
+        throw new ImageGenerationError(
+          `图片生成失败：${String(task.error ?? "未知错误")}`,
+          502,
+        );
+      }
+      if (lastStatus === "uncertain") {
+        // Upstream state unknown — never auto-recreate. Keep polling until the
+        // deadline so the upstream has time to finish; caller retry re-submits
+        // idempotently and gets the same task id.
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
+        continue;
+      }
+      // queued / running
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
     }
-    if (typeof data.url === "string" && data.url) {
-      const image = await downloadedImage(data.url);
-      return {
-        ...image,
-        provider: returnedProvider,
-        model: returnedModel,
-        endpoint: returnedEndpoint === "images/generations" || returnedEndpoint === "responses"
-          ? returnedEndpoint
-          : undefined,
-        width: Number.isFinite(width) ? width : input.width,
-        height: Number.isFinite(height) ? height : input.height,
-        seed,
-        isPlaceholder: false,
-      };
-    }
-    throw new ImageGenerationError("图片生成代理没有返回图片。", 502);
+    throw new ImageGenerationError(
+      `图片生成超时（${Math.round(GENERATION_REQUEST_TIMEOUT_MS / 1000)}s 未完成，status=${lastStatus || "unknown"}）`,
+    );
   }
+}
+
+/** Shared asset→GeneratedImage conversion for the task-polling provider. */
+async function imageFromTaskAsset(
+  asset: Record<string, unknown>,
+  input: GenerateImageInput,
+  provider: { readonly provider: string; readonly model: string },
+): Promise<GeneratedImage> {
+  const seed = asset.seed == null ? undefined : String(asset.seed);
+  const width = Number(asset.width ?? input.width);
+  const height = Number(asset.height ?? input.height);
+  const encoded = asset.b64_json ?? asset.image_base64 ?? asset.result;
+  if (typeof encoded === "string" && encoded) {
+    const image = decodedBase64Image(encoded);
+    return {
+      ...image,
+      provider: provider.provider,
+      model: provider.model,
+      width: Number.isFinite(width) ? width : input.width,
+      height: Number.isFinite(height) ? height : input.height,
+      seed,
+      isPlaceholder: false,
+    };
+  }
+  if (typeof asset.url === "string" && asset.url) {
+    return {
+      ...(await downloadedImage(asset.url)),
+      provider: provider.provider,
+      model: provider.model,
+      width: Number.isFinite(width) ? width : input.width,
+      height: Number.isFinite(height) ? height : input.height,
+      seed,
+      isPlaceholder: false,
+    };
+  }
+  throw new ImageGenerationError("图片任务 asset 缺少图片数据。", 502);
 }
 
 class OpenAiCompatibleImageProvider implements ImageGenerationProvider {

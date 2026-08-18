@@ -3147,6 +3147,7 @@ async function generateOneVisual(env: Env, work: Row, specRow: Row, recordFailur
         title,
         author,
         sceneId,
+        workId: String(work.id),
       });
       if (kind !== "hero" || generated.isPlaceholder) break;
       textValidation = await validateHeroText(

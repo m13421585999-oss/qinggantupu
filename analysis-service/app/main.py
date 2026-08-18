@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import secrets
+from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 import httpx
@@ -55,11 +56,39 @@ from app.tts_director import (
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("recitation-analysis")
 
+from app.image_task_worker import ImageTaskExecutor
+from app.image_tasks import (
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    STATUS_UNCERTAIN,
+    get_image_task_store,
+)
+
+_image_task_executor: ImageTaskExecutor | None = None
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    global _image_task_executor
+    store = get_image_task_store()
+    _image_task_executor = ImageTaskExecutor(store)
+    _image_task_executor.recover_stale_running()
+    _image_task_executor.start()
+    try:
+        yield
+    finally:
+        if _image_task_executor is not None:
+            await _image_task_executor.stop()
+
+
 app = FastAPI(
     title="声图朗诵分析服务",
     version="1.0.0",
     docs_url=None,
     redoc_url=None,
+    lifespan=lifespan,
 )
 
 
@@ -571,6 +600,98 @@ async def create_visual_plan(
             "reasoning_effort": settings.llm_reasoning_effort,
             **generation_meta,
         },
+    }
+
+
+class ImageTaskSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    work_id: str = Field(min_length=1, max_length=500)
+    scene_id: str | None = Field(default=None, max_length=500)
+    kind: Literal["hero", "scene"]
+    prompt: str = Field(min_length=1, max_length=50_000)
+    negative_prompt: str | None = Field(default=None, max_length=20_000)
+    width: int = Field(ge=64, le=4096)
+    height: int = Field(ge=64, le=4096)
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    title: str | None = Field(default=None, max_length=500)
+    author: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/v1/image-tasks", status_code=status.HTTP_201_CREATED)
+async def create_image_task(
+    request: ImageTaskSubmitRequest,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    """Submit an image task and return its id immediately.
+
+    Idempotent by scene_request_key (work_id+scene_id+model+size+prompt):
+    a repeated submit for the same key returns the existing task instead of
+    creating a second generation. completed / running / queued / uncertain /
+    failed are all returned as-is — the caller decides what to do; nothing
+    here ever auto-recreates a task.
+    """
+    requested_model = (request.model or "").strip()
+    model = (
+        settings.image_model
+        if not requested_model or requested_model == "service-configured"
+        else requested_model
+    )
+    store = get_image_task_store()
+    key = store.scene_request_key(
+        work_id=request.work_id,
+        scene_id=request.scene_id,
+        model=model,
+        width=request.width,
+        height=request.height,
+        prompt=request.prompt,
+        negative_prompt=request.negative_prompt,
+    )
+    existing = store.get_by_key(key)
+    if existing is not None:
+        return _image_task_response(existing, created=False)
+    task = store.insert_queued(
+        scene_request_key=key,
+        work_id=request.work_id,
+        scene_id=request.scene_id,
+        kind=request.kind,
+        model=model,
+        width=request.width,
+        height=request.height,
+        prompt=request.prompt,
+        negative_prompt=request.negative_prompt,
+        title=request.title,
+        author=request.author,
+    )
+    return _image_task_response(task, created=True)
+
+
+@app.get("/v1/image-tasks/{task_id}")
+async def get_image_task(
+    task_id: str,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    store = get_image_task_store()
+    task = store.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Image task not found")
+    return _image_task_response(task, created=False)
+
+
+def _image_task_response(task: dict[str, Any], *, created: bool) -> dict[str, Any]:
+    return {
+        "image_task_id": task["id"],
+        "scene_request_key": task["scene_request_key"],
+        "work_id": task["work_id"],
+        "scene_id": task.get("scene_id"),
+        "status": task["status"],
+        "created": created,
+        "attempt_count": task.get("attempt_count", 0),
+        "asset": task.get("asset"),
+        "error": task.get("error"),
+        "created_at": task.get("created_at"),
+        "started_at": task.get("started_at"),
+        "finished_at": task.get("finished_at"),
     }
 
 

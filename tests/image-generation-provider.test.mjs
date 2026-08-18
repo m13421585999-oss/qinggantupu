@@ -136,18 +136,30 @@ test("authorization failures never fall back and redact credentials", async () =
   }
 });
 
-test("analysis_service proxy returns underlying provider metadata and dimensions", async () => {
+test("analysis_service proxy submits an image task and polls to completion", async () => {
   const originalFetch = globalThis.fetch;
-  let request;
+  const calls = [];
+  // base64 of bytes [4,5,6] (atob-compatible)
+  const b64 = Buffer.from([4, 5, 6]).toString("base64");
   globalThis.fetch = async (url, init) => {
-    request = { url: String(url), body: JSON.parse(String(init.body)) };
+    const href = String(url);
+    calls.push(href);
+    if (init && init.method === "POST") {
+      return Response.json({
+        image_task_id: "image_task_test_1",
+        scene_request_key: "key-1",
+        work_id: "work-1",
+        scene_id: "scene-1",
+        status: "queued",
+        created: true,
+        attempt_count: 0,
+      });
+    }
+    // GET poll -> completed with asset
     return Response.json({
-      b64_json: "/9j/4AAQ",
-      provider: "openai_compatible",
-      model: "image2.0",
-      endpoint: "responses",
-      width: 1536,
-      height: 1024,
+      image_task_id: "image_task_test_1",
+      status: "completed",
+      asset: { b64_json: b64, width: 1536, height: 1024, seed: "s1" },
     });
   };
   try {
@@ -158,15 +170,43 @@ test("analysis_service proxy returns underlying provider metadata and dimensions
       baseUrl: "https://analysis.example",
     });
     const generated = await provider.generate(input);
-    assert.equal(request.url, "https://analysis.example/v1/image-generation");
-    assert.equal(request.body.width, 1500);
-    assert.equal(request.body.height, 280);
-    assert.equal(generated.provider, "openai_compatible");
-    assert.equal(generated.model, "image2.0");
-    assert.equal(generated.endpoint, "responses");
-    assert.equal(generated.mimeType, "image/jpeg");
+    assert.equal(calls[0], "https://analysis.example/v1/image-tasks");
+    assert.equal(calls[1], "https://analysis.example/v1/image-tasks/image_task_test_1");
+    assert.equal(generated.provider, "analysis-service");
+    assert.equal(generated.model, "service-configured");
+    assert.deepEqual([...new Uint8Array(generated.bytes)], [4, 5, 6]);
     assert.equal(generated.width, 1536);
     assert.equal(generated.height, 1024);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("analysis_service proxy idempotent submit reuses an existing completed task", async () => {
+  const originalFetch = globalThis.fetch;
+  let posts = 0;
+  globalThis.fetch = async (url, init) => {
+    if (init && init.method === "POST") {
+      posts += 1;
+      return Response.json({
+        image_task_id: "image_task_existing",
+        status: "completed",
+        created: false,
+        asset: { b64_json: Buffer.from([9, 8, 7]).toString("base64") },
+      });
+    }
+    return Response.json({ image_task_id: "image_task_existing", status: "completed" });
+  };
+  try {
+    const provider = createImageGenerationProvider({
+      provider: "analysis_service",
+      model: "service-configured",
+      apiKey: "service-token",
+      baseUrl: "https://analysis.example",
+    });
+    const generated = await provider.generate(input);
+    assert.equal(posts, 1);
+    assert.deepEqual([...new Uint8Array(generated.bytes)], [9, 8, 7]);
   } finally {
     globalThis.fetch = originalFetch;
   }

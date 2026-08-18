@@ -67,7 +67,7 @@ test("image provider is configurable and never exposes an API key in payload", (
   assert.match(provider, /b64_json/);
   assert.match(provider, /data\.url/);
   assert.match(provider, /class AnalysisServiceImageProvider/);
-  assert.match(provider, /\/v1\/image-generation/);
+  assert.match(provider, /\/v1\/image-tasks/);
   assert.match(provider, /apiEndpoint\(this\.config\.baseUrl, "responses"\)/);
   assert.match(worker, /IMAGE_PROVIDER/);
   assert.match(worker, /IMAGE_MODEL/);
