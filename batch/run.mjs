@@ -95,15 +95,22 @@ async function exportPdf({ workId, index, title, author }) {
     // after the work is fetched, so wait for it explicitly.
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForSelector(".full-editor-workspace", { timeout: 90000 });
-    // Scene images use loading="lazy": viewport-offscreen images never load
-    // on their own, so scroll the page to trigger them, then wait for all to
-    // be ready (naturalWidth > 0).
+    // Scene images use loading="lazy": viewport-offscreen images never load on
+    // their own. Force-load them (eager + re-assign src) and scroll through
+    // the page, then wait for all to be ready (naturalWidth > 0).
     await page.evaluate(async () => {
-      await document.fonts?.ready;
-      const step = 600;
-      for (let y = 0; y <= document.body.scrollHeight; y += step) {
+      document.querySelectorAll(".full-scene-card img").forEach((img) => {
+        img.loading = "eager";
+        const s = img.getAttribute("src");
+        if (s) {
+          img.src = "";
+          img.src = s;
+        }
+      });
+      const step = 500;
+      for (let y = 0; y <= document.body.scrollHeight + 2000; y += step) {
         window.scrollTo(0, y);
-        await new Promise((r) => setTimeout(r, 40));
+        await new Promise((r) => setTimeout(r, 50));
       }
       window.scrollTo(0, 0);
     });
