@@ -97,10 +97,17 @@ async function exportPdf({ workId, index, title, author }) {
     await page.waitForSelector(".full-editor-workspace", { timeout: 90000 });
     await page.evaluate(() => document.fonts?.ready);
     // Wait for all Scene images to load (naturalWidth > 0).
-    await page.waitForFunction(() => {
-      const imgs = Array.from(document.querySelectorAll(".full-scene-card img"));
-      return imgs.length > 0 && imgs.every((img) => img.complete && img.naturalWidth > 0);
-    }, { timeout: 120000 });
+    // NOTE: waitForFunction signature is (fn, arg, options); passing the
+    // options object as the 2nd arg silently falls back to the 30s default
+    // timeout. Pass `undefined` as arg so { timeout } is honored.
+    await page.waitForFunction(
+      () => {
+        const imgs = Array.from(document.querySelectorAll(".full-scene-card img"));
+        return imgs.length > 0 && imgs.every((img) => img.complete && img.naturalWidth > 0);
+      },
+      undefined,
+      { timeout: 120000 },
+    );
     await sleep(800); // settle
     // Click the existing PDF export button and capture the download.
     const downloadPromise = page.waitForEvent("download", { timeout: 120000 });
