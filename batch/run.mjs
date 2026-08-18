@@ -21,6 +21,13 @@ const PW_MODULES = "/Users/mcf/.workbuddy/binaries/node/workspace/node_modules";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Network-level failures (e.g. Node's `TypeError: fetch failed`) carry no HTTP
+// status, so `isRetryable` would treat them as fatal. These are transient —
+// the worker often completed the job server-side, only the poll fetch broke.
+function isNetworkError(err) {
+  return err?.status == null && /fetch/i.test(err?.message || "");
+}
+
 function isRetryable(err) {
   const code = err?.status || 0;
   return code === 502 || code === 503 || code === 429 || (code >= 500 && code <= 599);
@@ -33,6 +40,24 @@ async function withRetry(fn, label, onRetry) {
     } catch (err) {
       if (!isRetryable(err) || attempt === RETRY_LIMIT) throw err;
       const delay = 1500 * (attempt + 1);
+      onRetry?.(label, attempt + 1, err.message, delay);
+      await sleep(delay);
+    }
+  }
+}
+
+// Stage-level retry with explicit backoff for visual polling: a transient
+// network error (or 5xx/429) retries 2s -> 5s -> 10s, max 3 attempts, then
+// gives up so the work is marked failed and the batch moves on.
+async function withPollRetry(fn, label, onRetry) {
+  const delays = [2000, 5000, 10000];
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      const retryable = isNetworkError(err) || isRetryable(err);
+      if (!retryable || attempt === delays.length) throw err;
+      const delay = delays[attempt];
       onRetry?.(label, attempt + 1, err.message, delay);
       await sleep(delay);
     }
@@ -175,7 +200,12 @@ export async function runBatch({ maxWorks } = {}) {
       entry.status = STATUS.VISUAL_RUNNING;
       let visualTerminal = false;
       for (let i = 0; i < VISUAL_MAX_POLLS; i += 1) {
-        const job = await getVisualJob(entry.visualJobId);
+        const job = await withPollRetry(
+          () => getVisualJob(entry.visualJobId),
+          "visualPoll",
+          (label, attempt, message, delay) =>
+            console.log(`[${work.index}] ${label} 网络错误(第${attempt}次): ${message}，${delay / 1000}s 后重试`),
+        );
         const st = job.status;
         if (["completed", "succeeded", "partial_failed", "failed"].includes(st)) {
           visualTerminal = true;
