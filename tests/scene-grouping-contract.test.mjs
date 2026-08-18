@@ -23,7 +23,7 @@ test("legacy default stays one scene per row", () => {
   assert.match(source, /One Scene unit per manuscript row|legacy_v1 \(and semantic_v2 fallback\)/);
 });
 
-test("verse rows are detected conservatively (every line ends with punctuation)", () => {
-  assert.match(source, /VERSE_MAX_BARE_FRACTION\s*=\s*0\.1/);
+test("verse rows are detected conservatively (most lines end with a terminator)", () => {
+  assert.match(source, /VERSE_MIN_TERMINATOR_FRACTION\s*=\s*0\.5/);
   assert.match(source, /isVerseLikeRows/);
 });

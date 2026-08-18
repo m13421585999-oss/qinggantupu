@@ -96,13 +96,15 @@ export type SceneGroupingVersion = "legacy_v1" | "semantic_v2";
 
 /** Terminators that close a semantic sentence for SceneUnit grouping. */
 const SCENE_GROUP_TERMINATORS = /[。！？；]/u;
-/** Full-width punctuation that typically ends a verse line. */
-const VERSE_LINE_END = /[。！？；，、：…—～]/u;
 /** Max chars (excluding punctuation) per line to still count as verse-like. */
 const VERSE_MAX_LINE_CHARS = 12;
 const VERSE_MIN_LINES = 4;
-/** Max fraction of punctuation-less line ends tolerated for verse-like text. */
-const VERSE_MAX_BARE_FRACTION = 0.1;
+/**
+ * Min fraction of lines ending with a full terminator (。！？；) for the text
+ * to be treated as verse. Verse lines are self-contained sentences; prose
+ * wrapped at <=9 chars mostly ends lines with commas or no punctuation.
+ */
+const VERSE_MIN_TERMINATOR_FRACTION = 0.5;
 
 function lineWithoutPunctuation(text: string) {
   return Array.from(text.replace(/[。，！？；、：…—～“”‘’（）《》〈〉「」『』]/gu, "")).length;
@@ -118,41 +120,36 @@ function endsWithTerminator(text: string) {
   return trimmed.length > 0 && SCENE_GROUP_TERMINATORS.test(trimmed.charAt(trimmed.length - 1));
 }
 
-function lineEndsWithPunctuation(text: string) {
-  const trimmed = trimClosingMarkers(text.trim());
-  return trimmed.length > 0 && VERSE_LINE_END.test(trimmed.charAt(trimmed.length - 1));
-}
-
 /**
  * Conservative verse-like detection. Ancient poetry, ci and other verse are
- * typically made of short lines that each end with a punct mark (comma or
- * terminator); the manuscript rows ARE the poems, not hard line-wraps of a
- * longer sentence. When that holds, we keep one Scene per line instead of
- * merging rows, so we never fuse obviously distinct imagery.
+ * made of short lines that are themselves complete sentences — most lines end
+ * with a full terminator (。！？；). Prose wrapped at <=9 chars per line mostly
+ * ends lines with a comma or nothing. When the terminator density is high we
+ * keep one Scene per line so distinct imagery is never fused; otherwise we
+ * merge wrapped rows into shared SceneUnits.
  */
 export function isVerseLikeRows(
   rows: Array<{ text: string }>,
   opts: {
     minLines?: number;
     maxLineChars?: number;
-    maxBareFraction?: number;
+    minTerminatorFraction?: number;
   } = {},
 ) {
   const minLines = opts.minLines ?? VERSE_MIN_LINES;
   const maxLineChars = opts.maxLineChars ?? VERSE_MAX_LINE_CHARS;
-  const maxBareFraction = opts.maxBareFraction ?? VERSE_MAX_BARE_FRACTION;
+  const minTerminatorFraction = opts.minTerminatorFraction ?? VERSE_MIN_TERMINATOR_FRACTION;
   if (rows.length < minLines) return false;
-  let bare = 0;
+  let terminators = 0;
   let long = 0;
   for (const row of rows) {
-    if (!lineEndsWithPunctuation(row.text)) bare += 1;
+    if (endsWithTerminator(row.text)) terminators += 1;
     if (lineWithoutPunctuation(row.text) > maxLineChars) long += 1;
   }
-  const bareFraction = bare / rows.length;
   // A single long line (e.g. one row merged two verse lines) is tolerated,
   // but several long rows mean the text is prose-style line-wrapped.
   const longTolerated = long <= 1 || long / rows.length <= 0.2;
-  return bareFraction <= maxBareFraction && longTolerated;
+  return terminators / rows.length >= minTerminatorFraction && longTolerated;
 }
 
 export function buildSceneUnits(
