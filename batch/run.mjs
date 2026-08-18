@@ -95,7 +95,18 @@ async function exportPdf({ workId, index, title, author }) {
     // after the work is fetched, so wait for it explicitly.
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForSelector(".full-editor-workspace", { timeout: 90000 });
-    await page.evaluate(() => document.fonts?.ready);
+    // Scene images use loading="lazy": viewport-offscreen images never load
+    // on their own, so scroll the page to trigger them, then wait for all to
+    // be ready (naturalWidth > 0).
+    await page.evaluate(async () => {
+      await document.fonts?.ready;
+      const step = 600;
+      for (let y = 0; y <= document.body.scrollHeight; y += step) {
+        window.scrollTo(0, y);
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      window.scrollTo(0, 0);
+    });
     // Wait for all Scene images to load (naturalWidth > 0).
     // NOTE: waitForFunction signature is (fn, arg, options); passing the
     // options object as the 2nd arg silently falls back to the 30s default
