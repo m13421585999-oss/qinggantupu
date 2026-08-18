@@ -36,6 +36,7 @@ export function emptyEntry(work) {
     analysisJobId: null,
     analysisReady: false,
     visualJobId: null,
+    sceneGroupingVersion: null,
     sceneTotal: 0,
     sceneReady: 0,
     pdfReady: false,

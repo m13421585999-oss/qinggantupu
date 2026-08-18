@@ -19,6 +19,7 @@ import { sameVisualGenerationTarget } from "@/lib/visual-job-target";
 import {
   buildSceneUnits,
   summarizeControlSpec,
+  type SceneGroupingVersion,
   type SceneVisualSpec,
   type VisualAssetKind,
   type WorkVisualProfile,
@@ -2816,7 +2817,12 @@ function visualDirectorEndpointFromResult(response: Record<string, unknown>) {
     : "";
 }
 
-async function planWorkVisuals(env: Env, workId: string, activeJobId?: string) {
+async function planWorkVisuals(
+  env: Env,
+  workId: string,
+  activeJobId?: string,
+  sceneGroupingVersion?: SceneGroupingVersion,
+) {
   const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
   if (!work) return apiError(404, "WORK_NOT_FOUND", "找不到作品。");
   if (!activeJobId) {
@@ -2840,7 +2846,11 @@ async function planWorkVisuals(env: Env, workId: string, activeJobId?: string) {
       "SELECT spec_json FROM control_spec_versions WHERE id = ?",
     ).bind(work.current_spec_version_id)))?.spec_json as string | null)
     : undefined;
-  const sceneUnits = buildSceneUnits(String(work.source_text), controlSpec);
+  const sceneUnits = buildSceneUnits(
+    String(work.source_text),
+    controlSpec,
+    sceneGroupingVersion ?? "legacy_v1",
+  );
   if (!sceneUnits.length) return apiError(422, "VISUAL_SCENES_REQUIRED", "作品正文无法划分视觉场景。");
   let direction;
   try {
@@ -3166,10 +3176,13 @@ interface VisualGenerationTarget {
   type: "all" | "hero" | "scene";
   sceneId?: string;
   includePlan: boolean;
+  /** Which SceneUnit grouping produced this plan. Legacy = 1 row / 1 scene. */
+  sceneGroupingVersion?: SceneGroupingVersion;
 }
 
 function visualTargetKey(target: VisualGenerationTarget) {
-  return `${target.type}:${target.sceneId ?? ""}:${target.includePlan ? "plan" : "reuse"}`;
+  const grouping = target.sceneGroupingVersion ?? "legacy_v1";
+  return `${target.type}:${target.sceneId ?? ""}:${target.includePlan ? "plan" : "reuse"}:${grouping}`;
 }
 
 async function activeVisualGenerationJobs(env: Env, workId: string) {
@@ -3294,7 +3307,12 @@ async function runVisualGenerationJob(env: Env, jobId: string) {
       ).bind(work.id, job.created_at))
       : null;
     if (target.includePlan && !plannedForJob) {
-      const planResponse = await planWorkVisuals(env, String(work.id), jobId);
+      const planResponse = await planWorkVisuals(
+        env,
+        String(work.id),
+        jobId,
+        target.sceneGroupingVersion,
+      );
       if (!planResponse.ok) {
         const payload = await planResponse.json().catch(() => ({})) as Record<string, unknown>;
         const error = payload.error && typeof payload.error === "object"
@@ -3441,6 +3459,7 @@ async function createVisualGenerationJob(
     type: target.type,
     sceneId: target.sceneId,
     includePlan,
+    sceneGroupingVersion: target.sceneGroupingVersion,
   };
 
   const activeRows = await activeVisualGenerationJobs(env, workId);
@@ -3498,10 +3517,14 @@ async function generateWorkVisuals(
   try { body = await request.json() as Record<string, unknown>; } catch { /* optional body */ }
   const type = String(body.type ?? "all") as VisualGenerationTarget["type"];
   const sceneId = String(body.sceneId ?? body.scene_id ?? "").trim() || undefined;
+  const rawGrouping = String(body.sceneGroupingVersion ?? body.scene_grouping_version ?? "");
+  const sceneGroupingVersion: VisualGenerationTarget["sceneGroupingVersion"] =
+    rawGrouping === "semantic_v2" ? "semantic_v2" : "legacy_v1";
   return createVisualGenerationJob(env, workId, {
     type,
     sceneId,
     includePlan: body.includePlan === true || body.include_plan === true,
+    sceneGroupingVersion,
   });
 }
 

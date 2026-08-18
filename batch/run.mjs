@@ -19,6 +19,21 @@ const NODE_MODULES = join(batchDir, "..", "node_modules");
 // Playwright is installed in the managed node workspace; resolve it there.
 const PW_MODULES = "/Users/mcf/.workbuddy/binaries/node/workspace/node_modules";
 
+const LEGACY_V1 = "legacy_v1";
+const SEMANTIC_V2 = "semantic_v2";
+
+// Scene-grouping compatibility for old checkpoints:
+// - explicit sceneGroupingVersion wins
+// - any work that already has a visual job (or completed scenes) stays legacy
+// - index <= 34 is legacy (all created before semantic_v2 shipped)
+// - index >= 35 with no visual job yet → semantic_v2
+function resolveSceneGroupingVersion(entry, index) {
+  if (entry.sceneGroupingVersion) return entry.sceneGroupingVersion;
+  if (entry.visualJobId) return LEGACY_V1;
+  if (index <= 34) return LEGACY_V1;
+  return SEMANTIC_V2;
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Network-level failures (e.g. Node's `TypeError: fetch failed`) carry no HTTP
@@ -176,6 +191,14 @@ export async function runBatch({ maxWorks } = {}) {
     const result = { index: work.index, title: work.title, stage: "", error: null, completed: false };
     results.push(result);
 
+    // Resolve and persist the SceneGrouping version for this work. Never
+    // touches an existing visualJobId (legacy jobs stay untouched).
+    const groupingVersion = resolveSceneGroupingVersion(entry, work.index);
+    if (entry.sceneGroupingVersion !== groupingVersion) {
+      entry.sceneGroupingVersion = groupingVersion;
+      saveState(state);
+    }
+
     try {
       // 1. Create / reuse work
       if (!entry.workId || entry.status === STATUS.PENDING) {
@@ -187,36 +210,80 @@ export async function runBatch({ maxWorks } = {}) {
 
       // 2. Text Recitation -> ControlSpec (POST is synchronous; may take up to 5 min)
       if (!entry.analysisReady) {
-        entry.status = STATUS.ANALYSIS_RUNNING;
-        saveState(state);
-        const done = await withRetry(
-          () => Promise.race([
-            createTextRecitation(entry.workId),
-            sleep(ANALYSIS_TIMEOUT_MS).then(() => { const e = new Error("文稿分析超时"); e.status = 0; e.timeout = true; throw e; }),
-          ]),
-          "textRecitation",
-        );
-        const completedWork = done.work;
-        if (!completedWork?.controlSpec) throw new Error("文稿分析完成但无 control_spec");
-        const sentenceCount = completedWork.controlSpec.sentences?.length ?? 0;
-        if (sentenceCount !== work.sentenceCount) {
-          throw new Error(`Sentence 数不一致: 期望 ${work.sentenceCount}, 实际 ${sentenceCount}`);
+        // Resume safety: the previous runner may have died while the worker
+        // was still finishing analysis server-side. If the work already has a
+        // control spec, reuse it instead of re-paying for a second analysis.
+        // If the worker is still analyzing (work.status === "analyzing"),
+        // poll until it finishes instead of starting a duplicate analysis.
+        let serverWork = await withRetry(() => getWork(entry.workId), "getWork");
+        let serverSpec = serverWork.work?.controlSpec;
+        if (!serverSpec?.sentences?.length && serverWork.work?.status === "analyzing") {
+          console.log(`[${work.index}] 服务端分析进行中，等待完成…`);
+          const resumeDeadline = Date.now() + ANALYSIS_TIMEOUT_MS;
+          while (Date.now() < resumeDeadline) {
+            await sleep(5000);
+            serverWork = await withRetry(() => getWork(entry.workId), "getWork");
+            serverSpec = serverWork.work?.controlSpec;
+            if (serverSpec?.sentences?.length) break;
+            // A zombie analyzing state (job untouched for > ANALYSIS_TIMEOUT_MS)
+            // means the previous analysis died; break out and re-run it.
+            const lastTouch = Date.parse(String(serverWork.work?.updatedAt ?? ""));
+            if (Number.isFinite(lastTouch) && Date.now() - lastTouch >= ANALYSIS_TIMEOUT_MS) {
+              console.log(`[${work.index}] 服务端分析疑似中断（状态长期未更新），重新分析`);
+              break;
+            }
+            if (serverWork.work?.status === "draft" || serverWork.work?.status === "failed") break;
+          }
         }
-        entry.analysisReady = true;
-        entry.analysisJobId = done.analysis_job_id ?? null;
-        entry.sentenceCount = sentenceCount;
-        entry.status = STATUS.ANALYSIS_READY;
-        saveState(state);
-        console.log(`[${work.index}] ControlSpec ready: ${sentenceCount} 句`);
+        if (serverSpec?.sentences?.length) {
+          const serverCount = serverSpec.sentences.length;
+          if (serverCount !== work.sentenceCount) {
+            throw new Error(`Sentence 数不一致(服务端): 期望 ${work.sentenceCount}, 实际 ${serverCount}`);
+          }
+          entry.analysisReady = true;
+          entry.analysisJobId = null;
+          entry.sentenceCount = serverCount;
+          entry.status = STATUS.ANALYSIS_READY;
+          saveState(state);
+          console.log(`[${work.index}] ControlSpec 已就绪（服务端复用）: ${serverCount} 句`);
+        } else {
+          entry.status = STATUS.ANALYSIS_RUNNING;
+          saveState(state);
+          const done = await withRetry(
+            () => Promise.race([
+              createTextRecitation(entry.workId),
+              sleep(ANALYSIS_TIMEOUT_MS).then(() => { const e = new Error("文稿分析超时"); e.status = 0; e.timeout = true; throw e; }),
+            ]),
+            "textRecitation",
+          );
+          const completedWork = done.work;
+          if (!completedWork?.controlSpec) throw new Error("文稿分析完成但无 control_spec");
+          const sentenceCount = completedWork.controlSpec.sentences?.length ?? 0;
+          if (sentenceCount !== work.sentenceCount) {
+            throw new Error(`Sentence 数不一致: 期望 ${work.sentenceCount}, 实际 ${sentenceCount}`);
+          }
+          entry.analysisReady = true;
+          entry.analysisJobId = done.analysis_job_id ?? null;
+          entry.sentenceCount = sentenceCount;
+          entry.status = STATUS.ANALYSIS_READY;
+          saveState(state);
+          console.log(`[${work.index}] ControlSpec ready: ${sentenceCount} 句`);
+        }
       } else {
         console.log(`[${work.index}] ControlSpec 已就绪（复用）`);
       }
 
       // 3. Visual generation (explicitly; batch API does not auto-trigger).
       //    "all" generates every active scene spec (one Scene Card image per
-      //    sentence). "scene" without a sceneId is rejected by the worker.
+      //    scene). For semantic_v2, scenes < sentences (shared SceneUnits).
       if (!entry.visualJobId) {
-        const vj = await withRetry(() => startVisualGeneration(entry.workId, { type: "all" }), "startVisual");
+        const vj = await withRetry(
+          () => startVisualGeneration(entry.workId, {
+            type: "all",
+            sceneGroupingVersion: entry.sceneGroupingVersion || LEGACY_V1,
+          }),
+          "startVisual",
+        );
         entry.visualJobId = vj.visual_job_id;
         entry.status = STATUS.VISUAL_RUNNING;
         saveState(state);
@@ -240,6 +307,27 @@ export async function runBatch({ maxWorks } = {}) {
           entry.sceneTotal = specs.length;
           entry.sceneReady = scenes.length;
           if (entry.sceneReady < entry.sceneTotal) throw new Error(`Scene ready ${entry.sceneReady}/${entry.sceneTotal}`);
+          // semantic_v2 validation: Scene units must cover every sentence and
+          // scenes must not exceed sentences (rows share SceneUnits).
+          if (entry.sceneGroupingVersion === SEMANTIC_V2) {
+            const covered = new Set(
+              (job.visuals?.sceneSpecs ?? [])
+                .flatMap((s) => s.sourceSentenceIds ?? s.source_sentence_ids ?? []),
+            );
+            const expected = entry.sentenceCount || work.sentenceCount;
+            const missing = expected - covered.size;
+            const saved = Math.max(0, expected - entry.sceneTotal);
+            console.log(`[${work.index}] sceneGroupingVersion=${entry.sceneGroupingVersion}`);
+            console.log(`[${work.index}] sentences=${expected}`);
+            console.log(`[${work.index}] scenes=${entry.sceneTotal}`);
+            console.log(`[${work.index}] savedImages=${saved}`);
+            if (entry.sceneTotal > expected) {
+              throw new Error(`semantic_v2 异常: scenes(${entry.sceneTotal}) > sentences(${expected})`);
+            }
+            if (missing > 0) {
+              throw new Error(`semantic_v2 异常: ${missing} 个 sentence 未映射到任何 scene`);
+            }
+          }
           break;
         }
         await sleep(VISUAL_POLL_INTERVAL_MS);
