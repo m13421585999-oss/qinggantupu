@@ -67,3 +67,16 @@ class TextRecitationSentence(StrictModel):
 class TextRecitationPlan(StrictModel):
     performance_profile: PerformanceProfile | None = None
     sentences: list[TextRecitationSentence] = Field(min_length=1)
+
+
+class WorkContext(StrictModel):
+    """Lightweight whole-work context for chunked long-text analysis.
+
+    Only high-level reading guidance; never per-sentence annotations.
+    """
+
+    overall_tone: str = Field(min_length=1, max_length=200)
+    emotion_arc: str = Field(min_length=1, max_length=400)
+    rhythm_tendency: str = Field(min_length=1, max_length=300)
+    major_semantic_sections: list[str] = Field(default_factory=list, max_length=10)
+

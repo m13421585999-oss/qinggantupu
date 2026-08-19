@@ -180,6 +180,7 @@ class Settings:
     llm_thinking: str
     llm_reasoning_effort: str
     request_timeout_seconds: float
+    text_recitation_timeout_seconds: float = 240.0
     visual_reasoning_effort: str = "low"
     tts_director_reasoning_effort: str = "medium"
     recitation_llm_api_key: str = ""
@@ -242,6 +243,9 @@ class Settings:
             llm_thinking=DEEPSEEK_THINKING,
             llm_reasoning_effort=configured_reasoning_effort(),
             request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "120")),
+            text_recitation_timeout_seconds=float(
+                os.getenv("TEXT_RECITATION_TIMEOUT_SECONDS", "420")
+            ),
             visual_reasoning_effort=configured_visual_reasoning_effort(),
             tts_director_reasoning_effort=configured_tts_reasoning_effort(),
             recitation_llm_api_key=recitation_llm_api_key,

@@ -13,6 +13,7 @@ from app.text_recitation.schema import (
     TextRecitationPlan,
     TextRecitationRequest,
     TextRecitationSentence,
+    WorkContext,
 )
 from app.text_recitation.system_prompt import TEXT_RECITATION_SYSTEM_PROMPT
 
@@ -444,6 +445,357 @@ async def _generate_once(
     }
 
 
+# ---------------------------------------------------------------------------
+# Chunked generation for long manuscripts (Sentence > CHUNK_THRESHOLD).
+# A single structured request for a very long text can exceed the LLM request
+# timeout; splitting into small ordered chunks (with a light WorkContext and
+# 1-2 neighbour Sentences as context) keeps every request small while the
+# merged output is byte-identical to the single-shot schema.
+# ---------------------------------------------------------------------------
+
+CHUNK_THRESHOLD = 12
+CHUNK_SIZE_MIN = 8
+CHUNK_SIZE_MAX = 10
+CHUNK_CONTEXT_SENTENCES = 2
+CHUNK_TIMEOUT_SECONDS = 150.0
+
+
+def _chunk_ranges(sentence_count: int) -> list[tuple[int, int]]:
+    """Split [0, sentence_count) into ordered chunks of up to CHUNK_SIZE_MAX.
+    A trailing remainder may be smaller (e.g. 46 -> 10/10/10/10/6)."""
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    while start < sentence_count:
+        end = min(start + CHUNK_SIZE_MAX, sentence_count)
+        ranges.append((start, end))
+        start = end
+    return ranges
+
+
+def _sentence_line(order: int, start: int, end: int, text: str) -> str:
+    return f"[{order}] start_index={start}, end_index={end}, text={text!r}"
+
+
+def _work_context_prompt(
+    request: TextRecitationRequest,
+    sentences: list[tuple[int, int]],
+    text: str,
+) -> str:
+    listing = "\n".join(
+        _sentence_line(order, start, end, text[start : end + 1])
+        for order, (start, end) in enumerate(sentences)
+    )
+    return (
+        "请基于以下作品正文，仅给出全篇的朗诵处理总体语境（WorkContext）。\n"
+        "这是长篇分块分析的第一步：你只需要输出整体的语气基调、情绪走向、"
+        "节奏倾向和主要语义段，不要对任何句子做逐句标注。\n\n"
+        f"作品标题：{request.title}\n"
+        f"作者或来源：{request.author or '未提供'}\n\n"
+        "句子列表（仅用于把握全文结构）：\n"
+        f"{listing}\n\n"
+        "请输出：overall_tone（一句话）、emotion_arc（情绪走向，一两句）、"
+        "rhythm_tendency（节奏倾向，一两句）、major_semantic_sections（主要语义段，"
+        "每段一句话）。"
+    )
+
+
+def _chunk_user_prompt(
+    request: TextRecitationRequest,
+    work_context: WorkContext,
+    text: str,
+    sentences: list[tuple[int, int]],
+    chunk_range: tuple[int, int],
+) -> str:
+    """Build the chunk request. Only chunk Sentences are emitted; the 1-2
+    neighbours on each side are given as context and must NOT be re-emitted."""
+    start, end = chunk_range
+    in_chunk = list(range(start, end))
+    context_before = list(range(max(0, start - CHUNK_CONTEXT_SENTENCES), start))
+    context_after = list(
+        range(end, min(len(sentences), end + CHUNK_CONTEXT_SENTENCES))
+    )
+
+    def describe(order: int) -> str:
+        (s, e) = sentences[order]
+        return _sentence_line(order, s, e, text[s : e + 1])
+
+    parts = [
+        "请基于以下作品正文进行朗诵表达分析。这是长篇分块处理中的一段。",
+        "",
+        f"作品标题：{request.title}",
+        f"作者或来源：{request.author or '未提供'}",
+        "",
+        "## 全篇处理语境（WorkContext）",
+        f"overall_tone：{work_context.overall_tone}",
+        f"emotion_arc：{work_context.emotion_arc}",
+        f"rhythm_tendency：{work_context.rhythm_tendency}",
+        "major_semantic_sections：",
+        *[f"- {section}" for section in work_context.major_semantic_sections],
+        "",
+        "## 需要分析输出标注的句子（仅这些句子的 text/start_index/end_index 必须原样回传）",
+        "\n".join(describe(order) for order in in_chunk),
+    ]
+    if context_before:
+        parts += [
+            "",
+            "## 前文语境（仅供理解，禁止为这些句子输出任何标注）",
+            "\n".join(describe(order) for order in context_before),
+        ]
+    if context_after:
+        parts += [
+            "",
+            "## 后文语境（仅供理解，禁止为这些句子输出任何标注）",
+            "\n".join(describe(order) for order in context_after),
+        ]
+    parts += [
+        "",
+        "输出要求：",
+        f"- 只输出上面“需要分析输出标注的句子”中 {len(in_chunk)} 个句子的完整分析。",
+        "- 每个句子的 text、start_index、end_index 必须与给定值完全一致，不得改写。",
+        "- 不得输出前文/后文语境句子的标注，不得遗漏本段任何一个句子，不得增行。",
+        "- 字段与当前 schema 完全一致：function、focus_spans、pause_after、prosody、"
+        "ending_intonation、rhythm、confidence 等。",
+    ]
+    return "\n".join(parts)
+
+
+async def _generate_work_context(
+    *,
+    request: TextRecitationRequest,
+    provider: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    thinking: str,
+    reasoning_effort: str,
+    timeout_seconds: float,
+) -> WorkContext:
+    text = normalize_text(request.text)
+    sentences = split_sentences(text)
+    user_prompt = _work_context_prompt(request, sentences, text)
+    try:
+        generation = await generate_structured_result(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            system_prompt=(
+                "你是专业朗诵指导。对长篇作品先给出全篇处理语境。"
+                "只输出 JSON，不要解释。"
+            ),
+            user_prompt=user_prompt,
+            schema_name="work_context",
+            schema=WorkContext.model_json_schema(),
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            temperature=0.3,
+            timeout_seconds=timeout_seconds,
+            validator=lambda data: WorkContext.model_validate(data),
+            prefer_chat_json=True,
+        )
+        return WorkContext.model_validate(generation.data)
+    except (StructuredLlmError, ValidationError, ValueError) as exc:
+        raise TextRecitationError(f"文稿整体语境生成失败：{exc}") from exc
+
+
+async def _generate_chunk(
+    *,
+    request: TextRecitationRequest,
+    provider: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    thinking: str,
+    reasoning_effort: str,
+    timeout_seconds: float,
+    work_context: WorkContext,
+    text: str,
+    sentences: list[tuple[int, int]],
+    chunk_range: tuple[int, int],
+) -> list[TextRecitationSentence]:
+    user_prompt = _chunk_user_prompt(
+        request, work_context, text, sentences, chunk_range
+    )
+    try:
+        generation = await generate_structured_result(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            system_prompt=TEXT_RECITATION_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            schema_name="text_recitation_plan",
+            schema=TextRecitationPlan.model_json_schema(),
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            temperature=0.2,
+            timeout_seconds=timeout_seconds,
+            validator=lambda data: TextRecitationPlan.model_validate(data),
+            prefer_chat_json=True,
+        )
+        plan = TextRecitationPlan.model_validate(generation.data)
+    except (StructuredLlmError, ValidationError, ValueError) as exc:
+        raise TextRecitationError(f"文稿分块分析生成失败：{exc}") from exc
+
+    # Strict contract: only the chunk's own Sentences may be emitted, in order,
+    # with byte-identical text and token range. Context sentences must be absent.
+    start, end = chunk_range
+    expected: list[TextRecitationSentence] = []
+    for order, (s, e) in enumerate(sentences[start:end], start):
+        exact_text = text[s : e + 1]
+        try:
+            found = next(
+                candidate
+                for candidate in plan.sentences
+                if candidate.start_index == s and candidate.end_index == e
+            )
+        except StopIteration as exc:
+            raise TextRecitationError(
+                f"分块分析第 {order} 句缺失或 token 范围被改写，已拒绝结果。"
+            ) from exc
+        if found.text != exact_text:
+            raise TextRecitationError(f"分块分析第 {order} 句正文被改写，已拒绝结果。")
+        # Reject any context sentence leaking into the output.
+        if order < start or order >= end:
+            raise TextRecitationError(f"分块分析第 {order} 句越界输出。")
+        expected.append(found)
+    if len(expected) != end - start:
+        raise TextRecitationError(
+            f"分块分析输出 {len(expected)} 句，应输出 {end - start} 句。"
+        )
+    return expected
+
+
+def _merge_chunk_sentences(
+    chunks: list[list[TextRecitationSentence]],
+    expected_ranges: list[tuple[int, int]],
+    expected_sentences: list[tuple[int, int]],
+    text: str,
+) -> list[TextRecitationSentence]:
+    """Deterministic merge: chunk order + in-chunk order; verify 1:1 with input."""
+    merged: list[TextRecitationSentence] = []
+    seen: set[int] = set()
+    for chunk_index, (chunk, (start, end)) in enumerate(
+        zip(chunks, expected_ranges, strict=True)
+    ):
+        if len(chunk) != end - start:
+            raise TextRecitationError(
+                f"第 {chunk_index + 1} 个分块合并数量不符：{len(chunk)} != {end - start}。"
+            )
+        for sentence in chunk:
+            if sentence.start_index in seen:
+                raise TextRecitationError(
+                    f"分块合并发现重复句子（start_index={sentence.start_index}）。"
+                )
+            seen.add(sentence.start_index)
+            merged.append(sentence)
+    if len(merged) != len(expected_sentences):
+        raise TextRecitationError(
+            f"分块合并总数为 {len(merged)}，应为 {len(expected_sentences)}。"
+        )
+    # Order check: merged must follow the exact original order.
+    expected_starts = [s for (s, _e) in expected_sentences]
+    actual_starts = [s.start_index for s in merged]
+    if actual_starts != expected_starts:
+        raise TextRecitationError("分块合并顺序与原文不一致。")
+    return merged
+
+
+async def generate_text_recitation_chunked(
+    *,
+    request: TextRecitationRequest,
+    provider: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    thinking: str,
+    reasoning_effort: str,
+    timeout_seconds: float,
+    chunk_concurrency: int = 2,
+) -> dict[str, Any]:
+    """Chunked pipeline for long manuscripts. Output shape identical to the
+    single-shot path (the caller's downstream pipeline cannot tell the
+    difference)."""
+    text = normalize_text(request.text)
+    tokens = build_tokens(text, request.pinyin_overrides)
+    sentences = split_sentences(text)
+    ranges = _chunk_ranges(len(sentences))
+
+    work_context = await _generate_work_context(
+        request=request,
+        provider=provider,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        thinking=thinking,
+        reasoning_effort=reasoning_effort,
+        timeout_seconds=timeout_seconds,
+    )
+
+    # Worker pool: fixed chunk_concurrency workers, each grabbing the next
+    # pending chunk via a cursor. A slow chunk never blocks siblings.
+    import asyncio
+
+    chunks: list[list[TextRecitationSentence] | None] = [None] * len(ranges)
+    cursor = 0
+    lock = asyncio.Lock()
+
+    async def worker() -> None:
+        nonlocal cursor
+        while True:
+            async with lock:
+                if cursor >= len(ranges):
+                    return
+                index = cursor
+                cursor += 1
+            chunks[index] = await _generate_chunk(
+                request=request,
+                provider=provider,
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                thinking=thinking,
+                reasoning_effort=reasoning_effort,
+                timeout_seconds=CHUNK_TIMEOUT_SECONDS,
+                work_context=work_context,
+                text=text,
+                sentences=sentences,
+                chunk_range=ranges[index],
+            )
+
+    workers = [
+        asyncio.create_task(worker()) for _ in range(min(chunk_concurrency, len(ranges)))
+    ]
+    await asyncio.gather(*workers)
+
+    merged = _merge_chunk_sentences(
+        [chunk for chunk in chunks if chunk is not None],
+        ranges,
+        sentences,
+        text,
+    )
+    plan = TextRecitationPlan(performance_profile=None, sentences=merged)
+    expected = _validate_plan(plan, text)
+    control_spec = _assemble_control_spec(
+        request=request,
+        text=text,
+        plan=plan,
+        tokens=tokens,
+        expected=expected,
+        model=model,
+    )
+    return {
+        "control_spec": control_spec,
+        "validation": {"repair_count": 0, "chunked": True, "chunk_count": len(ranges)},
+        "_meta": {
+            "endpoint": "chat/completions",
+            "output_mode": "json_object",
+            "request_count": len(ranges) + 1,
+            "mode": "chunked",
+        },
+    }
+
+
 async def generate_text_recitation(
     *,
     request: TextRecitationRequest,
@@ -456,6 +808,21 @@ async def generate_text_recitation(
     timeout_seconds: float,
 ) -> dict[str, Any]:
     text = normalize_text(request.text)
+    sentence_count = len(split_sentences(text))
+    # Long manuscripts: keep every LLM request small by splitting into ordered
+    # chunks (8-10 Sentences, concurrency 2). Short works stay on the exact
+    # single-shot path. Both produce an identical ControlSpec shape.
+    if sentence_count > CHUNK_THRESHOLD:
+        return await generate_text_recitation_chunked(
+            request=request,
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            timeout_seconds=timeout_seconds,
+        )
     tokens = build_tokens(text, request.pinyin_overrides)
     plan, metadata = await _generate_once(
         request=request,

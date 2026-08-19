@@ -22,16 +22,29 @@ const PW_MODULES = "/Users/mcf/.workbuddy/binaries/node/workspace/node_modules";
 const LEGACY_V1 = "legacy_v1";
 const SEMANTIC_V2 = "semantic_v2";
 
+// Batch-run configuration via environment (no architecture change):
+//   BATCH_SERIAL_OFFSET=50       -> PDF filenames use global serial = index + offset
+//   BATCH_FORCE_SEMANTIC_V2=1    -> all works use semantic_v2 regardless of index
+const SERIAL_OFFSET = Number(process.env.BATCH_SERIAL_OFFSET ?? "0");
+const FORCE_SEMANTIC_V2 = process.env.BATCH_FORCE_SEMANTIC_V2 === "1";
+
 // Scene-grouping compatibility for old checkpoints:
 // - explicit sceneGroupingVersion wins
 // - any work that already has a visual job (or completed scenes) stays legacy
 // - index <= 34 is legacy (all created before semantic_v2 shipped)
 // - index >= 35 with no visual job yet → semantic_v2
+// - BATCH_FORCE_SEMANTIC_V2=1 overrides the legacy index boundary (new batches)
 function resolveSceneGroupingVersion(entry, index) {
   if (entry.sceneGroupingVersion) return entry.sceneGroupingVersion;
   if (entry.visualJobId) return LEGACY_V1;
+  if (FORCE_SEMANTIC_V2) return SEMANTIC_V2;
   if (index <= 34) return LEGACY_V1;
   return SEMANTIC_V2;
+}
+
+// Global serial for PDF naming: batch-local index + offset (e.g. 1 -> 051).
+function globalSerial(index) {
+  return index + SERIAL_OFFSET;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -146,7 +159,8 @@ async function exportPdf({ workId, index, title, author }) {
     const downloadPromise = page.waitForEvent("download", { timeout: 120000 });
     await page.click(".full-export-button");
     const download = await downloadPromise;
-    const safe = author ? `${String(index).padStart(3, "0")}-${title}-${author}.pdf` : `${String(index).padStart(3, "0")}-${title}.pdf`;
+    const serial = globalSerial(index);
+    const safe = author ? `${String(serial).padStart(3, "0")}-${title}-${author}.pdf` : `${String(serial).padStart(3, "0")}-${title}.pdf`;
     const filename = safe.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ");
     const outPath = join(OUTPUT_DIR, filename);
     await download.saveAs(outPath);

@@ -1043,6 +1043,16 @@ function IndexedGraphTrack({
                           {unit.pause.type === "long" ? "///" : "/"}
                         </span>
                       ) : null}
+                      {unit.breath ? (
+                        <span
+                          className={`attached-decoration breath-mark breath-${unit.breath.type === "breath_major" ? "major" : "minor"}`}
+                          data-marker="breath"
+                          data-boundary-after-index={unit.breath.afterTokenIndex}
+                          aria-label="换气"
+                        >
+                          {unit.breath.type === "breath_major" ? "V" : "v"}
+                        </span>
+                      ) : null}
                       {unit.suffixPunctuation.map((punctuation) => (
                         <span
                           className={`source-punctuation ${activeTokenId === punctuation.id ? "playing-punctuation" : ""}`}

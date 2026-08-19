@@ -3080,6 +3080,13 @@ p {
   transform: translateY(-50%);
 }
 
+.breath-mark {
+  margin-left: 0.08em;
+  font-family: Arial, sans-serif;
+  font-weight: 800;
+  font-size: 0.78em;
+}
+
 .pause-mark {
   margin-left: 0.06em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -6589,6 +6596,29 @@ button.compact-token-char.is-selected {
 }
 button.full-token-char:hover, button.full-token-char.is-selected { background: rgba(185, 64, 46, 0.09); box-shadow: inset 0 0 0 0.25mm rgba(185, 64, 46, 0.2); }
 .full-token-char.is-focus { color: #c33f2d; font-weight: 800; }
+/* Editor-only 拖音 line. Absolutely positioned inside .full-token-char so it
+   never shifts pinyin/char centering or line height. Multi-char prolongation
+   = one segment per host token → a continuous line under the word range. Same
+   #c8452f thin-line semantics as the studio .prolong-mark / .print-prolongation. */
+.full-token-char { position: relative; }
+.full-prolong-mark {
+  position: absolute;
+  left: 0.06em;
+  right: 0.06em;
+  bottom: 1.5mm;
+  border-top: 2.5px solid #c8452f;
+  pointer-events: none;
+}
+/* Editor-only 换气 (V = 大换气 / v = 偷气), rendered in the boundary gutter
+   alongside short pause / and ending tone. Excluded from print/export. */
+.full-breath {
+  color: #b9402e;
+  font-family: Arial, sans-serif;
+  font-weight: 800;
+  font-size: 1em;
+  margin: 0 0.04em;
+  pointer-events: none;
+}
 
 /* Boundary/tail gutter: a sibling AFTER .full-spoken-token (not a grid column).
    It occupies layout width so the following token shifts right as a whole, but
@@ -6715,6 +6745,7 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
 
 @media print {
   .full-editor-toolbar, .full-marker-popover, .full-measure-layer { display: none !important; }
+  .full-prolong-mark, .full-breath { display: none !important; }
   .full-editor-workspace, .full-page-stack { background: transparent; padding: 0; }
   .full-a4-page { box-shadow: none; break-after: page; }
 }

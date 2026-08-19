@@ -244,18 +244,36 @@ function FullTokenUnit({
   measureRef?: (element: HTMLSpanElement | null) => void;
   onSelect?: (anchor: HTMLElement) => void;
 }) {
-  // Full only renders the four primary recitation cues: 重音, short pause /,
-  // sentence-final tone ↗/↘ and the prosody curve. Breath (V/v), long pause
-  // (///) and prolongation (—) are intentionally NOT rendered here — the
-  // underlying ControlSpec data is untouched and Compact still shows them.
+  // Full renders the primary recitation cues (重音, short pause /, ending tone
+  // ↗/↘, prosody curve) plus the 拖音 line and 换气 mark as EDITOR-ONLY aids.
+  // These two are excluded from print/export (data-export-exclude) so the
+  // published Full/PDF layout is unchanged; the underlying ControlSpec data is
+  // untouched. This reuses the same ProlongMark/BreathMark semantics already used
+  // by the studio graph view and the print tree.
   const shortPause = sentence.pauses.find(
     (pause) => pause.afterTokenIndex === unit.token.index && pause.type === "short",
   );
+  const prolong = prolongAt(sentence, unit.token.index);
+  const breath = breathAt(sentence, unit.token.index);
   const isEndingHost = endingTokenIndex === unit.token.index;
   const tone = isEndingHost && sentence.endingIntonation.type !== "level"
     ? sentence.endingIntonation.type
     : undefined;
   const select = (anchor: HTMLElement) => onSelect?.(anchor);
+  const charContent = (
+    <>
+      {unit.token.char}
+      {prolong ? (
+        <span
+          className="full-prolong-mark"
+          data-marker="prolongation"
+          data-export-exclude="true"
+          aria-label="拖音"
+          aria-hidden="true"
+        />
+      ) : null}
+    </>
+  );
   return (
     <span className="full-token-unit" ref={measureRef} data-full-token-index={unit.token.index}>
       <span className="full-token-manuscript">
@@ -274,17 +292,27 @@ function FullTokenUnit({
               onClick={(event) => select(event.currentTarget)}
               aria-label={`编辑“${unit.token.char}”及其后方标识`}
             >
-              {unit.token.char}
+              {charContent}
             </button>
           ) : (
             <span className={`full-token-char ${focused ? "is-focus" : ""}`} ref={characterRef}>
-              {unit.token.char}
+              {charContent}
             </span>
           )}
         </span>
-        {shortPause || tone ? (
+        {shortPause || tone || breath ? (
           <span className="full-token-marker">
             {shortPause ? <span className="full-pause">/</span> : null}
+            {breath ? (
+              <span
+                className={`full-breath full-breath-${breath.type === "breath_major" ? "major" : "minor"}`}
+                data-marker="breath"
+                data-export-exclude="true"
+                aria-label="换气"
+              >
+                {breath.type === "breath_major" ? "V" : "v"}
+              </span>
+            ) : null}
             {tone ? (
               <span className="full-ending-tone">{tone === "rising" ? "↗" : "↘"}</span>
             ) : null}

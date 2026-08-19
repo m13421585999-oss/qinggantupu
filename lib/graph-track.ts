@@ -1,4 +1,5 @@
 import type {
+  BreathMark,
   EndingTone,
   PauseMark,
   ProlongMark,
@@ -14,6 +15,7 @@ export interface GraphTokenUnit {
   sourceTokenIndexes: number[];
   prolongation?: ProlongMark;
   pause?: PauseMark;
+  breath?: BreathMark;
   endingTone?: EndingTone;
 }
 
@@ -96,6 +98,11 @@ export function buildGraphTokenUnits(sentence: RecitationSentence): GraphTokenUn
     if (pauseBoundaryHasSourcePunctuation(sentence.tokens, tokenPosition)) continue;
     const host = hostBySourceIndex.get(mark.afterTokenIndex);
     if (host) host.pause = strongerPause(host.pause, mark);
+  }
+
+  for (const mark of sentence.breaths ?? []) {
+    const host = hostBySourceIndex.get(mark.afterTokenIndex);
+    if (host) host.breath = mark;
   }
 
   const endingHost = units.at(-1);

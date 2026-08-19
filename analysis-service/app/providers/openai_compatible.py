@@ -635,12 +635,23 @@ async def generate_structured_result(
                 f"LLM structured request exhausted its {request_limit}-request limit"
             )
         request_count += 1
-        return await _post(
+        response = await _post(
             client=client,
             url=url,
             api_key=api_key,
             body=body,
         )
+        # Transient upstream failures deserve backoff before the next attempt;
+        # immediate retries amplify rate limits. 429 (rate limit) needs a much
+        # longer cool-down than a 5xx blip. Chunked recitation submits several
+        # LLM calls concurrently, so a gentle ramp keeps the gateway happy
+        # without changing retry counts.
+        if _is_transient_provider_failure(response) and request_count < request_limit:
+            if response.status_code == 429:
+                await asyncio.sleep(10.0 * request_count)
+            else:
+                await asyncio.sleep(2.0 * request_count)
+        return response
 
     try:
         # ``timeout_seconds`` is a total provider budget, not a fresh timeout

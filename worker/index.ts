@@ -1654,7 +1654,7 @@ async function createTextRecitationJob(env: Env, workId: string) {
         text: String(work.source_text),
         pinyin_overrides: pinyinOverrides,
       }),
-      signal: AbortSignal.timeout(300_000),
+      signal: AbortSignal.timeout(480_000),
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
