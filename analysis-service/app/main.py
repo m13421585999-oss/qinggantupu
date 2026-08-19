@@ -4,11 +4,12 @@ import asyncio
 import logging
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import (
@@ -552,7 +553,7 @@ async def create_text_recitation(
             model=settings.llm_model,
             thinking=settings.llm_thinking,
             reasoning_effort=settings.llm_reasoning_effort,
-            timeout_seconds=settings.request_timeout_seconds,
+            timeout_seconds=settings.text_recitation_timeout_seconds,
         )
     except TextRecitationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -678,6 +679,54 @@ async def get_image_task(
     return _image_task_response(task, created=False)
 
 
+@app.get("/v1/image-tasks")
+async def list_image_tasks(
+    work_id: str = Query(min_length=1, max_length=500),
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    """Read-only list of every image task for one work (by scene id)."""
+    store = get_image_task_store()
+    tasks = store.list_by_work(work_id)
+    # cheap global health signal for recovery drivers: any task completed in
+    # the last 10 minutes proves the image upstream is accepting requests.
+    recent_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 600))
+    recent_completions = store.count_recent_completions(recent_iso)
+    return {
+        "work_id": work_id,
+        "count": len(tasks),
+        "recent_completions": recent_completions,
+        "tasks": [_image_task_response(t, created=False) for t in tasks],
+    }
+
+
+@app.post("/v1/image-tasks/{task_id}/retry", status_code=status.HTTP_200_OK)
+async def retry_image_task(
+    task_id: str,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    """Explicitly requeue a task the server knows failed upstream.
+
+    Same task id, same scene_request_key — only the status flips
+    failed -> queued and the existing worker claims it again. Safe only for
+    status == 'failed'; completed / running / queued / uncertain are rejected.
+    """
+    store = get_image_task_store()
+    result = store.retry_failed(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Image task not found")
+    if not result["ok"]:
+        if result["reason"] == "invalid_status":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Image task is {result['status']}; only failed tasks can be retried",
+            )
+        raise HTTPException(
+            status_code=409,
+            detail=f"Max retries reached ({result['retry_count']})",
+        )
+    return _image_task_response(result["task"], created=False)
+
+
 def _image_task_response(task: dict[str, Any], *, created: bool) -> dict[str, Any]:
     return {
         "image_task_id": task["id"],
@@ -687,8 +736,11 @@ def _image_task_response(task: dict[str, Any], *, created: bool) -> dict[str, An
         "status": task["status"],
         "created": created,
         "attempt_count": task.get("attempt_count", 0),
+        "retry_count": task.get("retry_count", 0),
         "asset": task.get("asset"),
         "error": task.get("error"),
+        "last_error": task.get("last_error"),
+        "last_failed_at": task.get("last_failed_at"),
         "created_at": task.get("created_at"),
         "started_at": task.get("started_at"),
         "finished_at": task.get("finished_at"),

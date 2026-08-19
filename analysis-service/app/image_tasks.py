@@ -34,6 +34,10 @@ STATUS_UNCERTAIN = "uncertain"
 
 TERMINAL_STATUSES = frozenset({STATUS_COMPLETED, STATUS_FAILED})
 
+# explicit retry is only allowed for a task the server KNOWS failed upstream;
+# cap retries so a permanently-failing scene can never loop forever.
+MAX_RETRIES = 3
+
 
 def default_db_path() -> str:
     configured = os.getenv(DB_ENV, "").strip()
@@ -71,12 +75,15 @@ class ImageTaskStore:
                     prompt_hash TEXT NOT NULL,
                     status TEXT NOT NULL,
                     attempt_count INTEGER NOT NULL DEFAULT 0,
+                    retry_count INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT,
                     upstream_started_at TEXT,
                     asset_json TEXT,
                     error TEXT,
+                    last_error TEXT,
+                    last_failed_at TEXT,
                     title TEXT,
                     author TEXT,
                     negative_prompt TEXT,
@@ -88,6 +95,15 @@ class ImageTaskStore:
                 CREATE INDEX IF NOT EXISTS idx_image_tasks_work ON image_tasks(work_id, scene_id);
                 """
             )
+            # migrate existing databases: add history columns if missing.
+            cols = {row[1] for row in connection.execute("PRAGMA table_info(image_tasks)")}
+            for name, ddl in (
+                ("retry_count", "ALTER TABLE image_tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"),
+                ("last_error", "ALTER TABLE image_tasks ADD COLUMN last_error TEXT"),
+                ("last_failed_at", "ALTER TABLE image_tasks ADD COLUMN last_failed_at TEXT"),
+            ):
+                if name not in cols:
+                    connection.execute(ddl)
 
     # -- key helpers ---------------------------------------------------------
 
@@ -150,6 +166,30 @@ class ImageTaskStore:
                 (scene_request_key,),
             ).fetchone()
         return self._row_to_dict(row)
+
+    def list_by_work(self, work_id: str) -> list[dict[str, Any]]:
+        """All image tasks for one work, ordered by scene id (read-only)."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM image_tasks WHERE work_id = ? ORDER BY scene_id ASC",
+                (work_id,),
+            ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def count_recent_completions(self, since_iso: str) -> int:
+        """How many tasks completed anywhere at/after `since_iso` (UTC).
+
+        A >0 value is the cheapest proof that the image upstream is currently
+        accepting and producing requests — used by recovery drivers to decide
+        whether a failed scene whose last_error is 'insufficient balance'
+        should be retried now (balance may have been restored) or skipped.
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS c FROM image_tasks WHERE status = 'completed' AND finished_at >= ?",
+                (since_iso,),
+            ).fetchone()
+        return int(row["c"]) if row else 0
 
     def list_incomplete(self) -> list[dict[str, Any]]:
         """queued / running / uncertain tasks, oldest first."""
@@ -247,11 +287,49 @@ class ImageTaskStore:
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
-                UPDATE image_tasks SET status = 'failed', finished_at = ?, error = ?
+                UPDATE image_tasks SET status = 'failed', finished_at = ?, error = ?,
+                    last_error = ?, last_failed_at = ?
                 WHERE id = ?
                 """,
-                (now, error[:2000], task_id),
+                (now, error[:2000], error[:2000], now, task_id),
             )
+
+    def retry_failed(self, task_id: str, max_retries: int = MAX_RETRIES) -> dict[str, Any] | None:
+        """Explicitly requeue a task the server knows failed upstream.
+
+        Atomic transition failed -> queued on the SAME row (same task id, same
+        scene_request_key): the existing image task worker claims it again.
+        History is preserved: retry_count is incremented and last_error /
+        last_failed_at are left intact, only the current error is cleared.
+
+        Allowed only when status == 'failed'. completed / running / queued /
+        uncertain are rejected — no parallel duplicate generation, no
+        double-charge on unknown upstream state, no regeneration of an asset
+        that already exists.
+        """
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT status, retry_count FROM image_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            status = str(row["status"])
+            if status != STATUS_FAILED:
+                return {"ok": False, "reason": "invalid_status", "status": status}
+            retries = int(row["retry_count"] or 0)
+            if retries >= max_retries:
+                return {"ok": False, "reason": "max_retries", "status": status, "retry_count": retries}
+            now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+            connection.execute(
+                """
+                UPDATE image_tasks SET status = 'queued', error = NULL,
+                    finished_at = NULL, retry_count = ?
+                WHERE id = ?
+                """,
+                (retries + 1, task_id),
+            )
+        task = self.get(task_id)
+        return {"ok": True, "task": task, "retry_count": task["retry_count"] if task else retries + 1}
 
     def mark_uncertain(self, task_id: str, error: str) -> None:
         """Upstream may still be generating; never auto-recreate the task."""
