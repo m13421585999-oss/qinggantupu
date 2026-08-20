@@ -26,6 +26,36 @@
 - `analysis-service/`：云端 FastAPI 分析服务。
 - `analysis-service/app/tts_director/`：独立的“文字 → Eleven v3 朗诵脚本”知识、Schema、正文校验与生成逻辑。
 - `db/`、`drizzle/`：D1 结构与迁移。
+- `batch/`：批量图谱生产线（`batch/index.mjs` 状态机 runner、`batch-input.txt` 输入、`batch/output/` PDF 产物、`batch-state.json` / `batch-report.json` 断点状态）。
+- `lib/`：图谱 token 映射（`graph-track.ts`）、朗诵标识 Schema（`recitation-schema.ts`）。
+
+## 批量图谱生产（batch）
+
+一条流水线把每篇作品从正文自动化到可导出 A4 图谱 PDF：
+
+```text
+Text Recitation (gpt-5.6-sol) → semantic_v2 场景分组 → image-task 生图 (gpt-image-2, 768×1031)
+→ Full PDF（Playwright 打开 http://localhost:3000/?work=ID&edition=full 导出 A4）
+```
+
+**产物**：`batch/output/0NN-篇名-作者.pdf`（NN = index+50）。当前批次 50 篇已全部完成，另有 1 篇单篇作品《你是人间的四月天》，共 **51 份 PDF**（编号 051–100）。
+
+**输入**：`batch/batch-input.txt`（每行一篇，共 50 篇）。
+
+**运行**（必须在剥离代理变量的环境下执行，否则 LLM / 图片调用会走代理失败）：
+
+```text
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  BATCH_SERIAL_OFFSET=50 BATCH_FORCE_SEMANTIC_V2=1 node batch/index.mjs
+```
+
+**断点续跑**：runner 若被中断，重新后台启动同一命令即可。`batch-state.json` 会自动跳过 `completed`、复用 `timeout` 记录的 `visualJobId`、重跑 `failed`。**禁止清空 `batch-state.json` / `batch-report.json` / `batch/output/`，严禁重处理已完成的 work。**
+
+**进度查看**：`node batch/index.mjs --status`。
+
+**模型与配置锁定**：LLM=`gpt-5.6-sol`、IMAGE=`gpt-image-2`；禁止改动 `AI_API_KEY` / `AI_BASE_URL` / `LLM_MODEL` / `IMAGE_MODEL`（配置在 `analysis-service/.env`）。图片上游账户余额不足时生图会返回 402 `insufficient balance`，充值后重跑即可恢复。
+
+**编辑器内的朗诵标识**（拖音线 / 换气 V·v / 停顿 /·/// / 重音 / 语势曲线）为数据驱动即时渲染：选中字 → 点击标识 → 立即显示，再次点击取消；标记带 `data-export-exclude` 并在 `@media print` 隐藏，不影响 PDF 导出。
 
 ## 本地启动
 
