@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from app.providers.openai_compatible import StructuredGenerationResult
+from app.recitation_chunks import RecitationChunkStore
 from app.schemas.control_spec import Prosody, Span
 from app.text_recitation.generate import (
     build_tokens,
@@ -28,7 +29,9 @@ from app.text_recitation.schema import (
     TextRecitationPlan,
     TextRecitationRequest,
     TextRecitationSentence,
+    WorkContext,
 )
+from app.text_recitation_tasks import TextRecitationTaskStore
 
 
 def make_prosody(typ, start, end, core_start, core_end, strength=1):
@@ -439,3 +442,82 @@ def test_normalization_is_identity_for_current_shape():
     }
     normalized = _normalize_llm_payload(raw)
     assert normalized["sentences"][0]["focus_spans"][0]["focus_span"] == {"start": 2, "end": 4}
+
+
+def test_recitation_chunk_store_key_changes_with_generation_variant(tmp_path):
+    store = RecitationChunkStore(str(tmp_path / "recitation.sqlite3"))
+    first = store.request_key("标题", "作者", "正文", "model-a")
+    second = store.request_key("标题", "作者", "正文", "model-b")
+    assert first != second
+
+
+def test_chunked_generation_reuses_valid_persisted_chunks(tmp_path):
+    text = "\n".join(f"第{index}句" for index in range(13))
+    request = TextRecitationRequest(title="长文", author="作者", text=text)
+    store = RecitationChunkStore(str(tmp_path / "recitation.sqlite3"))
+    calls = {"context": 0, "chunk": 0}
+
+    async def fake_context(**_kwargs):
+        calls["context"] += 1
+        return WorkContext(
+            overall_tone="平实",
+            emotion_arc="自然推进",
+            rhythm_tendency="中速",
+            major_semantic_sections=[],
+        )
+
+    async def fake_chunk(*, text, sentences, chunk_range, **_kwargs):
+        calls["chunk"] += 1
+        start, end = chunk_range
+        return [
+            TextRecitationSentence(
+                text=text[sentence_start : sentence_end + 1],
+                start_index=sentence_start,
+                end_index=sentence_end,
+                confidence=0.9,
+            )
+            for sentence_start, sentence_end in sentences[start:end]
+        ]
+
+    patches = (
+        patch("app.text_recitation.generate.get_recitation_chunk_store", return_value=store),
+        patch("app.text_recitation.generate._generate_work_context", side_effect=fake_context),
+        patch("app.text_recitation.generate._generate_chunk", side_effect=fake_chunk),
+    )
+    with patches[0], patches[1], patches[2]:
+        first = asyncio.run(generate_text_recitation(
+            request=request,
+            provider="openai_compatible",
+            api_key="test",
+            base_url="https://example.com",
+            model="gpt-5.6-sol",
+            thinking="enabled",
+            reasoning_effort="low",
+            timeout_seconds=30,
+        ))
+        second = asyncio.run(generate_text_recitation(
+            request=request,
+            provider="openai_compatible",
+            api_key="test",
+            base_url="https://example.com",
+            model="gpt-5.6-sol",
+            thinking="enabled",
+            reasoning_effort="low",
+            timeout_seconds=30,
+        ))
+
+    assert first["validation"]["reused_chunk_count"] == 0
+    assert second["validation"]["reused_chunk_count"] == 2
+    assert second["_meta"]["request_count"] == 0
+    assert calls == {"context": 1, "chunk": 2}
+
+
+def test_text_recitation_task_store_recovers_running_tasks(tmp_path):
+    store = TextRecitationTaskStore(str(tmp_path / "tasks.sqlite3"))
+    queued = store.insert_queued({"title": "标题", "text": "正文", "author": ""})
+    running = store.claim_next_queued()
+    assert running and running["id"] == queued["id"]
+    assert running["status"] == "running"
+    assert store.recover_stale_running() == 1
+    recovered = store.get(str(queued["id"]))
+    assert recovered and recovered["status"] == "queued"

@@ -130,7 +130,7 @@ test("visual director fields and Hero production ratio match the current viewer"
   assert.match(visualDirector, /scene\.scene_meaning \?\? scene\.scene_summary/);
   assert.match(worker, /rawProfile\.composition_language \?\? rawProfile\.composition_rule/);
   assert.match(worker, /spec\.scene_meaning \?\? spec\.scene_summary/);
-  assert.match(worker, /height: kind === "hero" \? 280 : 576/);
+  assert.match(worker, /height: kind === "hero" \? 280 : SCENE_IMAGE_HEIGHT/);
   assert.match(visualPanel, /\[1500, 280\]/);
   assert.match(visualPanel, /1500 × 280 Hero/);
   assert.match(visualPanelCss, /cropFrameHero \{ aspect-ratio: 1500 \/ 280; \}/);

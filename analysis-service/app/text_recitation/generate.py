@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -8,6 +9,7 @@ from pydantic import ValidationError
 from pypinyin import Style, lazy_pinyin
 
 from app.providers.openai_compatible import StructuredLlmError, generate_structured_result
+from app.recitation_chunks import STATUS_COMPLETED, get_recitation_chunk_store
 from app.text_recitation.prosody_compiler import compile_sentence_prosody
 from app.text_recitation.schema import (
     TextRecitationPlan,
@@ -701,6 +703,28 @@ def _merge_chunk_sentences(
     return merged
 
 
+def _decode_cached_chunk(
+    raw: object,
+    chunk_range: tuple[int, int],
+    sentences: list[tuple[int, int]],
+    text: str,
+) -> list[TextRecitationSentence]:
+    """Validate persisted JSON before it is allowed back into a ControlSpec."""
+    if not isinstance(raw, list):
+        raise ValueError("缓存分块不是句子数组")
+    start, end = chunk_range
+    if len(raw) != end - start:
+        raise ValueError("缓存分块句子数量不符")
+    decoded = [TextRecitationSentence.model_validate(item) for item in raw]
+    for offset, sentence in enumerate(decoded, start):
+        expected_start, expected_end = sentences[offset]
+        if sentence.start_index != expected_start or sentence.end_index != expected_end:
+            raise ValueError("缓存分块 token 范围与原文不符")
+        if sentence.text != text[expected_start : expected_end + 1]:
+            raise ValueError("缓存分块正文与原文不符")
+    return decoded
+
+
 async def generate_text_recitation_chunked(
     *,
     request: TextRecitationRequest,
@@ -721,22 +745,62 @@ async def generate_text_recitation_chunked(
     sentences = split_sentences(text)
     ranges = _chunk_ranges(len(sentences))
 
-    work_context = await _generate_work_context(
-        request=request,
-        provider=provider,
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        thinking=thinking,
-        reasoning_effort=reasoning_effort,
-        timeout_seconds=timeout_seconds,
+    chunk_store = get_recitation_chunk_store()
+    cache_variant = json.dumps(
+        {
+            "pipeline_version": PIPELINE_VERSION,
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+            "system_prompt": TEXT_RECITATION_SYSTEM_PROMPT,
+            "pinyin_overrides": request.pinyin_overrides,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
     )
+    request_key = chunk_store.request_key(
+        request.title,
+        request.author or "",
+        text,
+        cache_variant,
+    )
+    created_at = datetime.now(UTC).isoformat()
+
+    chunks: list[list[TextRecitationSentence] | None] = [None] * len(ranges)
+    reused_chunk_count = 0
+    for index, chunk_range in enumerate(ranges):
+        row = chunk_store.get(request_key, index)
+        if row and row.get("status") == STATUS_COMPLETED and row.get("result_json"):
+            try:
+                chunks[index] = _decode_cached_chunk(
+                    json.loads(str(row["result_json"])),
+                    chunk_range,
+                    sentences,
+                    text,
+                )
+                reused_chunk_count += 1
+                continue
+            except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
+                chunk_store.mark_failed(request_key, index, "缓存校验失败，等待重新生成")
+        chunk_store.upsert_queued(request_key, index, created_at)
+
+    pending_indexes = [index for index, chunk in enumerate(chunks) if chunk is None]
+    work_context = None
+    if pending_indexes:
+        work_context = await _generate_work_context(
+            request=request,
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            timeout_seconds=timeout_seconds,
+        )
 
     # Worker pool: fixed chunk_concurrency workers, each grabbing the next
     # pending chunk via a cursor. A slow chunk never blocks siblings.
     import asyncio
 
-    chunks: list[list[TextRecitationSentence] | None] = [None] * len(ranges)
     cursor = 0
     lock = asyncio.Lock()
 
@@ -744,29 +808,43 @@ async def generate_text_recitation_chunked(
         nonlocal cursor
         while True:
             async with lock:
-                if cursor >= len(ranges):
+                if cursor >= len(pending_indexes):
                     return
-                index = cursor
+                index = pending_indexes[cursor]
                 cursor += 1
-            chunks[index] = await _generate_chunk(
-                request=request,
-                provider=provider,
-                api_key=api_key,
-                base_url=base_url,
-                model=model,
-                thinking=thinking,
-                reasoning_effort=reasoning_effort,
-                timeout_seconds=CHUNK_TIMEOUT_SECONDS,
-                work_context=work_context,
-                text=text,
-                sentences=sentences,
-                chunk_range=ranges[index],
+            chunk_store.mark_running(request_key, index)
+            try:
+                assert work_context is not None
+                generated = await _generate_chunk(
+                    request=request,
+                    provider=provider,
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model,
+                    thinking=thinking,
+                    reasoning_effort=reasoning_effort,
+                    timeout_seconds=CHUNK_TIMEOUT_SECONDS,
+                    work_context=work_context,
+                    text=text,
+                    sentences=sentences,
+                    chunk_range=ranges[index],
+                )
+            except Exception as exc:
+                chunk_store.mark_failed(request_key, index, str(exc))
+                raise
+            chunks[index] = generated
+            chunk_store.mark_completed(
+                request_key,
+                index,
+                [sentence.model_dump(mode="json") for sentence in generated],
             )
 
     workers = [
-        asyncio.create_task(worker()) for _ in range(min(chunk_concurrency, len(ranges)))
+        asyncio.create_task(worker())
+        for _ in range(min(chunk_concurrency, len(pending_indexes)))
     ]
-    await asyncio.gather(*workers)
+    if workers:
+        await asyncio.gather(*workers)
 
     merged = _merge_chunk_sentences(
         [chunk for chunk in chunks if chunk is not None],
@@ -786,11 +864,16 @@ async def generate_text_recitation_chunked(
     )
     return {
         "control_spec": control_spec,
-        "validation": {"repair_count": 0, "chunked": True, "chunk_count": len(ranges)},
+        "validation": {
+            "repair_count": 0,
+            "chunked": True,
+            "chunk_count": len(ranges),
+            "reused_chunk_count": reused_chunk_count,
+        },
         "_meta": {
             "endpoint": "chat/completions",
             "output_mode": "json_object",
-            "request_count": len(ranges) + 1,
+            "request_count": len(pending_indexes) + (1 if pending_indexes else 0),
             "mode": "chunked",
         },
     }

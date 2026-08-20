@@ -35,7 +35,7 @@ class TextRecitationSentence(StrictModel):
     # Internal line function (叙述/描写/铺陈/展开/说明/对比/转折/递进/强调/
     # 呼告/反问/设问/总结/高潮/回落/收束). Analysis-only, never rendered.
     function: str | None = None
-    focus_spans: list[FocusInterpretation] = Field(default_factory=list, max_length=2)
+    focus_spans: list[FocusInterpretation] = Field(default_factory=list, max_length=1)
     # ``/`` pause positions expressed as the token index they follow. The LLM
     # only selects teaching-meaningful boundaries; every pause is stored short.
     pause_after: list[int] = Field(default_factory=list, max_length=2)
@@ -79,4 +79,3 @@ class WorkContext(StrictModel):
     emotion_arc: str = Field(min_length=1, max_length=400)
     rhythm_tendency: str = Field(min_length=1, max_length=300)
     major_semantic_sections: list[str] = Field(default_factory=list, max_length=10)
-

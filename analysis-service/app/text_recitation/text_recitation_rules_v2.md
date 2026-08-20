@@ -64,9 +64,9 @@ Step 10 程序编译成 ControlSpec / 9 档曲线
 
 ### 5.3 数量严格限制（稀疏优先）
 
-- 每个 Sentence 的 `focus_spans` 数量 `0～2`；绝大多数 `0～1`，极少数 `2`，超过 `2` 禁止。
+- 每个完整语义句最多只保留 **1 个重音词组**；`focus_spans` 数量只能是 `0～1`，超过 `1` 禁止。视觉换行拆出的连续 Sentence 必须先合并理解，再在整句中选择唯一核心。
 - **focus 不是必填效果**：`focus_spans = []` 是完全正常、且应大量出现的结果。不要因为一句话存在名词、动词、疑问词、意象，就机械地生成 focus。重音过多等于没有重音。
-- 「最多 2 个」不等于「应该有 1～2 个」。默认先考虑：这一句是否根本不需要 focus。
+- 「最多 1 个」不等于「必须有 1 个」。默认先考虑：这一句是否根本不需要 focus。
 - **短句默认 0 个 focus**：对 ≤9 个汉字的短 Sentence（当前正式文稿的绝大多数行），默认倾向 `focus_spans = []`。只有存在明确的语义核心、强烈对比、转折后的核心信息、情绪峰值、关键意象、问句真正的疑问焦点、递进/排比中的核心落点、或上下文中必须突出才能表达意图的词组时，才生成 1 个 focus。
 
 ### 5.4 优先标「词组」，不是孤立单字
@@ -90,12 +90,12 @@ Step 10 程序编译成 ControlSpec / 9 档曲线
 
 当前正式文稿采用「一个非空正文行 = 一个 Sentence」，每行通常 ≤9 个汉字，一个完整语义常被视觉拆成连续 2～4 行。focus 判断必须跨行进行：
 
-- **先看整组，再看单行**：连续 2～4 个 Sentence 若属于同一个完整语义单元（一个完整句子被换行拆开、排比、递进、连续铺陈等），先判断这一组里「真正最值得强调的是哪 1～2 个信息点」，只在这些落点行或核心词上生成 focus；同一组内其余行允许 `focus_spans = []`，不要每一行都单独强调。
+- **先看整组，再看单行**：连续 2～4 个 Sentence 若属于同一个完整语义单元（一个完整句子被换行拆开、排比、递进、连续铺陈等），先判断整句是否需要重音；需要时只选择 **1 个最值得强调的信息词组**，同组其余行必须为 `focus_spans = []`。
 - **判断时参考上下文**：必须结合该句前后相邻句子的原文（上一句 / 下一句）、当前情感阶段与行功能，判断本句是否为真正的信息峰值。不要对每个短行独立机械找关键词。
 - **整体稀疏目标（生成倾向，不是死板数学规则）**：
   - 约 50%～70% 的 Sentence：`focus_spans = []`
   - 约 25%～45% 的 Sentence：1 个 focus phrase
-  - 极少数真正的情绪 / 语义高潮句：2 个 focus phrase
+  - 真正的情绪 / 语义高潮句：仍然最多 1 个 focus phrase
 - **禁止**：连续 4 个普通 Sentence 每一句都有 focus；除非上下文本身确实是强烈排比 / 高潮，且有明确语义依据。
 
 ## 6. 停顿规则
@@ -302,10 +302,9 @@ v      偷气
 
 字段说明（snake_case，字段名不可改写）：
 
-- `focus_spans`：重音数组，`maxItems = 2`。每个元素为 `{"focus_span": {"start": int, "end": int}, "focus_style": "supported", "confidence": float}`。`focus_span.start/end` 是字符索引区间（含端点），必须在句子 `start_index..end_index` 内。
+- `focus_spans`：重音数组，`maxItems = 1`，允许为空。每个元素为 `{"focus_span": {"start": int, "end": int}, "focus_style": "supported", "confidence": float}`。`focus_span.start/end` 是字符索引区间（含端点），必须在句子 `start_index..end_index` 内。
 - `pause_after`：短停 `/` 的 token 索引数组，`maxItems = 2`。每个元素是整数（该停顿紧跟的字索引）。
 - `prosody`：语势数组，`maxItems = 2`。每个元素为 `{"type": "peak|valley|rising|falling", "active_span": {"start": int, "end": int}, "core_zone": {"start": int, "end": int}, "strength": 1|2|3, "confidence": float}`。`core_zone` 必须在 `active_span` 内。
 - `ending_intonation`：句尾语调，只允许 `"rising"`、`"falling"`、或 `null`（无明确方向时）。
 - `rhythm`：节奏对象 `{"type": "light|solemn|relaxed|tense|soaring|low"}`。
 - `confidence`：`0~1` 浮点（每个 sentence 和每个 focus/prosody 都有）。
-

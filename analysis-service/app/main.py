@@ -66,20 +66,31 @@ from app.image_tasks import (
     STATUS_UNCERTAIN,
     get_image_task_store,
 )
+from app.text_recitation_task_worker import TextRecitationTaskExecutor
+from app.text_recitation_tasks import get_text_recitation_task_store
 
 _image_task_executor: ImageTaskExecutor | None = None
+_text_recitation_task_executor: TextRecitationTaskExecutor | None = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global _image_task_executor
+    global _image_task_executor, _text_recitation_task_executor
     store = get_image_task_store()
     _image_task_executor = ImageTaskExecutor(store)
     _image_task_executor.recover_stale_running()
     _image_task_executor.start()
+    text_store = get_text_recitation_task_store()
+    _text_recitation_task_executor = TextRecitationTaskExecutor(text_store)
+    recovered = _text_recitation_task_executor.recover_stale_running()
+    if recovered:
+        logger.warning("text recitation tasks requeued on startup: %s", recovered)
+    _text_recitation_task_executor.start()
     try:
         yield
     finally:
+        if _text_recitation_task_executor is not None:
+            await _text_recitation_task_executor.stop()
         if _image_task_executor is not None:
             await _image_task_executor.stop()
 
@@ -567,6 +578,42 @@ async def create_text_recitation(
             "reasoning_effort": settings.llm_reasoning_effort,
             **generation_meta,
         },
+    }
+
+
+@app.post("/v1/text-recitation-tasks", status_code=status.HTTP_202_ACCEPTED)
+async def create_text_recitation_task(
+    request: TextRecitationRequest,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    """Persist a manuscript job and return immediately; generation runs in lifespan."""
+    task = get_text_recitation_task_store().insert_queued(
+        request.model_dump(mode="json")
+    )
+    return _text_recitation_task_response(task)
+
+
+@app.get("/v1/text-recitation-tasks/{task_id}")
+async def get_text_recitation_task(
+    task_id: str,
+    settings: Settings = Depends(_authorize),
+) -> dict[str, Any]:
+    task = get_text_recitation_task_store().get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Text recitation task not found")
+    return _text_recitation_task_response(task)
+
+
+def _text_recitation_task_response(task: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "text_recitation_task_id": task["id"],
+        "status": task["status"],
+        "attempt_count": task.get("attempt_count", 0),
+        "result": task.get("result"),
+        "error": task.get("error"),
+        "created_at": task.get("created_at"),
+        "started_at": task.get("started_at"),
+        "finished_at": task.get("finished_at"),
     }
 
 

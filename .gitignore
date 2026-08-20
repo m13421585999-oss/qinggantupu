@@ -18,6 +18,7 @@
 /.vinext/
 .venv/
 analysis-service/.venv/
+analysis-service/data/
 __pycache__/
 *.py[cod]
 *.egg-info/

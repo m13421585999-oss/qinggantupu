@@ -44,7 +44,7 @@ test("interrupted visual jobs reclaim their lease and skip persisted results", (
   assert.match(runner, /status = 'planning'[\s\S]*?status = \?[\s\S]*?updated_at = \?/);
   assert.match(
     runner,
-    /const existing = await visualResultSince[\s\S]*?if \(existing\)[\s\S]*?return;[\s\S]*?generateOneVisualWithRetry/,
+    /const existing = await visualResultSince[\s\S]*?if \(existing\)[\s\S]*?return;[\s\S]*?for \(let attempt = 1/,
   );
   assert.match(
     worker,

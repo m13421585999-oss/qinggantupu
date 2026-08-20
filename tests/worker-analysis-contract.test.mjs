@@ -66,7 +66,10 @@ test("worker exposes the production standard-audio analysis contract", async () 
 
 test("text-recitation job normalizes the service control_spec via importControlSpec", async () => {
   const worker = await readFile(workerUrl, "utf8");
-  assert.match(worker, /const rawControlSpec = payload\.control_spec/);
+  assert.match(worker, /\/v1\/text-recitation-tasks/);
+  assert.match(worker, /text_recitation_task_id/);
+  assert.match(worker, /refreshTextRecitationJob/);
+  assert.match(worker, /const rawControlSpec = result\.control_spec/);
   assert.match(worker, /importControlSpec\(\s*rawControlSpec/);
   assert.match(worker, /String\(work\.source_text\),\s*workId,/);
   assert.match(worker, /const updated = \{ \.\.\.normalizedSpec, id: specId, workId, version \}/);

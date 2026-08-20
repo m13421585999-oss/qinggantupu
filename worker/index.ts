@@ -681,7 +681,7 @@ async function listWorks(request: Request, env: Env) {
   const query = String(url.searchParams.get("q") ?? "").trim().slice(0, 80);
   const requestedLimit = Number(url.searchParams.get("limit") ?? 30);
   const limit = Number.isFinite(requestedLimit)
-    ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
+    ? Math.min(200, Math.max(1, Math.trunc(requestedLimit)))
     : 30;
   const select = `SELECT
       w.id, w.slug, w.title, w.author, w.status, w.audio_sync_status,
@@ -1577,10 +1577,14 @@ async function createAnalysisJobFromRequest(request: Request, env: Env, origin: 
 
 async function getAnalysisJob(env: Env, jobId: string) {
   let job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
-  if (!job || !isAnalysisJobType(job.type)) {
+  if (!job || (!isAnalysisJobType(job.type) && job.type !== TEXT_RECITATION_JOB_TYPE)) {
     return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务。");
   }
-  if (await expireStaleAnalysisJob(env, job)) {
+  if (job.type === TEXT_RECITATION_JOB_TYPE && ["queued", "processing"].includes(String(job.status))) {
+    await refreshTextRecitationJob(env, job);
+    job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
+    if (!job) return apiError(404, "JOB_NOT_FOUND", "找不到文稿分析任务。");
+  } else if (isAnalysisJobType(job.type) && await expireStaleAnalysisJob(env, job)) {
     job = await first<Row>(env.DB.prepare("SELECT * FROM processing_jobs WHERE id = ?").bind(jobId));
     if (!job) return apiError(404, "JOB_NOT_FOUND", "找不到声音分析任务。");
   }
@@ -1598,6 +1602,129 @@ async function getAnalysisJob(env: Env, jobId: string) {
   if (output?.control_spec) payload.control_spec = output.control_spec;
   if (job.status === "succeeded") payload.work = await getWorkPayload(env, String(job.work_id));
   return json(payload);
+}
+
+async function failTextRecitationJob(env: Env, jobId: string, workId: string, message: string) {
+  const failedAt = now();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE processing_jobs
+          SET status = 'failed', progress = 100, error_code = 'TEXT_RECITATION_FAILED',
+              error_message = ?, updated_at = ?
+        WHERE id = ? AND status IN ('queued', 'processing')`,
+    ).bind(message.slice(0, 1_200), failedAt, jobId),
+    env.DB.prepare("UPDATE works SET status = 'draft', updated_at = ? WHERE id = ?").bind(failedAt, workId),
+  ]);
+}
+
+async function finalizeTextRecitationJob(
+  env: Env,
+  job: Row,
+  result: Record<string, unknown>,
+) {
+  if (String(job.status) === "succeeded") return;
+  const workId = String(job.work_id);
+  const work = await first<Row>(env.DB.prepare("SELECT * FROM works WHERE id = ?").bind(workId));
+  if (!work) throw new Error("找不到文稿分析任务对应的作品。");
+  const rawControlSpec = result.control_spec;
+  if (!rawControlSpec) throw new Error("文稿分析服务未返回 control_spec。");
+
+  let normalizedSpec: Record<string, unknown>;
+  try {
+    normalizedSpec = importControlSpec(
+      rawControlSpec,
+      String(work.source_text),
+      workId,
+    ) as unknown as Record<string, unknown>;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`文稿分析返回的 control_spec 无法导入：${message}`);
+  }
+
+  const latest = await first<Row>(env.DB.prepare(
+    "SELECT COALESCE(MAX(version), 0) AS version FROM control_spec_versions WHERE work_id = ?",
+  ).bind(workId));
+  const version = Number(latest?.version ?? 0) + 1;
+  const specId = id("spec");
+  const updated = { ...normalizedSpec, id: specId, workId, version };
+  const savedAt = nextUpdatedAt(String(work.updated_at));
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO control_spec_versions
+         (id, work_id, version, schema_version, source, spec_json, validation_state, created_by, created_at)
+       VALUES (?, ?, ?, ?, 'ai', ?, 'valid', 'ai', ?)`,
+    ).bind(specId, workId, version, String(normalizedSpec.schemaVersion ?? "2.0"), JSON.stringify(updated), savedAt),
+    env.DB.prepare(
+      `UPDATE works
+          SET current_spec_version_id = ?, status = 'review', audio_sync_status = 'pending',
+              published_revision_id = NULL, updated_at = ?
+        WHERE id = ?`,
+    ).bind(specId, savedAt, workId),
+    env.DB.prepare(
+      `UPDATE processing_jobs
+          SET status = 'succeeded', progress = 100, output_json = ?, updated_at = ?
+        WHERE id = ? AND status IN ('queued', 'processing')`,
+    ).bind(JSON.stringify({ control_spec: updated }), savedAt, job.id),
+  ]);
+}
+
+async function refreshTextRecitationJob(env: Env, job: Row) {
+  const serviceUrl = env.ANALYSIS_SERVICE_URL?.replace(/\/$/, "");
+  if (!serviceUrl || !env.ANALYSIS_SERVICE_TOKEN) {
+    await failTextRecitationJob(env, String(job.id), String(job.work_id), "文稿分析服务尚未配置。");
+    return;
+  }
+  const input = parseJson<Record<string, unknown>>(job.input_json as string | null) ?? {};
+  const serviceTaskId = String(input.serviceTaskId ?? "");
+  if (!serviceTaskId) {
+    await failTextRecitationJob(env, String(job.id), String(job.work_id), "文稿分析后台任务编号缺失。");
+    return;
+  }
+  try {
+    const response = await fetch(
+      `${serviceUrl}/v1/text-recitation-tasks/${encodeURIComponent(serviceTaskId)}`,
+      {
+        headers: { authorization: `Bearer ${env.ANALYSIS_SERVICE_TOKEN}` },
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    const rawBody = await response.text();
+    let payload: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(rawBody);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+    if (!response.ok) throw new Error(`后台文稿任务查询失败（HTTP ${response.status}）：${rawBody.slice(0, 300)}`);
+    const status = String(payload.status ?? "");
+    if (status === "completed") {
+      const result = payload.result;
+      if (!result || typeof result !== "object" || Array.isArray(result)) {
+        throw new Error("文稿分析后台任务完成，但结果为空。");
+      }
+      await finalizeTextRecitationJob(env, job, result as Record<string, unknown>);
+      return;
+    }
+    if (status === "failed") {
+      await failTextRecitationJob(
+        env,
+        String(job.id),
+        String(job.work_id),
+        String(payload.error ?? "文稿分析后台任务失败。"),
+      );
+      return;
+    }
+    const progress = status === "running" ? 55 : 15;
+    await env.DB.prepare(
+      "UPDATE processing_jobs SET status = 'processing', progress = ?, updated_at = ? WHERE id = ?",
+    ).bind(progress, now(), job.id).run();
+  } catch (error) {
+    console.warn("text recitation task poll deferred", {
+      jobId: job.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function createTextRecitationJob(env: Env, workId: string) {
@@ -1628,7 +1755,7 @@ async function createTextRecitationJob(env: Env, workId: string) {
     env.DB.prepare(
       `INSERT INTO processing_jobs
          (id, work_id, type, status, progress, idempotency_key, input_json, created_at, updated_at)
-       VALUES (?, ?, ?, 'processing', 10, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, 'queued', 5, ?, ?, ?, ?)`,
     ).bind(
       jobId,
       workId,
@@ -1638,11 +1765,12 @@ async function createTextRecitationJob(env: Env, workId: string) {
       createdAt,
       createdAt,
     ),
-    env.DB.prepare("UPDATE works SET status = 'analyzing', updated_at = ? WHERE id = ?").bind(createdAt, workId),
+    env.DB.prepare(
+      "UPDATE works SET status = 'analyzing', updated_at = ? WHERE id = ?",
+    ).bind(createdAt, workId),
   ]);
-
   try {
-    const response = await fetch(`${serviceUrl}/v1/text-recitation`, {
+    const response = await fetch(`${serviceUrl}/v1/text-recitation-tasks`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${env.ANALYSIS_SERVICE_TOKEN}`,
@@ -1654,71 +1782,24 @@ async function createTextRecitationJob(env: Env, workId: string) {
         text: String(work.source_text),
         pinyin_overrides: pinyinOverrides,
       }),
-      signal: AbortSignal.timeout(480_000),
+      signal: AbortSignal.timeout(20_000),
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       throw new Error(`文稿分析服务返回 HTTP ${response.status}：${detail.slice(0, 400)}`);
     }
     const payload = await response.json() as Record<string, unknown>;
-    const rawControlSpec = payload.control_spec;
-    if (!rawControlSpec) throw new Error("文稿分析服务未返回 control_spec。");
-
-    // Normalize the service's wire format (nested rhythm {type}, snake_case
-    // annotations, no per-sentence id/tokens/documentProfile) into the
-    // canonical frontend control spec shape — the same importer the audio
-    // analysis callback uses — so every saved RecitationSentence.rhythm is a
-    // legal string and the editors never read a raw nested object.
-    let normalizedSpec: Record<string, unknown>;
-    try {
-      normalizedSpec = importControlSpec(
-        rawControlSpec,
-        String(work.source_text),
-        workId,
-      ) as unknown as Record<string, unknown>;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`文稿分析返回的 control_spec 无法导入：${message}`);
-    }
-
-    const latest = await first<Row>(env.DB.prepare(
-      "SELECT COALESCE(MAX(version), 0) AS version FROM control_spec_versions WHERE work_id = ?",
-    ).bind(workId));
-    const version = Number(latest?.version ?? 0) + 1;
-    const specId = id("spec");
-    const updated = { ...normalizedSpec, id: specId, workId, version };
-    const savedAt = nextUpdatedAt(String(work.updated_at));
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO control_spec_versions
-           (id, work_id, version, schema_version, source, spec_json, validation_state, created_by, created_at)
-         VALUES (?, ?, ?, ?, 'ai', ?, 'valid', 'ai', ?)`,
-      ).bind(specId, workId, version, String(normalizedSpec.schemaVersion ?? "2.0"), JSON.stringify(updated), savedAt),
-      env.DB.prepare(
-        `UPDATE works
-            SET current_spec_version_id = ?, status = 'review', audio_sync_status = 'pending',
-                published_revision_id = NULL, updated_at = ?
-          WHERE id = ?`,
-      ).bind(specId, savedAt, workId),
-      env.DB.prepare(
-        `UPDATE processing_jobs
-            SET status = 'succeeded', progress = 100, output_json = ?, updated_at = ?
-          WHERE id = ?`,
-      ).bind(JSON.stringify({ control_spec: updated }), savedAt, jobId),
-    ]);
-    return json({ control_spec: updated, work: await getWorkPayload(env, workId) });
+    const serviceTaskId = String(payload.text_recitation_task_id ?? "");
+    if (!serviceTaskId) throw new Error("文稿分析服务没有返回后台任务编号。");
+    await env.DB.prepare(
+      `UPDATE processing_jobs
+          SET status = 'processing', progress = 10, input_json = ?, updated_at = ?
+        WHERE id = ?`,
+    ).bind(JSON.stringify({ workId, serviceTaskId }), now(), jobId).run();
+    return json({ analysis_job_id: jobId, work_id: workId, status: "processing", progress: 10 }, 202);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const failedAt = now();
-    await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE processing_jobs
-            SET status = 'failed', progress = 100, error_code = 'TEXT_RECITATION_FAILED',
-                error_message = ?, updated_at = ?
-          WHERE id = ?`,
-      ).bind(message.slice(0, 1_200), failedAt, jobId),
-      env.DB.prepare("UPDATE works SET status = 'draft', updated_at = ? WHERE id = ?").bind(failedAt, workId),
-    ]);
+    await failTextRecitationJob(env, jobId, workId, message);
     return apiError(502, "TEXT_RECITATION_FAILED", message);
   }
 }

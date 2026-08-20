@@ -100,13 +100,13 @@ test("A4 export contract uses physical paper dimensions, structured pages and 2.
   assert.match(component, /pixelRatio:\s*settings\.renderDpr/);
   assert.match(graph, /splitGraphUnitsByMeasuredWidth/);
   assert.match(graph, /extendProsodyCurveToTokenEdges/);
-  assert.match(component, /a4-first-page-header \$\{showHero \? "has-generated-hero"/);
+  assert.match(component, /className="a4-first-page-header"/);
+  assert.doesNotMatch(component, /showHero/);
   assert.match(component, /backgroundColor:\s*"#fbf7ef"/);
   assert.match(graph, /className="print-spoken-token"[\s\S]*?className="print-token-pinyin"[\s\S]*?className=\{`print-token-char/);
   assert.match(graph, /PRINT_CURVE_HEIGHT = 40/);
   assert.match(css, /\.a4-page\s*\{[\s\S]*?#fbf7ef/);
-  assert.match(css, /\.a4-first-page-header\s*\{[\s\S]*?height:\s*34mm/);
-  assert.match(css, /\.a4-hero-visual img\s*\{[\s\S]*?object-position:\s*50% 45%/);
+  assert.match(css, /\.a4-first-page-header\s*\{[\s\S]*?min-height:\s*18mm/);
   assert.match(css, /\.print-spoken-token\s*\{[\s\S]*?grid-template-rows:\s*5\.7mm 9\.2mm/);
   assert.match(css, /\.print-token-pinyin\s*\{[\s\S]*?font-size:\s*10pt/);
   assert.match(css, /\.print-token-manuscript\s*\{[\s\S]*?font-size:\s*20pt/);

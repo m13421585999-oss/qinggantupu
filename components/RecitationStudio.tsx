@@ -444,7 +444,6 @@ function aiTtsStatusText(status?: AiTtsProduction["status"]) {
 }
 
 // 保留：旧音频分析路径的错误文案，供旧工程兼容复用。
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function analysisErrorMessage(error: AnalysisJobPayload["error"]) {
   if (typeof error === "string" && error.trim()) return error;
   if (error && typeof error === "object" && typeof error.message === "string") {
@@ -2743,7 +2742,7 @@ export function RecitationStudio() {
     let cancelled = false;
     const timeout = window.setTimeout(() => {
       setLibraryLoading(true);
-      const params = new URLSearchParams({ limit: "60" });
+      const params = new URLSearchParams({ limit: "200" });
       if (libraryQuery.trim()) params.set("q", libraryQuery.trim());
       void fetch(`/api/works?${params}`)
         .then((response) => apiJson<{ items: WorkSummary[] }>(response))
@@ -3386,14 +3385,39 @@ export function RecitationStudio() {
       setAnalysisJobStatus("processing");
       setAnalysisStatus("GPT 正在分析文稿并生成图谱");
 
-      const created = await apiJson<{ control_spec?: unknown; work: RecitationWork }>(
+      const created = await apiJson<AnalysisJobPayload>(
         await fetch(`/api/works/${encodeURIComponent(saved.id)}/text-recitation-jobs`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{}",
         }),
       );
-      const completedWork = created.work;
+      if (!created.analysis_job_id) throw new Error("文稿分析任务创建失败：服务端没有返回任务编号。");
+      const deadline = Date.now() + 20 * 60 * 1000;
+      let completedWork: RecitationWork | undefined;
+      let transientFailures = 0;
+      while (Date.now() < deadline) {
+        const response = await fetch(`/api/analysis-jobs/${encodeURIComponent(created.analysis_job_id)}`);
+        if ([502, 503, 524].includes(response.status)) {
+          transientFailures += 1;
+          if (transientFailures > 8) {
+            throw new Error(`文稿分析状态连续查询失败（HTTP ${response.status}），后台任务仍会保留。`);
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 2200));
+          continue;
+        }
+        transientFailures = 0;
+        const job = await apiJson<AnalysisJobPayload>(response);
+        const progress = typeof job.progress === "number" ? ` ${Math.round(job.progress)}%` : "";
+        setAnalysisStatus(`GPT 正在分析文稿并生成图谱${progress}`);
+        if (job.status === "failed") throw new Error(analysisErrorMessage(job.error));
+        if (job.status === "succeeded") {
+          completedWork = job.work;
+          break;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 1600));
+      }
+      if (!completedWork) throw new Error("文稿分析等待超过 20 分钟，后台任务仍会保留。");
       if (!completedWork?.controlSpec) {
         throw new Error("文稿分析完成，但没有返回控制谱。");
       }

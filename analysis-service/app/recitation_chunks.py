@@ -3,8 +3,9 @@
 Long manuscripts (Sentence > 12) are analyzed in chunks of 8-10 Sentences so a
 single LLM request stays small and never times out. Each chunk is persisted
 here with its own status so a resume reuses completed chunks and only retries
-failed ones. The key is a deterministic hash of the source text, so the same
-manuscript re-submitted (batch resume / runner restart) maps to the same rows.
+failed ones. The key is a deterministic hash of the source plus generation
+variant, so a resume maps to the same rows while model/rule changes do not
+reuse stale output.
 
 This reuses the same SQLite database file as image_tasks (single-machine
 deployment; no Redis / Kafka / Celery).
@@ -59,8 +60,13 @@ class RecitationChunkStore:
             )
 
     @staticmethod
-    def request_key(title: str, author: str, text: str) -> str:
-        material = f"{title}\u0000{author}\u0000{text}"
+    def request_key(title: str, author: str, text: str, variant: str = "") -> str:
+        """Return a cache key that is safe across model/rule revisions.
+
+        ``variant`` is intentionally supplied by the generation layer so a
+        prompt, model or creator-pinyin change never reuses stale chunks.
+        """
+        material = f"{title}\u0000{author}\u0000{text}\u0000{variant}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     # -- reads --------------------------------------------------------------

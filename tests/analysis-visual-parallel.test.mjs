@@ -8,15 +8,15 @@ const studio = await readFile(
 );
 const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
 
-test("manuscript analysis generates a text-recitation spec without audio or visual prerequisites", () => {
+test("manuscript analysis polls its task, then starts scene visuals without audio prerequisites", () => {
   const handleAnalyze = studio.slice(
     studio.indexOf("const handleAnalyze = async () =>"),
     studio.indexOf("const persistControlSpec = async"),
   );
   assert.match(handleAnalyze, /persistWorkRecord/);
   assert.match(handleAnalyze, /text-recitation-jobs/);
-  assert.doesNotMatch(handleAnalyze, /generateWorkVisualAssets/);
-  assert.doesNotMatch(handleAnalyze, /analysis-jobs/);
+  assert.match(handleAnalyze, /analysis-jobs/);
+  assert.match(handleAnalyze, /generateWorkVisualAssets/);
   assert.doesNotMatch(handleAnalyze, /handleAiAnalyze/);
   assert.doesNotMatch(handleAnalyze, /referenceAudio/);
 });
