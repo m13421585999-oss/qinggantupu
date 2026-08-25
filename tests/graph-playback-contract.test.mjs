@@ -113,22 +113,16 @@ test("comma enumeration comma and period each fully replace adjacent pause marks
   assert.equal(units.at(-1)?.endingTone, undefined, "legacy level data stays compatible but is not displayed");
 });
 
-test("viewer chrome explains every graph symbol and the shared-audio promise", async () => {
+test("current production chrome keeps graph editing and removes viewer playback entry points", async () => {
   const studio = await readFile(new URL("../components/RecitationStudio.tsx", import.meta.url), "utf8");
-  assert.match(studio, /红字：表达焦点/);
-  assert.match(studio, /\/<\/b> 短停/);
-  assert.match(studio, /长停/);
-  assert.match(studio, /拖音/);
-  assert.match(studio, /↗ ↘<\/b> 句尾语调/);
-  assert.doesNotMatch(studio, /更多设置|SentenceEditDrawer/);
-  assert.match(studio, /曲线：宏观语势/);
-  assert.match(studio, /声音与图谱同源/);
-  assert.match(studio, /播放整篇/);
-  assert.match(studio, /听本句/);
-  assert.match(studio, /标准 AI 朗诵/);
-  assert.match(studio, /const openViewerWorkLibrary = \(\) => \{/);
-  assert.match(studio, /<button type="button" onClick=\{openViewerWorkLibrary\}>返回作品库<\/button>/);
-  assert.doesNotMatch(studio, /<Link href="\/">返回作品库<\/Link>/);
+  assert.match(studio, /aria-label="图谱版本切换"/);
+  assert.match(studio, />完整版<\/button>/);
+  assert.match(studio, /紧凑版/);
+  assert.match(studio, /一份控制谱，两种版式/);
+  assert.doesNotMatch(studio, /<ViewerView\s/);
+  assert.doesNotMatch(studio, /<Player\s/);
+  assert.doesNotMatch(studio, /const openViewerWorkLibrary = \(\) => \{/);
+  assert.doesNotMatch(studio, /prepareViewerImagesForExport/);
 });
 
 test("mobile uses a portrait rotation gate and preserves the desktop structure in landscape", async () => {

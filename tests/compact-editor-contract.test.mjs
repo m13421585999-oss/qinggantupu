@@ -7,11 +7,13 @@ const root = new URL("../", import.meta.url);
 test("compact editor is a sibling edition and keeps the full studio branch intact", async () => {
   const studio = await readFile(new URL("components/RecitationStudio.tsx", root), "utf8");
   assert.match(studio, /type StudioEdition = "full" \| "compact"/);
-  assert.match(studio, /studioEdition === "full" \? \([\s\S]*?<StudioView/);
+  assert.match(studio, /studioEdition === "full" \? \([\s\S]*?<FullA4Editor/);
   assert.match(studio, /<CompactRecitationEditor/);
   assert.match(studio, /buildCompactControlSpec\(saved\.id, saved\.sourceText\)/);
   assert.match(studio, /url\.searchParams\.set\("edition", "compact"\)/);
-  assert.match(studio, /studioEdition === "full" && step >= 2/);
+  assert.match(studio, /studioEdition === "full" && step === 2/);
+  assert.doesNotMatch(studio, /<ViewerView\s/);
+  assert.doesNotMatch(studio, /<Player\s/);
 });
 
 test("compact editor exposes formal V and v markers plus one editable node per spoken token", async () => {

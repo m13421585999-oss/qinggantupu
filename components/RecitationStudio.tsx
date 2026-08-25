@@ -93,9 +93,8 @@ const workflowSteps: Array<{
   title: string;
   subtitle: string;
 }> = [
-  { id: 1, title: "准备作品", subtitle: "正文 · 参考朗诵来源" },
+  { id: 1, title: "准备作品", subtitle: "正文 · 选择版式" },
   { id: 2, title: "编辑图谱", subtitle: "人工复核 · 单句修正" },
-  { id: 3, title: "预览发布", subtitle: "观看端 · 同步高亮" },
 ];
 
 const editableEndingOptions: EndingTone[] = ["rising", "falling"];
@@ -172,27 +171,6 @@ async function seekAudioBeforePlayback(audio: HTMLAudioElement, targetSeconds: n
     timeout = window.setTimeout(finish, 1600);
     audio.currentTime = target;
   });
-}
-
-async function prepareViewerImagesForExport(target: HTMLElement) {
-  const images = Array.from(target.querySelectorAll("img"));
-  await Promise.all(images.map(async (image) => {
-    image.loading = "eager";
-    if (!image.complete) {
-      await new Promise<void>((resolve) => {
-        const finish = () => resolve();
-        image.addEventListener("load", finish, { once: true });
-        image.addEventListener("error", finish, { once: true });
-        window.setTimeout(finish, 5_000);
-      });
-    }
-    if (image.complete && image.naturalWidth > 0) {
-      await image.decode?.().catch(() => undefined);
-    }
-  }));
-  await new Promise<void>((resolve) => window.requestAnimationFrame(() => (
-    window.requestAnimationFrame(() => resolve())
-  )));
 }
 
 function focusSet(sentence: RecitationSentence) {
@@ -395,11 +373,6 @@ async function apiJson<T>(response: Response): Promise<T> {
     throw new Error(String(error.message ?? `请求失败（HTTP ${response.status}）`));
   }
   return payload as T;
-}
-
-function exportFilename(title: string) {
-  const base = title.trim().replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").slice(0, 80);
-  return `${base || "朗诵情感图谱"}-朗诵图谱.png`;
 }
 
 interface AnalysisJobPayload {
@@ -1385,6 +1358,9 @@ function AiReferenceAudioPanel({
   );
 }
 
+// Historical playback renderer remains isolated for stored audio compatibility;
+// the current graph-production surface does not expose it.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Player({
   title,
   track,
@@ -1525,8 +1501,8 @@ function WorkflowRail({
       <div className="rail-note">
         <span aria-hidden="true">◎</span>
         <p>
-          <strong>声音与图谱同源</strong>
-          新作品先转换为标准 AI 声音；时间戳、声学事实、控制谱和最终播放都使用这同一条音频。
+          <strong>一份控制谱，两种版式</strong>
+          标识、拼音与语势在完整版和紧凑版之间共享；两版分行彼此独立。
         </p>
       </div>
     </nav>
@@ -1559,7 +1535,7 @@ function MaterialStage({
       <div className="stage-heading">
         <div>
           <p className="eyebrow">01 · 准备作品</p>
-          <h1>把一段好朗诵，变成一张能听的声音地图</h1>
+          <h1>把一篇好文稿，变成一张清晰的情感图谱</h1>
           <p className="stage-lead">
             填写准确正文，选择展示版本，一键生成专业朗诵图谱。完整版与紧凑版共用同一份分析。
           </p>
@@ -1590,7 +1566,7 @@ function MaterialStage({
         >
           <span aria-hidden="true">谱</span>
           <strong>紧凑版</strong>
-          <small>无图片的 A4 朗诵教学谱</small>
+          <small>逐行小图与高密度 A4 教学谱</small>
         </button>
       </div>
 
@@ -2119,9 +2095,9 @@ function WorkLibrary({
       <aside className="work-library" role="dialog" aria-modal="true" aria-labelledby="work-library-title">
         <div className="work-library-heading">
           <div>
-            <p className="eyebrow">创作端 · 云端作品</p>
+            <p className="eyebrow">图谱作品</p>
             <h2 id="work-library-title">作品库</h2>
-            <p>打开任何已保存作品，正文、音频、图谱与分析结果会一起恢复。</p>
+            <p>打开任何已保存作品，正文、控制谱、版式与图片会一起恢复。</p>
           </div>
           <button type="button" className="drawer-close" onClick={onClose} aria-label="关闭作品库">×</button>
         </div>
@@ -2172,14 +2148,6 @@ function WorkLibrary({
                   >
                     {current ? "正在编辑" : "打开编辑"}
                   </button>
-                  {item.hasPublishedVersion ? (
-                    <a
-                      className="text-button"
-                      href={`/?work=${encodeURIComponent(item.id)}&view=1`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >查看发布版 ↗</a>
-                  ) : null}
                   <button
                     type="button"
                     className="text-button work-delete-button"
@@ -2285,9 +2253,9 @@ function SourceChangeDialog({
   const copy = kind === "source"
     ? {
       eyebrow: "保存正文变更",
-      title: "这会让现有声音与图谱失效",
-      detail: "正文已经改变。保存后，旧参考音频、标准 AI 音频、分析结果和发布状态会归档，需要上传匹配的新朗诵并重新解析。",
-      confirm: "确认保存并重置图音",
+      title: "这会让现有图谱失效",
+      detail: "正文已经改变。保存后，旧分析结果和控制谱会归档，需要基于新正文重新生成或建立图谱。历史音频数据会保留在后台兼容层，不在当前主流程展示。",
+      confirm: "确认保存并重置图谱",
     }
     : kind === "reference"
       ? {
@@ -2459,6 +2427,9 @@ function StudioView({
   );
 }
 
+// Historical published-view renderer remains isolated for stored publication
+// compatibility; it is no longer reachable from the production editor.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ViewerView({
   work,
   currentMs,
@@ -2598,7 +2569,7 @@ function ViewerView({
 }
 
 export function RecitationStudio() {
-  const [mode, setMode] = useState<ProductMode>("studio");
+  const [, setMode] = useState<ProductMode>("studio");
   const [studioEdition, setStudioEdition] = useState<StudioEdition>("full");
   const [compactPreparing, setCompactPreparing] = useState(false);
   const [work, setWork] = useState<RecitationWork>(() => createEmptyWork());
@@ -2627,15 +2598,13 @@ export function RecitationStudio() {
   const [step, setStep] = useState<WorkflowStep>(1);
   const [audioSource, setAudioSource] = useState<AudioSource>("reference");
   const [analysisJobStatus, setAnalysisJobStatus] = useState<AnalysisJobStatus>("idle");
-  const [analysisStatus, setAnalysisStatus] = useState("等待参考朗诵");
+  const [analysisStatus, setAnalysisStatus] = useState("等待生成图谱");
   const [toast, setToast] = useState<string | null>(null);
-  const [exportingImage, setExportingImage] = useState(false);
   const [currentMs, setCurrentMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [segmentEndMs, setSegmentEndMs] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const viewerExportRef = useRef<HTMLDivElement>(null);
   const standardPlayback = work.standardAiAudio ?? work.aiDemoAudio;
   const activeTrack = audioSource === "reference" ? work.referenceAudio : standardPlayback;
   const analysisInFlight = analysisJobStatus === "queued" || analysisJobStatus === "processing";
@@ -2688,25 +2657,17 @@ export function RecitationStudio() {
           : stored.analysisJobStatus ?? "idle",
     );
     if (published) {
-      setMode("viewer");
-      setAudioSource("standard");
-      return;
+      setMode("studio");
     }
     setMode("studio");
     if (stored.controlSpec) {
       setStep(2);
       setAudioSource((stored.standardAiAudio ?? stored.aiDemoAudio)?.timeline ? "standard" : "reference");
-      setAnalysisStatus("标准 AI 朗诵解析完成，声音与图谱同源");
+      setAnalysisStatus("图谱已载入，可继续编辑");
     } else {
       setStep(1);
       setAudioSource(stored.audioSourceType === "ai_tts" && stored.standardAiAudio ? "standard" : "reference");
-      setAnalysisStatus(
-        stored.audioSourceType === "ai_tts"
-          ? stored.aiTts?.error?.message ?? aiTtsStatusText(stored.aiTts?.status)
-          : stored.standardAiAudio
-          ? "标准 AI 声音已生成，等待完成分析"
-          : stored.referenceAudio ? "真人参考朗诵已保存，可以开始生成与解析" : "等待参考朗诵",
-      );
+      setAnalysisStatus("等待生成图谱");
     }
   }, [resetPlaybackAndEditorState]);
 
@@ -2730,7 +2691,7 @@ export function RecitationStudio() {
     setStudioEdition(params.get("edition") === "compact" ? "compact" : "full");
     const workId = params.get("work");
     if (!workId) return;
-    void loadStoredWork(workId, params.get("view") === "1")
+    void loadStoredWork(workId, false)
       .catch((error) => showToast(error instanceof Error ? error.message : String(error)));
   // The URL-backed work is intentionally loaded only once on mount.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2955,7 +2916,7 @@ export function RecitationStudio() {
     setSaveState(work.id.startsWith("draft-") ? "unsaved" : "dirty");
     setAnalysisJobStatus("idle");
     setControlSpecDirty(false);
-    setAnalysisStatus("等待参考朗诵");
+    setAnalysisStatus("等待生成图谱");
     setWork((current) => ({
       ...current,
       status: "draft",
@@ -3489,8 +3450,7 @@ export function RecitationStudio() {
       // visual bundle back into the React work state so Full Scene Cards show
       // real images without a manual refresh or a second click.
       const sentenceCount = completedWork.controlSpec.sentences.length;
-      const visualTarget = "scene";
-      void generateWorkVisualAssets(saved.id, { type: visualTarget })
+      void generateWorkVisualAssets(saved.id, { type: "all" })
         .then((visuals) => {
           setWork((current) => current.id === saved.id ? { ...current, visuals } : current);
           setAnalysisStatus("朗诵图谱与情景图片已生成");
@@ -3568,18 +3528,6 @@ export function RecitationStudio() {
     }
   };
 
-  const playAll = async () => {
-    const audio = audioRef.current;
-    if (!audio || !activeTrack) return;
-    setSegmentEndMs(null);
-    if (isPlaying) { audio.pause(); return; }
-    if (audio.currentTime * 1000 >= activeTrack.durationMs - 100) {
-      audio.currentTime = 0;
-      setCurrentMs(0);
-    }
-    try { await audio.play(); } catch { showToast("浏览器暂时无法播放，请再点一次播放"); }
-  };
-
   const playSentence = async (sentence: RecitationSentence) => {
     const audio = audioRef.current;
     const timing = sentenceTiming(activeTrack?.timeline, sentence.id);
@@ -3596,122 +3544,6 @@ export function RecitationStudio() {
       setSegmentEndMs(null);
       showToast("浏览器暂时无法播放，请再点一次“听本句”");
     }
-  };
-
-  const seekSentence = (sentence: RecitationSentence) => {
-    const timing = sentenceTiming(activeTrack?.timeline, sentence.id);
-    if (!timing) return;
-    if (audioRef.current) audioRef.current.currentTime = timing.startMs / 1000;
-    setSegmentEndMs(null);
-    setCurrentMs(timing.startMs);
-  };
-
-  const seek = (value: number) => {
-    if (!audioRef.current) return;
-    setSegmentEndMs(null);
-    audioRef.current.currentTime = value / 1000;
-    setCurrentMs(value);
-  };
-
-  const changeRate = (rate: number) => {
-    setPlaybackRate(rate);
-    if (audioRef.current) audioRef.current.playbackRate = rate;
-  };
-
-  const changeAudioSource = (source: AudioSource) => {
-    const nextTrack = source === "reference" ? work.referenceAudio : standardPlayback;
-    if (nextTrack) setAudioSource(source);
-  };
-
-  const exportViewerImage = async () => {
-    const artboard = viewerExportRef.current;
-    const target = artboard?.querySelector<HTMLElement>(".viewer-shell") ?? artboard;
-    if (!target || exportingImage) return;
-    setExportingImage(true);
-    try {
-      await document.fonts?.ready;
-      await prepareViewerImagesForExport(target);
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
-      const { toBlob } = await import("html-to-image");
-      const width = Math.ceil(target.scrollWidth);
-      const styles = window.getComputedStyle(target);
-      const currentBottomPadding = Number.parseFloat(styles.paddingBottom) || 0;
-      const exportBottomPadding = 28;
-      const height = Math.max(
-        1,
-        Math.ceil(target.scrollHeight - currentBottomPadding + exportBottomPadding),
-      );
-      const pixelRatio = Math.max(1, Math.min(2, 15000 / Math.max(width, height)));
-      const blob = await toBlob(target, {
-        width,
-        height,
-        canvasWidth: width,
-        canvasHeight: height,
-        pixelRatio,
-        backgroundColor: "#f4efe8",
-        cacheBust: true,
-        filter: (node) => !(node instanceof Element) || node.getAttribute("data-export-exclude") !== "true",
-        style: {
-          minHeight: "0",
-          paddingBottom: "28px",
-          position: "relative",
-          top: "0",
-          left: "0",
-          margin: "0",
-          transform: "none",
-          transformOrigin: "top left",
-          width: "1600px",
-        },
-      });
-      if (!blob) throw new Error("浏览器未能生成图片文件。");
-      const href = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.download = exportFilename(work.title);
-      link.href = href;
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.click();
-      window.setTimeout(() => {
-        link.remove();
-        URL.revokeObjectURL(href);
-      }, 60_000);
-      showToast("本页图谱 PNG 已导出");
-    } catch (error) {
-      console.error("viewer image export failed", error);
-      showToast("图片导出失败，请刷新页面后重试");
-    } finally {
-      setExportingImage(false);
-    }
-  };
-
-  const shareViewer = async () => {
-    const shareData = {
-      title: `${work.title} · 朗诵情感图谱`,
-      text: `${work.title}${work.author ? ` · ${work.author}` : ""}的可播放朗诵情感图谱`,
-      url: window.location.href,
-    };
-    try {
-      if (navigator.share) {
-        await navigator.share(shareData);
-        return;
-      }
-      await navigator.clipboard.writeText(shareData.url);
-      showToast("观看链接已复制");
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      showToast("暂时无法分享，请复制浏览器地址");
-    }
-  };
-
-  const openViewerWorkLibrary = () => {
-    resetPlaybackAndEditorState();
-    setMode("studio");
-    setStep(work.controlSpec ? 2 : 1);
-    setAudioSource(work.controlSpec && standardPlayback?.timeline ? "standard" : "reference");
-    setLibraryOpen(true);
-    const url = new URL(window.location.href);
-    url.searchParams.delete("view");
-    window.history.replaceState({}, "", url);
   };
 
   const createNewWork = () => {
@@ -3833,84 +3665,41 @@ export function RecitationStudio() {
     }
   };
 
-  const sentences = work.controlSpec?.sentences ?? [];
-  const showPlayer = Boolean(
-    standardPlayback?.timeline
-      && work.controlSpec
-      && (mode === "viewer" || (studioEdition === "full" && step >= 2)),
-  );
-
   return (
-    <main className={`product-app mode-${mode} ${mode === "studio" && studioEdition === "compact" ? "mode-compact" : ""} ${mode === "studio" && studioEdition === "full" && step === 2 ? "mode-inline-editor" : ""}`}>
-      {/* The synchronized graph is the exact on-screen transcript for this audio. */}
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <audio ref={audioRef} src={activeTrack?.url} preload="metadata" />
+    <main className={`product-app mode-studio ${studioEdition === "compact" ? "mode-compact" : ""} ${studioEdition === "full" && step === 2 ? "mode-inline-editor" : ""}`}>
       <header className="app-header">
-        {mode === "viewer" ? (
-          <button type="button" className="brand" onClick={openViewerWorkLibrary} aria-label="返回声图作品库">
-            <span className="brand-mark">声</span>
-            <span className="brand-copy"><strong>声图</strong><small>朗诵情感图谱</small></span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="brand"
-            onClick={() => { setMode("studio"); setAudioSource("reference"); setWorkflowStep(1); }}
-            aria-label="声图首页"
-          >
-            <span className="brand-mark">声</span>
-            <span className="brand-copy"><strong>声图</strong><small>朗诵情感图谱</small></span>
-          </button>
-        )}
+        <button
+          type="button"
+          className="brand"
+          onClick={() => setWorkflowStep(1)}
+          aria-label="声图首页"
+        >
+          <span className="brand-mark">声</span>
+          <span className="brand-copy"><strong>声图</strong><small>朗诵情感图谱</small></span>
+        </button>
 
-        <nav className="mode-switch" aria-label="产品端与创作版本切换">
+        <nav className="mode-switch" aria-label="图谱版本切换">
           <button
             type="button"
-            className={mode === "studio" ? "active" : ""}
-            onClick={() => {
-              setMode("studio");
-              setAudioSource(work.controlSpec && standardPlayback?.timeline ? "standard" : "reference");
-            }}
-          ><span aria-hidden="true">✦</span> 创作端</button>
+            className={`edition-option ${studioEdition === "full" ? "active" : ""}`}
+            onClick={() => void switchStudioEdition("full")}
+          >完整版</button>
           <button
             type="button"
-            className={mode === "viewer" ? "active" : ""}
-            disabled={!standardPlayback?.timeline}
-            onClick={() => { setAudioSource("standard"); setMode("viewer"); }}
-          ><span aria-hidden="true">◉</span> 用户观看端</button>
-          {mode === "studio" ? (
-            <>
-              <span className="edition-switch-divider" aria-hidden="true" />
-              <button
-                type="button"
-                className={`edition-option ${studioEdition === "full" ? "active" : ""}`}
-                onClick={() => void switchStudioEdition("full")}
-              >完整版</button>
-              <button
-                type="button"
-                className={`edition-option ${studioEdition === "compact" ? "active" : ""}`}
-                onClick={() => void switchStudioEdition("compact")}
-                disabled={compactPreparing}
-              >{compactPreparing ? "准备中…" : "紧凑版"}</button>
-            </>
-          ) : null}
+            className={`edition-option ${studioEdition === "compact" ? "active" : ""}`}
+            onClick={() => void switchStudioEdition("compact")}
+            disabled={compactPreparing}
+          >{compactPreparing ? "准备中…" : "紧凑版"}</button>
         </nav>
 
         <div className="header-status">
           <span className={`status-dot status-${work.status}`} />
-          <span>{work.status === "published" ? "已发布" : "正式创作 · 单人版"}</span>
+          <span>{saveState === "saved" ? "工程已保存" : "图谱创作中"}</span>
           <button type="button" className="avatar-button" aria-label="创作者账户">创</button>
         </div>
-
-        {mode === "viewer" ? (
-          <nav className="viewer-header-actions" aria-label="观看页操作">
-            <button type="button" onClick={openViewerWorkLibrary}>返回作品库</button>
-            <button type="button" onClick={() => void shareViewer()}>分享</button>
-          </nav>
-        ) : null}
       </header>
 
-      {mode === "studio" && studioEdition === "full" ? (
+      {studioEdition === "full" ? (
         step === 2 ? (
           <FullA4Editor
             work={work}
@@ -3957,7 +3746,7 @@ export function RecitationStudio() {
           onSaveWork={() => void performSaveCurrentWork()}
         />
         )
-      ) : mode === "studio" ? (
+      ) : (
         <CompactRecitationEditor
           work={work}
           saveState={saveState}
@@ -3969,55 +3758,21 @@ export function RecitationStudio() {
           onOpenLibrary={() => setLibraryOpen(true)}
           onSwitchFull={() => void switchStudioEdition("full")}
         />
-      ) : (
-        <ViewerView
-          work={work}
-          currentMs={currentMs}
-          activeTokenId={activeTokenId}
-          isPlaying={isPlaying}
-          onPlayAll={playAll}
-          onPlaySentence={playSentence}
-          onSeekSentence={seekSentence}
-          exportTargetRef={viewerExportRef}
-          exporting={exportingImage}
-          onExport={() => void exportViewerImage()}
-        />
       )}
 
-      {showPlayer && activeTrack ? (
-        <Player
-          title={work.title}
-          track={activeTrack}
-          sentences={sentences}
-          source={audioSource}
-          currentMs={currentMs}
-          isPlaying={isPlaying}
-          playbackRate={playbackRate}
-          onToggle={playAll}
-          onSeek={seek}
-          onRateChange={changeRate}
-          onSourceChange={mode === "studio" ? changeAudioSource : undefined}
-          hasReference={Boolean(work.referenceAudio)}
-          hasStandard={Boolean(standardPlayback?.timeline)}
-          compact={mode === "viewer"}
-        />
-      ) : null}
-
-      {mode === "studio" ? (
-        <WorkLibrary
-          open={libraryOpen}
-          loading={libraryLoading}
-          query={libraryQuery}
-          items={libraryItems}
-          currentWorkId={work.id}
-          onClose={() => setLibraryOpen(false)}
-          onQuery={setLibraryQuery}
-          onNew={() => requestWorkAction({ kind: "new" })}
-          onOpen={(workId) => requestWorkAction({ kind: "open", workId })}
-          onDelete={setWorkPendingDelete}
-          deletingWorkId={deletingWorkId}
-        />
-      ) : null}
+      <WorkLibrary
+        open={libraryOpen}
+        loading={libraryLoading}
+        query={libraryQuery}
+        items={libraryItems}
+        currentWorkId={work.id}
+        onClose={() => setLibraryOpen(false)}
+        onQuery={setLibraryQuery}
+        onNew={() => requestWorkAction({ kind: "new" })}
+        onOpen={(workId) => requestWorkAction({ kind: "open", workId })}
+        onDelete={setWorkPendingDelete}
+        deletingWorkId={deletingWorkId}
+      />
 
       <DeleteWorkDialog
         work={workPendingDelete}

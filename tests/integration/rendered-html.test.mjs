@@ -32,11 +32,11 @@ test("server-renders the recitation product", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>声图 · 朗诵情感图谱<\/title>/i);
-  assert.match(html, /把一段好朗诵，变成一张能听的声音地图/);
+  assert.match(html, /把一篇好文稿，变成一张清晰的情感图谱/);
   assert.match(html, /生成图谱/);
   assert.match(html, /完整正文/);
-  assert.match(html, /声音与图谱同源/);
-  assert.match(html, /用户观看端/);
+  assert.match(html, /一份控制谱，两种版式/);
+  assert.doesNotMatch(html, /用户观看端/);
   assert.match(html, /作品库/);
   assert.match(html, /保存作品/);
   assert.match(html, /og\.png/);
@@ -73,8 +73,10 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.match(schema, /audioSyncStatus/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(studio, /cloneDemoWork|createDemoControlSpec|createDemoAiAudio|demo-recitation/);
+  assert.match(studio, /title: "准备作品"/);
   assert.match(studio, /title: "编辑图谱"/);
-  assert.match(studio, /title: "预览发布"/);
+  assert.doesNotMatch(studio, /title: "预览发布"/);
+  assert.doesNotMatch(studio, /<ViewerView\s|<Player\s/);
   assert.doesNotMatch(studio, /导入控制谱|JSON 兜底|核对示范|ControlImportStage|AudioStage/);
   assert.match(studio, /fetch\("\/api\/works"/);
   assert.match(studio, /reference_audio_file/);
@@ -89,13 +91,11 @@ test("keeps one control schema and removes starter preview residue", async () =>
   assert.doesNotMatch(studio, /个图谱句/);
   assert.doesNotMatch(studio, /朗诵作品/);
   assert.doesNotMatch(studio, /抒情朗诵 · 舒缓 · 克制/);
-  assert.match(studio, /导出本页图片/);
-  assert.match(studio, /import\("html-to-image"\)/);
-  assert.match(studio, /朗诵图谱\.png/);
+  assert.doesNotMatch(studio, /import\("html-to-image"\)/);
   assert.match(studio, /data-export-exclude="true"/);
   assert.match(studio, /stroke="#a93627"/);
   assert.match(studio, /WORK_VERSION_CONFLICT|expected_updated_at/);
-  assert.match(studio, /mode === "studio" \? \(\s*<WorkLibrary/);
+  assert.match(studio, /<WorkLibrary/);
   assert.match(studio, /\/reference-audio/);
   assert.match(studio, /text-recitation-jobs/);
   assert.match(studio, /生成图谱/);

@@ -227,41 +227,18 @@ test("measured layout does not split inside focus or prosody core when a safe al
   assert.ok(lines.slice(0, -1).every((line) => line.at(-1).token.index !== protectedBoundary));
 });
 
-test("viewer keeps the fixed artboard, visual asset dimensions and player safety contract", async () => {
-  const [wrapper, studio, css] = await Promise.all([
-    readFile(new URL("../components/ViewerScaleWrapper.tsx", import.meta.url), "utf8"),
+test("legacy viewer stays isolated while the active editor keeps only the two print editions", async () => {
+  const [studio, css] = await Promise.all([
     readFile(new URL("../components/RecitationStudio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(wrapper, /VIEWER_ARTBOARD_WIDTH = 1600/);
-  assert.match(wrapper, /VIEWER_PLAYER_SAFE_AREA = 124/);
-  assert.match(wrapper, /designHeight \* scale/);
-  assert.match(wrapper, /ResizeObserver/);
+  assert.match(studio, /Historical published-view renderer remains isolated/);
   assert.match(studio, /<ViewerScaleWrapper artboardRef=\{exportTargetRef\}>/);
-  assert.match(studio, /className="viewer-paper"/);
-  assert.match(studio, /semanticLines=\{isViewerScene\}/);
-  assert.match(studio, /VIEWER_MANUSCRIPT_DEFAULT_FONT_SIZE = 56/);
-  assert.match(studio, /VIEWER_MANUSCRIPT_MIN_FONT_SIZE = 38/);
-  assert.match(studio, /splitGraphUnitsByMeasuredWidth/);
-  assert.match(studio, /unit\.pause\?\.type/);
-  assert.match(studio, /element\.getBoundingClientRect\(\)\.width/);
-  assert.match(studio, /for \(const unit of unitRefs\.current\.values\(\)\) observer\.observe\(unit\)/);
-  assert.match(studio, /viewerSceneImageUrl/);
-  assert.match(studio, /trackRect\.width \/ track\.offsetWidth/);
-  assert.match(studio, /position: "relative"/);
-  assert.match(studio, /transform: "none"/);
-  assert.match(css, /\.viewer-artboard\s*\{[\s\S]*?width:\s*1600px;/);
-  assert.match(css, /\.viewer-artboard \.viewer-paper\s*\{[\s\S]*?width:\s*1500px;/);
-  assert.match(css, /\.viewer-artboard \.viewer-hero\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*280px;/);
-  assert.match(css, /\.viewer-artboard \.viewer-hero-image\s*\{[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*50% 45%;/);
-  assert.match(css, /\.viewer-artboard \.viewer-sentence-wrap \.graph-sentence\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-height:\s*270px;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;/);
-  assert.match(css, /\.viewer-artboard \.viewer-sentence-wrap \.scene-visual-rail\s*\{[\s\S]*?display:\s*flex;[\s\S]*?min-height:\s*270px;[\s\S]*?align-items:\s*center;[\s\S]*?justify-content:\s*center;/);
-  assert.match(css, /\.scene-visual-frame\s*\{[\s\S]*?width:\s*260px;[\s\S]*?height:\s*190px;/);
-  assert.match(studio, /标准朗诵 · 整篇/);
-  assert.doesNotMatch(studio, /className="viewer-footnote"/);
-  assert.match(studio, /prepareViewerImagesForExport/);
-  assert.match(studio, /artboard\?\.querySelector<HTMLElement>\("\.viewer-shell"\) \?\? artboard/);
-  assert.match(css, /\.mode-viewer \.mode-switch,[\s\S]*?display:\s*none;/);
-  assert.match(css, /\.mode-viewer \.player-compact\s*\{[\s\S]*?width:\s*min\(1500px,/);
+  assert.doesNotMatch(studio, /<ViewerView\s/);
+  assert.doesNotMatch(studio, /<Player\s/);
+  assert.match(studio, /aria-label="图谱版本切换"/);
+  assert.match(studio, /studioEdition === "full"/);
+  assert.match(studio, /<CompactRecitationEditor/);
+  assert.match(css, /\.compact-editor-workspace/);
 });
