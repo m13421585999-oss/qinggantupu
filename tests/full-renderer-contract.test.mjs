@@ -12,19 +12,30 @@ async function read(path) {
   return readFile(resolve(root, path), "utf8");
 }
 
-test("Full A4 only renders the four primary recitation cues in the token renderer", async () => {
+test("Full A4 renders every shared marker used by Compact", async () => {
   const editor = await read("components/FullA4Editor.tsx");
-  // The FullTokenUnit function must explicitly branch on the four cues.
   assert.match(editor, /function FullTokenUnit/);
-  assert.match(editor, /shortPause/);
+  assert.match(editor, /const pause = pauseAt\(sentence, unit\.token\.index\)/);
   assert.match(editor, /full-ending-tone/);
-  // The renderer must no longer emit V/v, /// or the prolongation glyph.
-  assert.doesNotMatch(editor, /full-breath-major/);
-  assert.doesNotMatch(editor, /full-breath-minor/);
-  assert.doesNotMatch(editor, /full-prolongation/);
-  assert.doesNotMatch(editor, /full-pause-long/);
-  // The renderer must not show the long pause glyph at all.
-  assert.doesNotMatch(editor, /pause\.type === "long" \? "\/\/\/"/);
+  assert.match(editor, /full-breath-\$\{breath\.type/);
+  assert.match(editor, /breath\.type === "breath_major" \? "V" : "v"/);
+  assert.match(editor, /full-prolong-mark/);
+  assert.match(editor, /className="full-prolong-mark"[\s\S]{0,160}>—<\/span>/);
+  assert.match(editor, /full-pause-\$\{pause\.type\}/);
+  assert.match(editor, /pause\.type === "long" \? "\/\/\/" : "\/"/);
+  assert.match(editor, /full-scene-technique-slot/);
+  assert.match(editor, /deliveryTechniqueAt\(sentence, unit\.token\.index, "virtual_voice"\)/);
+  assert.match(editor, /className=\{`full-distance-marker/);
+  assert.match(editor, /<DistanceViewGlyph type=\{distanceView\.type\}/);
+  assert.match(editor, /is-virtual-voice/);
+  assert.doesNotMatch(
+    editor,
+    /className="full-prolong-mark"[\s\S]{0,160}data-export-exclude/,
+  );
+  assert.doesNotMatch(
+    editor,
+    /className=\{`full-breath[\s\S]{0,180}data-export-exclude/,
+  );
 });
 
 test("Full marker is a boundary gutter outside the spoken-token, keeping pinyin centered over its character", async () => {
@@ -56,17 +67,63 @@ test("Full primary markers are sized 1em so they match the manuscript weight", a
   assert.match(css, /\.full-ending-tone,\s*\.full-pause\s*\{[^}]*font-size:\s*1em/s);
 });
 
-test("Full page legend only lists the four primary cues", async () => {
+test("Full prolongation is a character-after cue instead of an underline", async () => {
+  const css = await read("app/globals.css");
+  const rule = css.match(/\.full-prolong-mark\s*\{([^}]*)\}/);
+  assert.ok(rule);
+  assert.match(rule[1], /display:\s*inline-flex/);
+  assert.doesNotMatch(rule[1], /position:\s*absolute/);
+  assert.doesNotMatch(rule[1], /border-top/);
+});
+
+test("Full page legend is evidence-driven and supports every shared cue", async () => {
   const editor = await read("components/FullA4Editor.tsx");
-  // Legend now lists short pause, tone, focus, curve only.
-  const legendMatch = editor.match(/function FullPageLegend\(\)\s*\{[\s\S]*?<\/footer>/);
+  const legendMatch = editor.match(/function FullPageLegend\([^)]*\)\s*\{[\s\S]*?<\/footer>/);
   assert.ok(legendMatch, "FullPageLegend must exist and render a footer");
   const legend = legendMatch[0];
-  assert.match(legend, /短停/);
-  assert.match(legend, /语调/);
-  assert.match(legend, /重音/);
-  assert.match(legend, /语势曲线/);
-  assert.doesNotMatch(legend, /换气/);
-  assert.doesNotMatch(legend, /偷气/);
-  assert.doesNotMatch(legend, /长停/);
+  assert.match(legend, /items\.map/);
+  assert.match(legend, /FULL_LEGEND_LABELS/);
+  assert.match(editor, /usedCompactLegendItems/);
+  for (const label of ["换气", "偷气", "短停", "长停", "重音", "语势曲线", "拖音", "实景", "虚景", "虚声", "远景", "近景"]) {
+    assert.match(editor, new RegExp(label));
+  }
+});
+
+test("Full freezes edition rows and puts exactly one measured line in each page slot", async () => {
+  const [editor, studio, schema] = await Promise.all([
+    read("components/FullA4Editor.tsx"),
+    read("components/RecitationStudio.tsx"),
+    read("lib/recitation-schema.ts"),
+  ]);
+  assert.match(schema, /editionLayouts\?: RecitationEditionLayouts/);
+  assert.match(studio, /withCompactSentences\(current\.controlSpec, nextSentences\)/);
+  assert.match(editor, /resolveFullLayoutRows\(spec\)/);
+  assert.match(editor, /data-full-line-measure-id/);
+  assert.match(editor, /lineTokenIndexes=\{lineBlock\?\.tokenIndexes\}/);
+  assert.match(editor, /完整版独立排成/);
+  assert.match(editor, /mergeFullLayoutRowsAtToken/);
+  assert.match(editor, /并入上一行/);
+  assert.match(editor, /并入下一行/);
+  assert.match(studio, /withFullLayoutRows\(current\.controlSpec, rows\)/);
+});
+
+test("Full line measurement uses the printable content width instead of the whole A4 sheet", async () => {
+  const css = await read("app/globals.css");
+  const measureRules = [...css.matchAll(/^\.full-measure-layer\s*\{([^}]*)\}/gm)];
+  assert.equal(measureRules.length, 1, "the measurement layer must have one authoritative width rule");
+  assert.match(
+    measureRules[0][1],
+    /width:\s*calc\(210mm\s*-\s*\(var\(--full-a4-margin,\s*14mm\)\s*\*\s*2\)\)/,
+  );
+});
+
+test("Spring keeps its scene-technique row and restores the prosody curve only in Full", async () => {
+  const [fullEditor, compactEditor] = await Promise.all([
+    read("components/FullA4Editor.tsx"),
+    read("components/CompactRecitationEditor.tsx"),
+  ]);
+  assert.match(fullEditor, /showSceneTechniqueRow=\{springSceneTechniqueMode\}/);
+  assert.match(fullEditor, /showProsodyCurve\s*\n/);
+  assert.doesNotMatch(fullEditor, /showProsodyCurve=\{!springSceneTechniqueMode\}/);
+  assert.match(compactEditor, /springSceneTechniqueMode \? null : \(/);
 });

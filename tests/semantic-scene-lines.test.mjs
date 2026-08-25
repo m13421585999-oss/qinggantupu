@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { buildGraphTokenUnits } from "../lib/graph-track.ts";
 import {
+  adjustVisualLineBoundaries,
+  mergeAcrossCompactSentences,
   splitGraphUnitsByMeasuredWidth,
   splitGraphUnitsIntoSemanticLines,
 } from "../lib/semantic-scene-lines.ts";
@@ -74,6 +76,121 @@ test("measured viewer layout keeps a scene on one line whenever decorations fit"
   });
   assert.equal(lines.length, 1);
   assert.deepEqual(lines[0], units);
+});
+
+test("creator line break forces a measured graph line before the selected character", () => {
+  const fixture = sentence("柔嫩喜悦，水光浮动着你梦期待中白莲。");
+  const units = buildGraphTokenUnits(fixture);
+  const selectedIndex = fixture.tokens.find((token) => token.char === "你").index;
+  const selectedPosition = units.findIndex((unit) => unit.token.index === selectedIndex);
+  const forcedIndex = units[selectedPosition - 1].token.index;
+  assert.equal(units.find((unit) => unit.token.index === forcedIndex).token.char, "着");
+  const lines = splitGraphUnitsByMeasuredWidth(units, {
+    maxLineWidth: 2000,
+    unitWidths: measuredWidths(units),
+    unitGap: 3,
+    forcedBoundaryIndexes: [forcedIndex],
+  });
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].at(-1).token.index, forcedIndex);
+  assert.equal(lines[1][0].token.char, "你");
+});
+
+test("line-boundary editing merges selected content into the existing adjacent line", () => {
+  const lines = [
+    [0, 1, 2, 3],
+    [4, 5, 6],
+    [7, 8],
+  ];
+  assert.deepEqual(adjustVisualLineBoundaries(lines, 0, 2, "next"), [1, 6]);
+  assert.deepEqual(adjustVisualLineBoundaries(lines, 1, 5, "previous"), [5, 6]);
+  assert.deepEqual(adjustVisualLineBoundaries(lines, 1, 4, "next"), [3]);
+  assert.deepEqual(adjustVisualLineBoundaries(lines, 1, 6, "previous"), [6]);
+  assert.equal(adjustVisualLineBoundaries(lines, 0, 1, "previous"), undefined);
+  assert.equal(adjustVisualLineBoundaries(lines, 2, 8, "next"), undefined);
+});
+
+function compactSentence(id, text, startIndex, order) {
+  const tokens = Array.from(text).map((char, position) => ({
+    id: `${id}-token-${position}`,
+    index: startIndex + position,
+    char,
+    startMs: (startIndex + position) * 100,
+    endMs: (startIndex + position + 1) * 100,
+    confidence: 1,
+  }));
+  return {
+    id,
+    order,
+    text,
+    function: "",
+    rhythm: "solemn",
+    continuity: "connected",
+    prosody: [],
+    endingIntonation: { type: "falling", strength: 1 },
+    focus: [],
+    voiceQuality: { start: "neutral", end: "neutral" },
+    pauses: [],
+    breaths: [],
+    prolongations: [],
+    tokens,
+    teachingCue: "",
+    avoid: [],
+    confidence: 1,
+    timeRange: { startMs: tokens[0].startMs, endMs: tokens.at(-1).endMs },
+  };
+}
+
+test("cross-sentence line editing moves the selected suffix into the next numbered line", () => {
+  const current = compactSentence("current", "甲乙丙丁", 0, 1);
+  const next = compactSentence("next", "戊己庚", 5, 2);
+  current.focus = [{
+    id: "focus-current",
+    tokenIds: [current.tokens[2].id, current.tokens[3].id],
+    tokenIndexes: [2, 3],
+    level: "primary",
+    preferredRealization: "stronger",
+    allowedRealizations: ["stronger"],
+    avoid: [],
+  }];
+  current.pauses = [{
+    id: "pause-current",
+    afterTokenId: current.tokens[2].id,
+    afterTokenIndex: 2,
+    type: "short",
+    source: "human",
+  }];
+  current.prosodyPointOverrides = [{ tokenIndex: 3, visualLevel: 6, source: "human" }];
+
+  const result = mergeAcrossCompactSentences(current, next, 2, "next");
+  assert.equal(result.selected.text, "甲乙");
+  assert.equal(result.adjacent.text, "丙丁戊己庚");
+  assert.deepEqual(result.adjacent.focus[0].tokenIndexes, [2, 3]);
+  assert.equal(result.adjacent.pauses[0].afterTokenIndex, 2);
+  assert.deepEqual(result.adjacent.prosodyPointOverrides, [{
+    tokenIndex: 3,
+    visualLevel: 6,
+    source: "human",
+  }]);
+});
+
+test("cross-sentence line editing moves the selected prefix into the previous numbered line", () => {
+  const previous = compactSentence("previous", "甲乙丙丁", 0, 1);
+  const current = compactSentence("current", "戊己，庚", 5, 2);
+  current.breaths = [{
+    id: "breath-current",
+    afterTokenId: current.tokens[1].id,
+    afterTokenIndex: 6,
+    type: "breath_minor",
+    source: "human",
+  }];
+
+  const result = mergeAcrossCompactSentences(current, previous, 6, "previous");
+  assert.equal(result.adjacent.text, "甲乙丙丁戊己，");
+  assert.equal(result.selected.text, "庚");
+  assert.equal(result.adjacent.breaths[0].afterTokenIndex, 6);
+  assert.equal(result.selected.endingIntonation.type, "falling");
+  assert.equal(result.adjacent.endingIntonation.type, "level");
 });
 
 test("minimum-font measured layout includes attached decorations and splits at punctuation", () => {

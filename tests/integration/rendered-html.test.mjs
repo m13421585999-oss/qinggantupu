@@ -125,6 +125,6 @@ test("keeps one control schema and removes starter preview residue", async () =>
   await assert.rejects(access(new URL("../../local-analyzer/analyzer.py", import.meta.url)));
   await access(new URL("../../drizzle/0000_unusual_wendell_rand.sql", import.meta.url));
   await access(new URL("../../public/og.png", import.meta.url));
-  await access(new URL("../../docs/01-mvp-plan.md", import.meta.url));
+  await assert.rejects(access(new URL("../../docs/01-mvp-plan.md", import.meta.url)));
   assert.ok(projectRoot);
 });

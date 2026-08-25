@@ -25,6 +25,11 @@ export interface TeachingProsodyPoint {
   isOverridden?: boolean;
 }
 
+export interface ProsodyPointChange {
+  tokenIndex: number;
+  visualLevel: number;
+}
+
 interface SplinePoint {
   x: number;
   y: number;
@@ -278,13 +283,85 @@ export function prosodyVisualLevelFromPointerY({
     || !Number.isFinite(rectHeight) || rectHeight <= 0
     || !Number.isFinite(viewBoxHeight) || viewBoxHeight <= verticalPadding * 2
   ) return undefined;
-  const levelCount = Math.max(7, Math.min(9, Math.round(visualLevelCount)));
+  const levelCount = Math.max(2, Math.min(9, Math.round(visualLevelCount)));
   const localY = (clientY - rectTop) * viewBoxHeight / rectHeight;
   const visualStep = (viewBoxHeight - verticalPadding * 2) / (levelCount - 1);
   return Math.max(
     0,
     Math.min(levelCount - 1, Math.round((viewBoxHeight - verticalPadding - localY) / visualStep)),
   );
+}
+
+/** Find the displayed slot nearest to a persisted teaching height. */
+export function nearestProsodyVisualLevelPosition(
+  visualLevel: number,
+  visualLevels: readonly number[],
+) {
+  if (!visualLevels.length || !Number.isFinite(visualLevel)) return 0;
+  let nearestPosition = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  visualLevels.forEach((candidate, position) => {
+    const distance = Math.abs(candidate - visualLevel);
+    // Prefer the higher slot on an exact tie, matching ordinary rounding.
+    if (distance <= nearestDistance) {
+      nearestPosition = position;
+      nearestDistance = distance;
+    }
+  });
+  return nearestPosition;
+}
+
+/**
+ * Fill every token crossed by one paint movement. The first token was already
+ * emitted by the previous pointer sample, so a horizontal move starts at the
+ * next token; a vertical move within one token emits that token again.
+ */
+export function interpolateProsodyPointChanges({
+  tokenIndexes,
+  visualLevels,
+  fromTokenPosition,
+  toTokenPosition,
+  fromLevelPosition,
+  toLevelPosition,
+}: {
+  tokenIndexes: readonly number[];
+  visualLevels: readonly number[];
+  fromTokenPosition: number;
+  toTokenPosition: number;
+  fromLevelPosition: number;
+  toLevelPosition: number;
+}): ProsodyPointChange[] {
+  if (!tokenIndexes.length || !visualLevels.length) return [];
+  const clampPosition = (value: number, maximum: number) => (
+    Math.max(0, Math.min(maximum, Math.round(Number.isFinite(value) ? value : 0)))
+  );
+  const startTokenPosition = clampPosition(fromTokenPosition, tokenIndexes.length - 1);
+  const endTokenPosition = clampPosition(toTokenPosition, tokenIndexes.length - 1);
+  const startLevelPosition = clampPosition(fromLevelPosition, visualLevels.length - 1);
+  const endLevelPosition = clampPosition(toLevelPosition, visualLevels.length - 1);
+  const tokenDistance = Math.abs(endTokenPosition - startTokenPosition);
+
+  if (!tokenDistance) {
+    return [{
+      tokenIndex: tokenIndexes[endTokenPosition],
+      visualLevel: visualLevels[endLevelPosition],
+    }];
+  }
+
+  const direction = endTokenPosition > startTokenPosition ? 1 : -1;
+  return Array.from({ length: tokenDistance }, (_, offset) => {
+    const step = offset + 1;
+    const progress = step / tokenDistance;
+    const tokenPosition = startTokenPosition + direction * step;
+    const levelPosition = clampPosition(
+      startLevelPosition + (endLevelPosition - startLevelPosition) * progress,
+      visualLevels.length - 1,
+    );
+    return {
+      tokenIndex: tokenIndexes[tokenPosition],
+      visualLevel: visualLevels[levelPosition],
+    };
+  });
 }
 
 /** Monotone cubic spline: passes through every anchor without overshooting it. */

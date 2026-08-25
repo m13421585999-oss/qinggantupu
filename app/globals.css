@@ -5713,6 +5713,16 @@ button.annotation-char:hover {
   color: var(--green);
 }
 
+.compact-toolbar-status .compact-spring-technique-badge {
+  color: #496878;
+  font-weight: 800;
+}
+
+.compact-toolbar-status .compact-curve-edit-hint {
+  color: #526f82;
+  font-weight: 750;
+}
+
 .compact-toolbar-actions {
   gap: 7px;
 }
@@ -5721,6 +5731,146 @@ button.annotation-char:hover {
   min-height: 36px;
   padding: 0 12px;
   white-space: nowrap;
+}
+
+.compact-auto-legend-status {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(82, 111, 130, 0.22);
+  border-radius: 7px;
+  background: rgba(238, 245, 245, 0.72);
+  color: #526f82;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.compact-legend-settings {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  padding: 12px 2px 3px;
+  border-top: 1px solid rgba(103, 79, 56, 0.14);
+  color: #4d443d;
+  font-family: system-ui, sans-serif;
+}
+
+.compact-legend-settings-heading,
+.compact-legend-settings-actions,
+.compact-legend-option,
+.compact-legend-option-content {
+  display: flex;
+  align-items: center;
+}
+
+.compact-legend-settings-heading {
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.compact-legend-settings-heading strong {
+  display: block;
+  font-size: 13px;
+}
+
+.compact-legend-settings-heading small {
+  display: block;
+  margin-top: 2px;
+  color: #80756b;
+  font-size: 10px;
+}
+
+.compact-legend-settings-heading > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #796c61;
+  font-size: 19px;
+}
+
+.compact-legend-settings-heading > button:hover {
+  background: rgba(103, 79, 56, 0.08);
+}
+
+.compact-legend-option-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+}
+
+button.compact-legend-option {
+  min-width: 0;
+  min-height: 42px;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid rgba(105, 83, 62, 0.16);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #554b43;
+  cursor: pointer;
+}
+
+button.compact-legend-option:hover {
+  border-color: rgba(82, 111, 130, 0.4);
+  background: rgba(238, 245, 245, 0.82);
+}
+
+button.compact-legend-option.is-selected {
+  border-color: rgba(82, 111, 130, 0.5);
+  background: #edf3f3;
+  box-shadow: inset 0 0 0 1px rgba(82, 111, 130, 0.08);
+}
+
+.compact-legend-option-content {
+  min-width: 0;
+  gap: 5px;
+}
+
+.compact-legend-option-content > b,
+.compact-legend-option-content > i,
+.compact-legend-option-content > svg {
+  flex: none;
+}
+
+.compact-legend-option-content > strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-legend-option > small {
+  flex: none;
+  color: #8b7e72;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.compact-legend-option.is-selected > small {
+  color: #9a3b2d;
+}
+
+.compact-legend-settings-actions {
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.compact-legend-settings-actions button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(103, 79, 56, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.65);
+  color: #675b50;
+  font-size: 10px;
 }
 
 .compact-export-button {
@@ -5754,9 +5904,9 @@ button.annotation-char:hover {
   flex: none;
   flex-direction: column;
   overflow: hidden;
-  padding: var(--compact-a4-margin, 11mm);
+  padding: var(--compact-a4-margin, 8.5mm);
   isolation: isolate;
-  background: #fffdf8 url("/compact-a4-background.png") center / 100% 100% no-repeat;
+  background: #fffdf8 url("/full-a4-background.jpg") center / 100% 100% no-repeat;
   color: #292722;
   font-family: "Songti SC", STSong, SimSun, serif;
   box-shadow: 0 15px 38px rgba(42, 34, 27, 0.2);
@@ -5765,14 +5915,16 @@ button.annotation-char:hover {
 .compact-a4-page::before {
   position: absolute;
   z-index: 0;
-  inset: 8.5mm 8.5mm 8mm;
-  border-radius: 1.8mm;
+  inset: 4.5mm 4.5mm 4mm;
+  border: 0.2mm solid rgba(255, 255, 255, 0.68);
+  border-radius: 2.4mm;
   background: linear-gradient(
     180deg,
-    rgba(255, 253, 247, 0.7) 0%,
-    rgba(255, 253, 247, 0.78) 48%,
-    rgba(255, 253, 247, 0.88) 100%
+    rgba(255, 255, 255, 0.82) 0%,
+    rgba(255, 255, 255, 0.86) 48%,
+    rgba(255, 255, 255, 0.9) 100%
   );
+  box-shadow: 0 1.2mm 5mm rgba(38, 91, 111, 0.08);
   content: "";
   pointer-events: none;
 }
@@ -5787,7 +5939,7 @@ button.annotation-char:hover {
   min-height: 9mm;
   flex: none;
   align-items: baseline;
-  gap: 2.2mm;
+  gap: 2.8mm;
   overflow: hidden;
   border-bottom: 0.3mm solid rgba(82, 111, 130, 0.26);
   color: #594d43;
@@ -5796,20 +5948,13 @@ button.annotation-char:hover {
 }
 
 .compact-page-header strong {
-  max-width: 104mm;
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   color: #2f2a25;
   font-size: 15pt;
-  font-weight: 700;
+  font-weight: 800;
   text-overflow: ellipsis;
-}
-
-.compact-page-header > span {
-  color: #526f82;
-  font-family: system-ui, sans-serif;
-  font-size: 9pt;
-  font-weight: 750;
-  letter-spacing: 0.06em;
 }
 
 .compact-page-header small {
@@ -5825,21 +5970,80 @@ button.annotation-char:hover {
   flex: 1;
   flex-direction: column;
   gap: 0.6mm;
-  padding: 1.2mm 0;
+  padding: 3.8mm 0 1.2mm;
   overflow: hidden;
 }
 
 .compact-sentence-row {
-  display: grid;
+  display: block;
   box-sizing: border-box;
   flex: 0 0 auto;
-  grid-template-columns: 7mm minmax(0, 1fr);
-  gap: 1.6mm;
-  align-items: start;
-  padding: 0.8mm 0;
+  padding: 0.7mm 0;
   border-bottom: 0.2mm solid rgba(111, 84, 56, 0.14);
   break-inside: avoid;
   page-break-inside: avoid;
+}
+
+.compact-visual-line {
+  display: grid;
+  grid-template-columns: 24mm minmax(0, 1fr);
+  gap: 2.2mm;
+  align-items: stretch;
+}
+
+.compact-visual-graph-column {
+  min-width: 0;
+}
+
+.compact-scene-thumbnail {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  overflow: hidden;
+  border: 0.2mm solid rgba(82, 111, 130, 0.2);
+  border-radius: 1.4mm;
+  background: rgba(224, 239, 238, 0.92);
+  box-shadow: inset 0 0 0 0.2mm rgba(255, 255, 255, 0.52);
+}
+
+.compact-scene-thumbnail img,
+.compact-scene-placeholder {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.compact-scene-thumbnail img {
+  object-fit: cover;
+}
+
+.compact-scene-placeholder {
+  background:
+    radial-gradient(circle at 70% 24%, rgba(244, 173, 132, 0.72) 0 7%, transparent 8%),
+    linear-gradient(155deg, rgba(77, 178, 188, 0.88), rgba(205, 235, 225, 0.78) 52%, rgba(82, 128, 157, 0.84));
+}
+
+.compact-scene-meta {
+  position: absolute;
+  z-index: 2;
+  top: 1.2mm;
+  left: 1.2mm;
+  display: flex;
+  box-sizing: border-box;
+  width: 4.8mm;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55mm;
+  padding: 0.8mm 0.35mm 0.9mm;
+  border: 0.2mm solid rgba(82, 111, 130, 0.2);
+  border-radius: 1.2mm;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 0.6mm 1.8mm rgba(35, 73, 91, 0.16);
+  backdrop-filter: blur(0.6mm);
+  pointer-events: none;
 }
 
 .compact-sentence-number {
@@ -5856,6 +6060,18 @@ button.annotation-char:hover {
   position: relative;
   width: 100%;
   min-width: 0;
+}
+
+/* 《出师表》keeps the normal compact rhythm and reserves air only around virtual voice frames. */
+.compact-editor-workspace.is-chushibiao-virtual-spacing
+  .compact-token-unit:has(.compact-token-char.is-virtual-voice) {
+  margin-inline: 0.08em;
+}
+
+.compact-editor-workspace.is-chushibiao-virtual-spacing
+  .compact-token-unit:has(.compact-token-char.is-virtual-voice) .compact-pause {
+  margin-left: 0.2em;
+  margin-right: 0;
 }
 
 .compact-token-width-probe {
@@ -5899,10 +6115,10 @@ button.annotation-char:hover {
 
 .compact-token-manuscript {
   display: inline-flex;
-  min-height: 15mm;
+  min-height: 15.5mm;
   align-items: flex-end;
   color: #27231f;
-  font-size: 22.6pt;
+  font-size: 23.4pt;
   font-weight: 620;
   line-height: 1;
 }
@@ -5910,24 +6126,97 @@ button.annotation-char:hover {
 .compact-spoken-token {
   display: grid;
   flex: 0 0 auto;
-  grid-template-rows: 4.8mm 10.2mm;
+  grid-template-rows: 4.9mm 10.6mm;
   justify-items: center;
+}
+
+.compact-graph-line.is-spring-scene-technique .compact-token-row {
+  min-height: 29.6mm;
+  align-items: center;
+}
+
+.compact-spoken-token.has-scene-technique-row {
+  align-self: flex-end;
+  grid-template-rows: 7.8mm 5.5mm 11.5mm;
+}
+
+.compact-graph-line.is-spring-scene-technique .compact-boundary-trigger {
+  top: 13mm;
+}
+
+.compact-scene-technique-slot {
+  display: grid;
+  width: 100%;
+  height: 7.8mm;
+  place-items: center;
+  color: #526f82;
+  line-height: 1;
+}
+
+.compact-scene-technique-slot svg {
+  display: block;
+  width: 7.2mm;
+  height: 7.2mm;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.compact-scene-technique-slot.is-real circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.compact-scene-technique-slot.is-virtual {
+  color: #b94a55;
+}
+
+.compact-scene-technique-slot.is-virtual svg {
+  fill: currentColor;
+  stroke: none;
+}
+
+.compact-editor-workspace.is-spring-scene-technique .compact-token-manuscript {
+  min-height: 17mm;
+  font-size: 25.5pt;
+}
+
+.compact-editor-workspace.is-spring-scene-technique .compact-token-pinyin {
+  font-size: 14.4pt;
+}
+
+.compact-editor-workspace.is-spring-scene-technique .compact-token-char,
+.compact-editor-workspace.is-spring-scene-technique .compact-source-punctuation,
+.compact-editor-workspace.is-spring-scene-technique .compact-prolongation,
+.compact-editor-workspace.is-spring-scene-technique .compact-ending-tone,
+.compact-editor-workspace.is-spring-scene-technique .compact-pause,
+.compact-editor-workspace.is-spring-scene-technique .compact-breath-major,
+.compact-editor-workspace.is-spring-scene-technique .compact-breath-minor {
+  min-height: 11.5mm;
+}
+
+.compact-editor-workspace.is-spring-scene-technique .compact-token-char {
+  height: 11.5mm;
 }
 
 .compact-token-pinyin {
   align-self: end;
   color: #554f49;
   font-family: "Kaiti SC", STKaiti, "Songti SC", serif;
-  font-size: 12.5pt;
+  font-size: 12.9pt;
   font-weight: 650;
   line-height: 1;
   white-space: nowrap;
 }
 
 .compact-token-char {
+  position: relative;
   display: inline-flex;
   min-width: 1em;
-  height: 10.2mm;
+  height: 10.6mm;
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -5950,6 +6239,55 @@ button.compact-token-char.is-selected {
   font-weight: 800;
 }
 
+.recitation-virtual-voice-overlay {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.recitation-virtual-voice-group {
+  position: absolute;
+  box-sizing: border-box;
+  border: 0.065em dashed #a92f23;
+  border-radius: 0.28em;
+  filter: drop-shadow(0 0 0.02em rgba(126, 28, 20, 0.28));
+  pointer-events: none;
+}
+
+.recitation-distance-glyph {
+  display: block;
+  width: 1.12em;
+  height: 1.12em;
+  flex: 0 0 auto;
+  border-radius: 0.14em;
+  object-fit: cover;
+  box-shadow: 0 0.04em 0.12em rgba(42, 34, 27, 0.24);
+}
+
+/* The creator's distant-view reference faces the opposite direction. */
+.recitation-distance-glyph.is-distant-view {
+  transform: scaleX(-1);
+  transform-origin: center;
+}
+
+.compact-distance-marker,
+.full-distance-marker {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.compact-distance-marker {
+  width: 1.22em;
+  min-height: 10.6mm;
+  margin-right: 0.08em;
+}
+
 .compact-source-punctuation,
 .compact-prolongation,
 .compact-ending-tone,
@@ -5957,7 +6295,7 @@ button.compact-token-char.is-selected {
 .compact-breath-major,
 .compact-breath-minor {
   display: inline-flex;
-  min-height: 10.2mm;
+  min-height: 10.6mm;
   align-items: center;
   align-self: flex-end;
 }
@@ -5983,7 +6321,9 @@ button.compact-token-char.is-selected {
 .compact-pause {
   margin: 0 0.02em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 900;
   letter-spacing: -0.12em;
+  -webkit-text-stroke: 0.18px currentColor;
 }
 
 .compact-pause-long {
@@ -6043,14 +6383,24 @@ button.compact-token-char.is-selected {
   background: transparent;
 }
 
-.compact-curve-node.is-editable {
+.compact-prosody-curve.is-drawable {
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.compact-prosody-curve .teaching-curve-node.is-editable {
   cursor: ns-resize;
   outline: none;
   touch-action: none;
 }
 
-.compact-curve-node.is-editable:focus circle:last-child,
-.compact-curve-node.is-editable:hover circle:last-child {
+.compact-prosody-curve.is-drawable .teaching-curve-node.is-editable {
+  cursor: crosshair;
+}
+
+.compact-prosody-curve .teaching-curve-node.is-editable:focus circle:last-child,
+.compact-prosody-curve .teaching-curve-node.is-editable:hover circle:last-child {
   fill: #e8f0f2;
   stroke-width: 2.2;
 }
@@ -6063,12 +6413,17 @@ button.compact-token-char.is-selected {
 
 .compact-page-legend {
   display: flex;
+  box-sizing: border-box;
+  width: 100%;
   min-height: 7.8mm;
   flex: none;
   align-items: flex-end;
-  gap: 4.5mm;
+  align-content: flex-end;
+  flex-wrap: wrap;
+  column-gap: 3.4mm;
+  row-gap: 0.8mm;
   margin-top: 0.6mm;
-  padding: 1.25mm 2.2mm 1mm;
+  padding: 1.25mm 49.5mm 1mm 2.2mm;
   border-top: 0.2mm solid rgba(82, 111, 130, 0.2);
   background: rgba(255, 253, 247, 0.84);
   color: #5f5a54;
@@ -6077,33 +6432,113 @@ button.compact-token-char.is-selected {
   white-space: nowrap;
 }
 
-.compact-page-legend span {
+/* Compact reuses the Full edition's scattered brand watermark treatment. */
+.compact-watermark-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.compact-watermark {
+  position: absolute;
+  transform: rotate(-42deg);
+  transform-origin: 0 0;
+  color: rgba(110, 95, 80, 0.25);
+  font-family: "Songti SC", STSong, SimSun, serif;
+  font-size: 17pt;
+  font-weight: 700;
+  letter-spacing: 0.45em;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Same lower-right white brand plate and asset as the Full edition. */
+.compact-logo-footer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  width: 48mm;
+  height: 18mm;
+  padding-left: 4mm;
+  place-items: center;
+  border-radius: 18mm 0 0 0;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: -1mm -1mm 4mm rgba(42, 34, 27, 0.08);
+  pointer-events: none;
+}
+
+.compact-logo-footer img {
+  display: block;
+  width: auto;
+  max-width: 38mm;
+  height: auto;
+  max-height: 12mm;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.compact-page-legend .compact-legend-item {
   display: inline-flex;
   align-items: center;
   gap: 0.8mm;
 }
 
-.compact-page-legend b {
+.compact-legend-item b,
+.compact-legend-option-content b {
   color: #a83b2b;
 }
 
-.compact-page-legend .compact-legend-major {
+.compact-legend-major {
   color: #c33324;
   font-size: 8.85pt;
 }
 
-.compact-page-legend .compact-legend-minor {
+.compact-legend-minor {
   color: #d87934;
 }
 
-.compact-page-legend .compact-legend-focus {
+.compact-legend-focus {
   color: #c33f2d;
   font-family: "Songti SC", STSong, serif;
   font-size: 8.75pt;
   font-weight: 800;
 }
 
-.compact-page-legend .compact-legend-curve {
+.compact-legend-virtual-voice {
+  display: inline-grid;
+  width: 4.2mm;
+  height: 4.2mm;
+  place-items: center;
+  border: 0.4mm dashed #a92f23;
+  border-radius: 50%;
+  color: #a92f23;
+  font-family: "Songti SC", STSong, serif;
+  font-size: 7pt;
+  line-height: 1;
+}
+
+.compact-page-legend .recitation-distance-glyph,
+.compact-legend-option-content .recitation-distance-glyph {
+  width: 5mm;
+  height: 5mm;
+}
+
+.compact-legend-item-distant-view .recitation-distance-glyph,
+.compact-legend-option:has(.is-distant-view) .recitation-distance-glyph {
+  color: #654ea3;
+}
+
+.compact-legend-item-close-view .recitation-distance-glyph,
+.compact-legend-option:has(.is-close-view) .recitation-distance-glyph {
+  color: #a96528;
+}
+
+.compact-legend-curve {
   display: inline-block;
   width: 7mm;
   height: 2.4mm;
@@ -6112,10 +6547,55 @@ button.compact-token-char.is-selected {
   background: linear-gradient(168deg, transparent 43%, #526f82 44%, #526f82 56%, transparent 57%);
 }
 
+.compact-legend-arrow {
+  font-family: Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1;
+}
+
+.compact-legend-prolong {
+  min-width: 4.8mm;
+  font-family: Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1;
+}
+
+.compact-legend-staccato {
+  font-family: "Songti SC", STSong, serif;
+  font-size: 7.6pt;
+  font-weight: 850;
+  letter-spacing: -0.08em;
+  white-space: nowrap;
+}
+
+.compact-legend-icon {
+  display: inline-block;
+  width: 4.2mm;
+  height: 4.2mm;
+  overflow: visible;
+  color: #526f82;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.compact-legend-real-scene circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.compact-legend-virtual-scene {
+  color: #b94a55;
+  fill: currentColor;
+  stroke: none;
+}
+
 .compact-marker-popover {
   position: fixed;
   z-index: 260;
-  width: 386px;
+  width: 430px;
   padding: 10px;
   border: 1px solid rgba(103, 77, 53, 0.22);
   border-radius: 10px;
@@ -6123,6 +6603,76 @@ button.compact-token-char.is-selected {
   box-shadow: 0 16px 42px rgba(51, 36, 24, 0.2);
   font-family: system-ui, sans-serif;
   backdrop-filter: blur(14px);
+}
+
+.compact-rhythm-popover {
+  position: fixed;
+  z-index: 265;
+  width: 236px;
+  padding: 10px;
+  border: 1px solid rgba(82, 111, 130, 0.24);
+  border-radius: 10px;
+  background: rgba(255, 253, 248, 0.98);
+  box-shadow: 0 16px 42px rgba(51, 36, 24, 0.2);
+  font-family: system-ui, sans-serif;
+  backdrop-filter: blur(14px);
+}
+
+.compact-rhythm-popover-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 1px 9px;
+}
+
+.compact-rhythm-popover-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.compact-rhythm-popover-heading strong {
+  color: #51473f;
+  font-size: 12px;
+}
+
+.compact-rhythm-popover-heading small {
+  color: #8b8177;
+  font-size: 9px;
+}
+
+.compact-rhythm-popover-heading > button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border-radius: 50%;
+  background: #edf3f4;
+  color: #526f82;
+}
+
+.compact-rhythm-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.compact-rhythm-option-grid button {
+  height: 34px;
+  border: 1px solid rgba(82, 111, 130, 0.2);
+  border-radius: 7px;
+  background: #f4f7f6;
+  color: #496878;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.compact-rhythm-option-grid button:hover,
+.compact-rhythm-option-grid button.active {
+  border-color: rgba(185, 64, 46, 0.42);
+  background: #f7e5df;
+  color: #9d3829;
 }
 
 .compact-popover-heading {
@@ -6203,7 +6753,126 @@ button.compact-token-char.is-selected {
 }
 
 .compact-other-markers {
-  grid-template-columns: repeat(5, minmax(38px, auto)) !important;
+  grid-template-columns: repeat(3, minmax(54px, 1fr)) !important;
+}
+
+.compact-marker-groups .compact-staccato-button {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.compact-marker-groups .compact-virtual-voice-button,
+.full-marker-groups .full-virtual-voice-button,
+.compact-marker-groups .compact-distance-button,
+.full-marker-groups .full-distance-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.compact-virtual-voice-button > span,
+.full-virtual-voice-button > span {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 2px dashed #a92f23;
+  border-radius: 50%;
+  color: #a92f23;
+  font-family: "Songti SC", STSong, serif;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.compact-distance-button .recitation-distance-glyph,
+.full-distance-button .recitation-distance-glyph {
+  width: 21px;
+  height: 21px;
+}
+
+.compact-distance-button:has(.is-distant-view),
+.full-distance-button:has(.is-distant-view) {
+  color: #654ea3;
+}
+
+.compact-distance-button:has(.is-close-view),
+.full-distance-button:has(.is-close-view) {
+  color: #a96528;
+}
+
+.compact-marker-groups .compact-scene-marker-button {
+  min-width: 68px;
+  font-size: 10px;
+}
+
+.compact-marker-groups .compact-scene-marker-button.is-real {
+  color: #496878;
+}
+
+.compact-marker-groups .compact-scene-marker-button.is-virtual {
+  color: #a33f50;
+}
+
+.compact-line-break-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(104, 80, 57, 0.13);
+}
+
+.compact-line-break-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.compact-line-break-editor strong {
+  color: #51473f;
+  font-size: 11px;
+}
+
+.compact-line-break-editor small {
+  overflow: hidden;
+  color: #8b8177;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-line-break-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.compact-line-break-actions > button {
+  min-width: 88px;
+  height: 30px;
+  padding: 0 10px;
+  flex: none;
+  border: 1px solid rgba(82, 111, 130, 0.28);
+  border-radius: 6px;
+  background: #edf3f4;
+  color: #496878;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.compact-line-break-actions > button:hover {
+  border-color: rgba(185, 64, 46, 0.42);
+  background: #f7e5df;
+  color: #9d3829;
+}
+
+.compact-line-break-actions > button:disabled {
+  border-color: rgba(103, 78, 54, 0.12);
+  background: #f1ece5;
+  color: #9b9188;
+  cursor: default;
 }
 
 .compact-pinyin-editor {
@@ -6247,6 +6916,13 @@ button.compact-token-char.is-selected {
   color: #9d3829;
   font-size: 12px;
   font-weight: 750;
+}
+
+.compact-pinyin-editor > button:disabled {
+  border-color: rgba(103, 78, 54, 0.14);
+  background: #f1ece5;
+  color: #9b9188;
+  cursor: default;
 }
 
 .compact-measure-layer {
@@ -6308,6 +6984,7 @@ button.compact-token-char.is-selected {
 @media print {
   .compact-editor-toolbar,
   .compact-marker-popover,
+  .compact-rhythm-popover,
   .compact-export-error {
     display: none !important;
   }
@@ -6371,6 +7048,10 @@ button.compact-token-char.is-selected {
   gap: 32px;
   padding: 32px 16px 56px;
   overflow: auto;
+}
+
+.full-measure-layer .full-sentence-row {
+  width: 100%;
 }
 
 .full-a4-page {
@@ -6539,6 +7220,14 @@ button.compact-token-char.is-selected {
   min-width: 0;
 }
 
+.full-editor-workspace.is-chushibiao-virtual-spacing .full-graph-track {
+  --full-token-gap: 5.5px;
+}
+
+.full-editor-workspace.is-chushibiao-virtual-spacing .full-pause {
+  margin-inline: 0.3em;
+}
+
 .full-token-width-probe {
   position: absolute;
   top: 0;
@@ -6551,6 +7240,7 @@ button.compact-token-char.is-selected {
 }
 
 .full-graph-lines { display: grid; gap: 1.4mm; }
+.full-visual-line { min-width: 0; }
 .full-graph-line { position: relative; width: 100%; min-width: 0; }
 
 .full-token-row {
@@ -6578,6 +7268,35 @@ button.compact-token-char.is-selected {
   justify-items: center;
   align-items: end;
 }
+.full-spoken-token.has-scene-technique-row {
+  grid-template-rows: 5mm 6.5mm 11mm;
+  grid-template-areas:
+    "scene"
+    "pinyin"
+    "char";
+}
+.full-scene-technique-slot {
+  grid-area: scene;
+  display: inline-flex;
+  width: 1em;
+  height: 5mm;
+  align-items: center;
+  align-self: center;
+  justify-content: center;
+  color: transparent;
+}
+.full-scene-technique-slot svg {
+  display: block;
+  width: 4.8mm;
+  height: 4.8mm;
+  overflow: visible;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 0.9;
+}
+.full-scene-technique-slot.is-real { color: #486d86; }
+.full-scene-technique-slot.is-virtual { color: #b44438; }
+.full-sentence-body.is-scene-technique { align-self: center; }
 .full-token-pinyin { grid-area: pinyin; align-self: end; color: #554f49; font-family: "Kaiti SC", STKaiti, "Songti SC", serif; font-size: 15pt; font-weight: 650; line-height: 1; white-space: nowrap; }
 .full-token-char {
   grid-area: char;
@@ -6596,29 +7315,40 @@ button.compact-token-char.is-selected {
 }
 button.full-token-char:hover, button.full-token-char.is-selected { background: rgba(185, 64, 46, 0.09); box-shadow: inset 0 0 0 0.25mm rgba(185, 64, 46, 0.2); }
 .full-token-char.is-focus { color: #c33f2d; font-weight: 800; }
-/* Editor-only 拖音 line. Absolutely positioned inside .full-token-char so it
-   never shifts pinyin/char centering or line height. Multi-char prolongation
-   = one segment per host token → a continuous line under the word range. Same
-   #c8452f thin-line semantics as the studio .prolong-mark / .print-prolongation. */
-.full-token-char { position: relative; }
-.full-prolong-mark {
-  position: absolute;
-  left: 0.06em;
-  right: 0.06em;
-  bottom: 1.5mm;
-  border-top: 2.5px solid #c8452f;
-  pointer-events: none;
+/* Full and Compact both render 拖音 as a visible cue after its host character;
+   it must not look like an underline or merge into a red focus phrase. */
+.full-distance-marker {
+  width: 0.86em;
+  min-height: 11mm;
+  margin-right: 0.04em;
 }
-/* Editor-only 换气 (V = 大换气 / v = 偷气), rendered in the boundary gutter
-   alongside short pause / and ending tone. Excluded from print/export. */
-.full-breath {
+.full-prolong-mark {
+  display: inline-flex;
+  min-width: 0.72em;
+  min-height: 11mm;
+  align-items: center;
+  align-self: flex-end;
+  overflow: hidden;
   color: #b9402e;
   font-family: Arial, sans-serif;
+  font-size: 0.66em;
   font-weight: 800;
-  font-size: 1em;
+  pointer-events: none;
+}
+/* 换气 (V = 大换气 / v = 偷气) is attached to the left side of its host
+   character, matching Compact and the shared ControlSpec semantics. */
+.full-breath {
+  display: inline-flex;
+  min-height: 11mm;
+  align-items: center;
+  align-self: flex-end;
+  font-family: Arial, sans-serif;
+  font-weight: 900;
   margin: 0 0.04em;
   pointer-events: none;
 }
+.full-breath-major { color: #c33324; font-size: 0.8em; }
+.full-breath-minor { color: #d87934; font-size: 0.66em; }
 
 /* Boundary/tail gutter: a sibling AFTER .full-spoken-token (not a grid column).
    It occupies layout width so the following token shifts right as a whole, but
@@ -6638,6 +7368,7 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
    read as part of the manuscript instead of as small subscripts. */
 .full-ending-tone, .full-pause { color: #b9402e; font-family: Arial, sans-serif; font-weight: 800; font-size: 1em; }
 .full-pause { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0 0.02em; letter-spacing: -0.12em; }
+.full-pause-long { letter-spacing: -0.2em; }
 
 .full-boundary-trigger {
   position: absolute;
@@ -6679,18 +7410,43 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4.6mm;
+  align-content: center;
+  flex-wrap: wrap;
+  column-gap: 3.5mm;
+  row-gap: 0.8mm;
   max-width: calc(100% - 54mm);
-  padding-top: 2mm;
+  min-height: 7.2mm;
+  padding-top: 1.2mm;
   border-top: 0.3mm solid rgba(82, 111, 130, 0.2);
   color: #594d43;
   font-family: system-ui, sans-serif;
-  font-size: 10pt;
+  font-size: 8.4pt;
+  line-height: 1;
 }
+.full-page-legend.is-empty { visibility: hidden; }
+.full-legend-item { display: inline-flex; align-items: center; gap: 0.8mm; white-space: nowrap; }
 .full-page-legend b { font-weight: 800; }
 .full-legend-major { color: #c33324; }
 .full-legend-minor { color: #d87934; }
 .full-legend-focus { color: #c33f2d; }
+.full-legend-arrow, .full-legend-long-pause, .full-legend-prolong { color: #b9402e; }
+.full-legend-staccato { color: #c33f2d; letter-spacing: -0.08em; }
+.full-legend-virtual-voice {
+  padding: 0.12em 0.3em;
+  border: 0.12em dashed #a92f23;
+  border-radius: 0.28em;
+  color: #a92f23;
+}
+.full-page-legend svg {
+  width: 4mm;
+  height: 4mm;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 0.9;
+}
+.full-legend-item-real-scene svg { color: #486d86; }
+.full-legend-item-virtual-scene svg { color: #b44438; }
+.full-page-legend .recitation-distance-glyph { width: 4.2mm; height: 4.2mm; }
 .full-legend-curve {
   display: inline-block;
   width: 8mm;
@@ -6727,14 +7483,38 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
 .full-marker-groups small { color: #796d62; width: 34px; }
 .full-marker-groups button { padding: 4px 8px; border: 1px solid rgba(42, 34, 27, 0.16); border-radius: 6px; background: #fff; cursor: pointer; }
 .full-marker-groups button.active { background: #526f82; color: #fff; border-color: #526f82; }
+.full-line-break-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(42, 34, 27, 0.12);
+}
+.full-line-break-copy { display: grid; min-width: 0; gap: 2px; }
+.full-line-break-copy strong { color: #51473f; font-size: 11px; }
+.full-line-break-copy small { color: #8b8177; font-size: 9px; line-height: 1.3; }
+.full-line-break-actions { display: flex; gap: 5px; }
+.full-line-break-actions button {
+  min-width: 76px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid rgba(82, 111, 130, 0.28);
+  border-radius: 6px;
+  background: #edf3f4;
+  color: #496878;
+  cursor: pointer;
+}
+.full-line-break-actions button:disabled { cursor: not-allowed; opacity: 0.42; }
 .full-pinyin-editor { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .full-pinyin-editor input { flex: 1; padding: 4px 8px; border: 1px solid rgba(42, 34, 27, 0.2); border-radius: 6px; }
 
 .full-measure-layer {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: -100000px;
-  width: 210mm;
+  width: calc(210mm - (var(--full-a4-margin, 14mm) * 2));
   visibility: hidden;
   pointer-events: none;
 }
@@ -6745,22 +7525,22 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
 
 @media print {
   .full-editor-toolbar, .full-marker-popover, .full-measure-layer { display: none !important; }
-  .full-prolong-mark, .full-breath { display: none !important; }
   .full-editor-workspace, .full-page-stack { background: transparent; padding: 0; }
   .full-a4-page { box-shadow: none; break-after: page; }
 }
 
 /* ============ 节奏标签（Full / Compact 共用 sentence.rhythm 数据） ============ */
-.compact-sentence-rail {
+.compact-scene-meta .compact-sentence-number {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.2mm;
-  padding-top: 1mm;
-}
-
-.compact-sentence-rail .compact-sentence-number {
+  gap: 0.15mm;
   padding-top: 0;
+  color: #b43c2d;
+  font-size: 6.9pt;
+  line-height: 1;
+  letter-spacing: 0;
+  text-shadow: 0 0.2mm 0.6mm rgba(255, 255, 255, 0.94);
 }
 
 .compact-rhythm-label {
@@ -6774,6 +7554,34 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0.02em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.compact-rhythm-label:hover,
+.compact-rhythm-label:focus-visible {
+  color: #b43c2d;
+  outline: none;
+  text-shadow: 0 0 0.8mm rgba(255, 255, 255, 0.96);
+}
+
+.compact-rhythm-label:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.compact-scene-meta .compact-rhythm-label {
+  color: #46677b;
+  font-size: 6.2pt;
+  text-shadow: 0 0.2mm 0.6mm rgba(255, 255, 255, 0.96);
+}
+
+.compact-scene-meta .compact-rhythm-label:hover,
+.compact-scene-meta .compact-rhythm-label:focus-visible {
+  color: #b43c2d;
 }
 
 .full-rhythm-label {
@@ -6837,4 +7645,3 @@ button.full-token-char:hover, button.full-token-char.is-selected { background: r
   object-fit: contain;
   pointer-events: none;
 }
-

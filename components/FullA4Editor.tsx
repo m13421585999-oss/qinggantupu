@@ -21,7 +21,29 @@ import {
 } from "@/lib/prosody-visual";
 import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
 import { TeachingProsodyTrack } from "@/components/TeachingProsodyTrack";
-import { mapSceneAssetsToSentences } from "@/lib/visual-assets";
+import { DistanceViewGlyph } from "@/components/RecitationTechniqueGlyphs";
+import { VirtualVoiceGroupOverlay } from "@/components/VirtualVoiceGroupOverlay";
+import {
+  usedCompactLegendItems,
+  type CompactLegendItemId,
+} from "@/lib/compact-legend";
+import {
+  deliveryTechniqueAt,
+  distanceViewAt,
+  setDeliveryTechniqueAt,
+} from "@/lib/delivery-technique";
+import {
+  mapActiveSceneAssetsBySceneId,
+  mapSceneAssetsToSentences,
+} from "@/lib/visual-assets";
+import {
+  buildEditionSentenceRows,
+  endingTonesByTokenIndex,
+  mergeFullLayoutRowsAtToken,
+  resolveFullLayoutRows,
+  sentenceOwnerByTokenIndex,
+  usesChushibiaoVirtualVoiceSpacing,
+} from "@/lib/edition-layout";
 import { rhythmLabel } from "@/lib/recitation-schema";
 import type {
   BreathMark,
@@ -30,7 +52,9 @@ import type {
   RecitationSentence,
   RecitationWork,
   Rhythm,
+  SceneTechniqueMark,
   TimedToken,
+  EditionLayoutRow,
 } from "@/lib/recitation-schema";
 
 const FULL_MARGIN_MM = 14;
@@ -57,15 +81,30 @@ type FullSaveState = "unsaved" | "dirty" | "saving" | "saved" | "failed";
 
 interface FullBlock {
   id: string;
+  sourceSentenceIds: string[];
+  lineBreakAfterTokenIndexes: number[];
   sentence: RecitationSentence;
 }
 
+interface FullLineBlock {
+  id: string;
+  blockId: string;
+  tokenIndexes: number[];
+  cropIndex: number;
+  displayOrder: number;
+}
+
 interface FullSelection {
-  sentenceId: string;
+  blockId: string;
   tokenIndex: number;
   x: number;
   y: number;
 }
+
+const EMPTY_ENDING_TONES: ReadonlyMap<number, EndingTone> = new Map();
+const EMPTY_FULL_LINE_BLOCKS: ReadonlyMap<string, FullLineBlock> = new Map();
+const EMPTY_FULL_SCENES: ReadonlyMap<string, { url?: string; alt?: string }> = new Map();
+const EMPTY_FULL_LINE_SCENES: ReadonlyMap<string, { url?: string; prompt?: string }> = new Map();
 
 function applyPinyinOverrides(sentence: RecitationSentence, overrides: Record<string, string>) {
   if (!Object.keys(overrides).length) return sentence;
@@ -86,6 +125,12 @@ function visibleSourceCharacter(value: string) {
 
 function lineSignature(lines: GraphTokenUnit[][]) {
   return lines.map((line) => line.map((unit) => unit.token.index).join(",")).join("|");
+}
+
+function fullLineId(blockId: string, line: GraphTokenUnit[]) {
+  const first = line[0]?.token.index ?? 0;
+  const last = line.at(-1)?.token.index ?? first;
+  return `${blockId}:line:${first}-${last}`;
 }
 
 function protectedSentenceBoundaries(sentence: RecitationSentence) {
@@ -113,6 +158,19 @@ function breathAt(sentence: RecitationSentence, tokenIndex: number) {
 }
 function prolongAt(sentence: RecitationSentence, tokenIndex: number) {
   return sentence.prolongations.find((prolongation) => prolongation.tokenIndex === tokenIndex);
+}
+
+function sceneTechniqueAt(sentence: RecitationSentence, tokenIndex: number) {
+  return sentence.sceneTechniqueMarks?.find((mark) => mark.tokenIndex === tokenIndex);
+}
+
+function isSpringSceneTechniqueWork(title: string) {
+  return title
+    .normalize("NFKC")
+    .trim()
+    .replace(/^《+\s*/u, "")
+    .replace(/\s*》+$/u, "")
+    .replace(/\s+/gu, "") === "春";
 }
 
 function setPauseAt(sentence: RecitationSentence, token: TimedToken, type: PauseMark["type"]) {
@@ -223,13 +281,30 @@ function setEndingTone(sentence: RecitationSentence, type: EndingTone) {
   };
 }
 
+function FullSceneTechniqueGlyph({ type }: { type: SceneTechniqueMark["type"] }) {
+  if (type === "real") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M2.4 12s3.6-5.6 9.6-5.6 9.6 5.6 9.6 5.6-3.6 5.6-9.6 5.6S2.4 12 2.4 12Z" />
+        <circle cx="12" cy="12" r="2.8" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 20.2 4.5 13c-4.4-4.2 1.8-10.7 6.2-6.2L12 8.1l1.3-1.3c4.4-4.5 10.6 2 6.2 6.2L12 20.2Z" />
+    </svg>
+  );
+}
+
 function FullTokenUnit({
   unit,
   sentence,
   focused,
   editable,
   selected,
-  endingTokenIndex,
+  showSceneTechniqueRow,
+  endingTone,
   characterRef,
   measureRef,
   onSelect,
@@ -239,55 +314,60 @@ function FullTokenUnit({
   focused: boolean;
   editable: boolean;
   selected: boolean;
-  endingTokenIndex?: number;
+  showSceneTechniqueRow: boolean;
+  endingTone?: EndingTone;
   characterRef?: (element: HTMLElement | null) => void;
   measureRef?: (element: HTMLSpanElement | null) => void;
   onSelect?: (anchor: HTMLElement) => void;
 }) {
-  // Full renders the primary recitation cues (重音, short pause /, ending tone
-  // ↗/↘, prosody curve) plus the 拖音 line and 换气 mark as EDITOR-ONLY aids.
-  // These two are excluded from print/export (data-export-exclude) so the
-  // published Full/PDF layout is unchanged; the underlying ControlSpec data is
-  // untouched. This reuses the same ProlongMark/BreathMark semantics already used
-  // by the studio graph view and the print tree.
-  const shortPause = sentence.pauses.find(
-    (pause) => pause.afterTokenIndex === unit.token.index && pause.type === "short",
-  );
+  const pause = pauseAt(sentence, unit.token.index);
   const prolong = prolongAt(sentence, unit.token.index);
   const breath = breathAt(sentence, unit.token.index);
-  const isEndingHost = endingTokenIndex === unit.token.index;
-  const tone = isEndingHost && sentence.endingIntonation.type !== "level"
-    ? sentence.endingIntonation.type
-    : undefined;
+  const sceneTechnique = sceneTechniqueAt(sentence, unit.token.index);
+  const virtualVoice = deliveryTechniqueAt(sentence, unit.token.index, "virtual_voice");
+  const distanceView = distanceViewAt(sentence, unit.token.index);
+  const tone = endingTone && endingTone !== "level" ? endingTone : undefined;
   const select = (anchor: HTMLElement) => onSelect?.(anchor);
-  const charContent = (
-    <>
-      {unit.token.char}
-      {prolong ? (
-        <span
-          className="full-prolong-mark"
-          data-marker="prolongation"
-          data-export-exclude="true"
-          aria-label="拖音"
-          aria-hidden="true"
-        />
-      ) : null}
-    </>
-  );
+  const charContent = unit.token.char;
   return (
     <span className="full-token-unit" ref={measureRef} data-full-token-index={unit.token.index}>
       <span className="full-token-manuscript">
         {unit.prefixPunctuation.map((token) => (
           <span className="full-source-punctuation" key={token.id}>{visibleSourceCharacter(token.char)}</span>
         ))}
-        <span className="full-spoken-token">
+        {distanceView ? (
+          <span
+            className={`full-distance-marker is-${distanceView.type}`}
+            aria-label={distanceView.type === "distant_view" ? "远景" : "近景"}
+          >
+            <DistanceViewGlyph type={distanceView.type} />
+          </span>
+        ) : null}
+        {breath ? (
+          <span
+            className={`full-breath full-breath-${breath.type === "breath_major" ? "major" : "minor"}`}
+            data-marker="breath"
+            aria-label={breath.type === "breath_major" ? "换气" : "偷气"}
+          >
+            {breath.type === "breath_major" ? "V" : "v"}
+          </span>
+        ) : null}
+        <span className={`full-spoken-token ${showSceneTechniqueRow ? "has-scene-technique-row" : ""}`}>
+          {showSceneTechniqueRow ? (
+            <span
+              className={`full-scene-technique-slot ${sceneTechnique ? `is-${sceneTechnique.type}` : ""}`}
+              aria-label={sceneTechnique?.type === "real" ? "实景" : sceneTechnique?.type === "virtual" ? "虚景" : undefined}
+            >
+              {sceneTechnique ? <FullSceneTechniqueGlyph type={sceneTechnique.type} /> : null}
+            </span>
+          ) : null}
           <span className="full-token-pinyin" aria-hidden="true">
             {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
           </span>
           {editable ? (
             <button
               type="button"
-              className={`full-token-char ${focused ? "is-focus" : ""} ${selected ? "is-selected" : ""}`}
+              className={`full-token-char ${focused ? "is-focus" : ""} ${virtualVoice ? "is-virtual-voice" : ""} ${selected ? "is-selected" : ""}`}
               ref={characterRef as (element: HTMLButtonElement | null) => void}
               onClick={(event) => select(event.currentTarget)}
               aria-label={`编辑“${unit.token.char}”及其后方标识`}
@@ -295,22 +375,26 @@ function FullTokenUnit({
               {charContent}
             </button>
           ) : (
-            <span className={`full-token-char ${focused ? "is-focus" : ""}`} ref={characterRef}>
+            <span className={`full-token-char ${focused ? "is-focus" : ""} ${virtualVoice ? "is-virtual-voice" : ""}`} ref={characterRef}>
               {charContent}
             </span>
           )}
         </span>
-        {shortPause || tone || breath ? (
+        {prolong ? (
+          <span
+            className="full-prolong-mark"
+            data-marker="prolongation"
+            aria-label="拖音"
+          >—</span>
+        ) : null}
+        {pause || tone ? (
           <span className="full-token-marker">
-            {shortPause ? <span className="full-pause">/</span> : null}
-            {breath ? (
+            {pause ? (
               <span
-                className={`full-breath full-breath-${breath.type === "breath_major" ? "major" : "minor"}`}
-                data-marker="breath"
-                data-export-exclude="true"
-                aria-label="换气"
+                className={`full-pause full-pause-${pause.type}`}
+                aria-label={pause.type === "long" ? "长停" : "短停"}
               >
-                {breath.type === "breath_major" ? "V" : "v"}
+                {pause.type === "long" ? "///" : "/"}
               </span>
             ) : null}
             {tone ? (
@@ -343,8 +427,10 @@ function FullGraphLine({
   focused,
   points,
   editable,
+  showSceneTechniqueRow,
+  showProsodyCurve,
   selectedTokenIndex,
-  endingTokenIndex,
+  endingToneByTokenIndex = EMPTY_ENDING_TONES,
   onSelectToken,
   onPointChange,
 }: {
@@ -353,15 +439,17 @@ function FullGraphLine({
   focused: Set<number>;
   points: TeachingProsodyPoint[];
   editable: boolean;
+  showSceneTechniqueRow: boolean;
+  showProsodyCurve: boolean;
   selectedTokenIndex?: number;
-  endingTokenIndex?: number;
+  endingToneByTokenIndex: ReadonlyMap<number, EndingTone>;
   onSelectToken?: (token: TimedToken, anchor: HTMLElement) => void;
   onPointChange?: (tokenIndex: number, visualLevel: number) => void;
 }) {
   const [rowElement, setRowElement] = useState<HTMLDivElement | null>(null);
   const characterRefs = useRef(new Map<number, HTMLElement>());
   return (
-    <div className="full-graph-line" ref={setRowElement}>
+    <div className={`full-graph-line ${showSceneTechniqueRow ? "is-scene-technique" : ""}`} ref={setRowElement}>
       <div className="full-token-row">
         {units.map((unit) => (
           <FullTokenUnit
@@ -370,7 +458,8 @@ function FullGraphLine({
             focused={focused.has(unit.token.index)}
             editable={editable}
             selected={selectedTokenIndex === unit.token.index}
-            endingTokenIndex={endingTokenIndex}
+            showSceneTechniqueRow={showSceneTechniqueRow}
+            endingTone={endingToneByTokenIndex.get(unit.token.index)}
             key={unit.key}
             characterRef={(element) => {
               if (element) characterRefs.current.set(unit.token.index, element);
@@ -380,29 +469,47 @@ function FullGraphLine({
           />
         ))}
       </div>
-      <TeachingProsodyTrack
-        units={units}
-        points={points}
+      <VirtualVoiceGroupOverlay
+        sentence={sentence}
+        tokenIndexes={units.map((unit) => unit.token.index)}
         characterRefs={characterRefs}
         rowElement={rowElement}
-        editable={editable}
-        curveHeight={FULL_CURVE_HEIGHT}
-        curvePadding={FULL_CURVE_PADDING}
-        className="full-prosody-curve"
-        onPointChange={onPointChange}
       />
+      {showProsodyCurve ? (
+        <TeachingProsodyTrack
+          units={units}
+          points={points}
+          characterRefs={characterRefs}
+          rowElement={rowElement}
+          editable={editable}
+          curveHeight={FULL_CURVE_HEIGHT}
+          curvePadding={FULL_CURVE_PADDING}
+          className="full-prosody-curve"
+          onPointChange={onPointChange}
+        />
+      ) : null}
     </div>
   );
 }
 
 function FullGraphTrack({
   sentence,
+  measure = false,
+  lineTokenIndexes,
+  endingToneByTokenIndex = EMPTY_ENDING_TONES,
+  showSceneTechniqueRow = false,
+  showProsodyCurve = true,
   editable,
   selectedTokenIndex,
   onSelectToken,
   onPointChange,
 }: {
   sentence: RecitationSentence;
+  measure?: boolean;
+  lineTokenIndexes?: readonly number[];
+  endingToneByTokenIndex: ReadonlyMap<number, EndingTone>;
+  showSceneTechniqueRow?: boolean;
+  showProsodyCurve?: boolean;
   editable: boolean;
   selectedTokenIndex?: number;
   onSelectToken?: (token: TimedToken, anchor: HTMLElement) => void;
@@ -412,7 +519,12 @@ function FullGraphTrack({
   const probeRefs = useRef(new Map<number, HTMLSpanElement>());
   const units = useMemo(() => buildGraphTokenUnits(sentence), [sentence]);
   const [lines, setLines] = useState<GraphTokenUnit[][]>(() => units.length ? [units] : []);
-  const endingTokenIndex = units.at(-1)?.token.index;
+  const fixedLine = useMemo(() => {
+    if (!lineTokenIndexes) return undefined;
+    const included = new Set(lineTokenIndexes);
+    return units.filter((unit) => included.has(unit.token.index));
+  }, [lineTokenIndexes, units]);
+  const displayedLines = fixedLine ? [fixedLine] : lines;
   const focused = useMemo(() => focusIndexes(sentence), [sentence]);
   const points = useMemo(
     () => applyProsodyPointOverrides(
@@ -426,6 +538,7 @@ function FullGraphTrack({
   );
 
   const fitLines = useCallback(() => {
+    if (lineTokenIndexes) return;
     const track = trackRef.current;
     if (!track || !units.length || track.clientWidth <= 0) return;
     const styles = window.getComputedStyle(track);
@@ -441,9 +554,10 @@ function FullGraphTrack({
       unitGap,
       preferredBoundaryIndexes: sentence.prosody.map((event) => event.activeSpan.end),
       protectedBoundaryIndexes: protectedSentenceBoundaries(sentence),
+      forcedBoundaryIndexes: sentence.lineBreakAfterTokenIndexes,
     });
     setLines((current) => lineSignature(current) === lineSignature(nextLines) ? current : nextLines);
-  }, [sentence, units]);
+  }, [lineTokenIndexes, sentence, units]);
 
   useLayoutEffect(() => {
     const track = trackRef.current;
@@ -478,7 +592,8 @@ function FullGraphTrack({
             focused={focused.has(unit.token.index)}
             editable={false}
             selected={false}
-            endingTokenIndex={endingTokenIndex}
+            showSceneTechniqueRow={showSceneTechniqueRow}
+            endingTone={endingToneByTokenIndex.get(unit.token.index)}
             key={`probe-${unit.key}`}
             measureRef={(element) => {
               if (element) probeRefs.current.set(unit.token.index, element);
@@ -488,20 +603,35 @@ function FullGraphTrack({
         ))}
       </div>
       <div className="full-graph-lines">
-        {lines.map((line, index) => (
-          <FullGraphLine
-            units={line}
-            sentence={sentence}
-            focused={focused}
-            points={points}
-            editable={editable}
-            selectedTokenIndex={selectedTokenIndex}
-            endingTokenIndex={endingTokenIndex}
-            onSelectToken={onSelectToken}
-            onPointChange={onPointChange}
-            key={`${sentence.id}-full-line-${index}-${line[0]?.token.index}`}
-          />
-        ))}
+        {displayedLines.map((line, index) => {
+          const lineId = fullLineId(sentence.id, line);
+          return (
+            <div
+              className="full-visual-line"
+              data-full-line-measure-id={measure ? lineId : undefined}
+              data-full-layout-block-id={measure ? sentence.id : undefined}
+              data-full-token-indexes={measure
+                ? line.map((unit) => unit.token.index).join(",")
+                : undefined}
+              data-full-crop-index={measure ? index : undefined}
+              key={lineId}
+            >
+              <FullGraphLine
+                units={line}
+                sentence={sentence}
+                focused={focused}
+                points={points}
+                editable={editable}
+                showSceneTechniqueRow={showSceneTechniqueRow}
+                showProsodyCurve={showProsodyCurve}
+                selectedTokenIndex={selectedTokenIndex}
+                endingToneByTokenIndex={endingToneByTokenIndex}
+                onSelectToken={onSelectToken}
+                onPointChange={onPointChange}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -511,16 +641,21 @@ function FullSceneCard({
   imageUrl,
   imageAlt,
   order,
+  sourceOrder,
+  cropIndex = 0,
   rhythm,
 }: {
   imageUrl?: string;
   imageAlt?: string;
   order: number;
+  sourceOrder?: number;
+  cropIndex?: number;
   rhythm: Rhythm;
 }) {
   const [failed, setFailed] = useState<string>();
   const available = Boolean(imageUrl && imageUrl !== failed);
   const label = rhythmLabel(rhythm);
+  const cropPositions = ["center 42%", "center 56%", "center 68%"] as const;
   return (
     <aside className="full-scene-card" aria-label={imageAlt ?? `第 ${order} 句情景小卡`}>
       {available && imageUrl ? (
@@ -531,6 +666,7 @@ function FullSceneCard({
           alt={imageAlt ?? ""}
           loading="lazy"
           decoding="async"
+          style={{ objectPosition: cropPositions[((sourceOrder ?? order) - 1 + cropIndex) % cropPositions.length] }}
           onError={() => setFailed(imageUrl)}
         />
       ) : (
@@ -546,8 +682,12 @@ function FullSceneCard({
 
 function FullSentenceRow({
   block,
+  lineBlock,
   sceneImageUrl,
   sceneImageAlt,
+  endingToneByTokenIndex,
+  showSceneTechniqueRow = false,
+  showProsodyCurve = true,
   measure = false,
   editable = false,
   selectedTokenIndex,
@@ -555,8 +695,12 @@ function FullSentenceRow({
   onPointChange,
 }: {
   block: FullBlock;
+  lineBlock?: FullLineBlock;
   sceneImageUrl?: string;
   sceneImageAlt?: string;
+  endingToneByTokenIndex: ReadonlyMap<number, EndingTone>;
+  showSceneTechniqueRow?: boolean;
+  showProsodyCurve?: boolean;
   measure?: boolean;
   editable?: boolean;
   selectedTokenIndex?: number;
@@ -566,18 +710,24 @@ function FullSentenceRow({
   return (
     <section
       className="full-sentence-row"
-      data-full-block-id={measure ? undefined : block.id}
-      data-full-measure-id={measure ? block.id : undefined}
+      data-full-block-id={measure ? undefined : (lineBlock?.id ?? block.id)}
     >
       <FullSceneCard
         imageUrl={sceneImageUrl}
         imageAlt={sceneImageAlt}
-        order={block.sentence.order}
+        order={lineBlock?.displayOrder ?? block.sentence.order}
+        sourceOrder={block.sentence.order}
+        cropIndex={lineBlock?.cropIndex}
         rhythm={block.sentence.rhythm}
       />
-      <div className="full-sentence-body">
+      <div className={`full-sentence-body ${showSceneTechniqueRow ? "is-scene-technique" : ""}`}>
         <FullGraphTrack
           sentence={block.sentence}
+          measure={measure}
+          lineTokenIndexes={lineBlock?.tokenIndexes}
+          endingToneByTokenIndex={endingToneByTokenIndex}
+          showSceneTechniqueRow={showSceneTechniqueRow}
+          showProsodyCurve={showProsodyCurve}
           editable={editable}
           selectedTokenIndex={selectedTokenIndex}
           onSelectToken={onSelectToken}
@@ -608,15 +758,51 @@ function FullPageHeader({ work, page, total }: {
   );
 }
 
-function FullPageLegend() {
-  // Full only displays short pause, tone, 重音 and the prosody curve, so the
-  // footer legend is kept to exactly those cues.
+function FullLegendGlyph({ id }: { id: CompactLegendItemId }) {
+  if (id === "breath-major") return <b className="full-legend-major">V</b>;
+  if (id === "breath-minor") return <b className="full-legend-minor">v</b>;
+  if (id === "pause-short") return <b>/</b>;
+  if (id === "pause-long") return <b className="full-legend-long-pause">{"///"}</b>;
+  if (id === "focus") return <b className="full-legend-focus">红</b>;
+  if (id === "prosody-curve") return <i className="full-legend-curve" aria-hidden="true" />;
+  if (id === "intonation-rising") return <b className="full-legend-arrow">↗</b>;
+  if (id === "intonation-falling") return <b className="full-legend-arrow">↘</b>;
+  if (id === "prolong") return <b className="full-legend-prolong">—</b>;
+  if (id === "staccato") return <b className="full-legend-staccato">/红/红</b>;
+  if (id === "real-scene") return <FullSceneTechniqueGlyph type="real" />;
+  if (id === "virtual-scene") return <FullSceneTechniqueGlyph type="virtual" />;
+  if (id === "virtual-voice") return <b className="full-legend-virtual-voice">声</b>;
+  if (id === "distant-view") return <DistanceViewGlyph type="distant_view" />;
+  return <DistanceViewGlyph type="close_view" />;
+}
+
+const FULL_LEGEND_LABELS: Record<CompactLegendItemId, string> = {
+  "breath-major": "换气",
+  "breath-minor": "偷气",
+  "pause-short": "短停",
+  "pause-long": "长停",
+  focus: "重音",
+  "prosody-curve": "语势曲线",
+  "intonation-rising": "上扬",
+  "intonation-falling": "下降",
+  prolong: "拖音",
+  staccato: "一字一顿",
+  "real-scene": "实景",
+  "virtual-scene": "虚景",
+  "virtual-voice": "虚声",
+  "distant-view": "远景",
+  "close-view": "近景",
+};
+
+function FullPageLegend({ items }: { items: readonly CompactLegendItemId[] }) {
   return (
-    <footer className="full-page-legend">
-      <span><b>/</b> 短停</span>
-      <span><b>↗ ↘</b> 语调</span>
-      <span><b className="full-legend-focus">红</b> 重音</span>
-      <span><i className="full-legend-curve" aria-hidden="true" /> 语势曲线</span>
+    <footer className={`full-page-legend ${items.length ? "" : "is-empty"}`} aria-label="朗诵标识图例">
+      {items.map((id) => (
+        <span className={`full-legend-item full-legend-item-${id}`} key={id}>
+          <FullLegendGlyph id={id} />
+          {FULL_LEGEND_LABELS[id]}
+        </span>
+      ))}
     </footer>
   );
 }
@@ -625,7 +811,13 @@ function FullA4Page({
   work,
   plan,
   blocksById,
-  sceneAssetsBySentenceId,
+  lineBlocksById = EMPTY_FULL_LINE_BLOCKS,
+  sceneAssetsByBlockId = EMPTY_FULL_SCENES,
+  sceneAssetsByLineId = EMPTY_FULL_LINE_SCENES,
+  endingToneByTokenIndex = EMPTY_ENDING_TONES,
+  legendItems,
+  showSceneTechniqueRow,
+  showProsodyCurve,
   total,
   selection,
   onSelectToken,
@@ -634,17 +826,20 @@ function FullA4Page({
   work: RecitationWork;
   plan: PrintPagePlan;
   blocksById: ReadonlyMap<string, FullBlock>;
-  sceneAssetsBySentenceId: ReadonlyMap<string, { url?: string; alt?: string }>;
+  lineBlocksById: ReadonlyMap<string, FullLineBlock>;
+  sceneAssetsByBlockId: ReadonlyMap<string, { url?: string; alt?: string }>;
+  sceneAssetsByLineId: ReadonlyMap<string, { url?: string; prompt?: string }>;
+  endingToneByTokenIndex: ReadonlyMap<number, EndingTone>;
+  legendItems: readonly CompactLegendItemId[];
+  showSceneTechniqueRow: boolean;
+  showProsodyCurve: boolean;
   total: number;
   selection?: FullSelection;
   onSelectToken: (sentence: RecitationSentence, token: TimedToken, anchor: HTMLElement) => void;
   onPointChange: (sentence: RecitationSentence, tokenIndex: number, visualLevel: number) => void;
 }) {
-  const slotBlocks: Array<FullBlock | undefined> = [0, 1, 2, 3].map(
-    (slotIndex) => {
-      const blockId = plan.blockIds[slotIndex];
-      return blockId ? blocksById.get(blockId) : undefined;
-    },
+  const slotLines: Array<FullLineBlock | undefined> = [0, 1, 2, 3].map(
+    (slotIndex) => lineBlocksById.get(plan.blockIds[slotIndex] ?? ""),
   );
   return (
     <article
@@ -667,17 +862,26 @@ function FullA4Page({
         </div>
         <FullPageHeader work={work} page={plan.index + 1} total={total} />
         <div className="full-page-body full-page-body-slots">
-          {slotBlocks.map((block, slotIndex) => {
-            const scene = block ? sceneAssetsBySentenceId.get(block.id) : undefined;
+          {slotLines.map((lineBlock, slotIndex) => {
+            const block = lineBlock ? blocksById.get(lineBlock.blockId) : undefined;
+            const lineScene = lineBlock ? sceneAssetsByLineId.get(lineBlock.id) : undefined;
+            const blockScene = block ? sceneAssetsByBlockId.get(block.id) : undefined;
+            const scene = lineScene
+              ? { url: lineScene.url, alt: lineScene.prompt }
+              : blockScene;
             return (
               <div className="full-slot" key={slotIndex} data-full-slot={slotIndex + 1}>
                 {block ? (
                   <FullSentenceRow
                     block={block}
+                    lineBlock={lineBlock}
                     sceneImageUrl={scene?.url}
                     sceneImageAlt={scene?.alt}
+                    endingToneByTokenIndex={endingToneByTokenIndex}
+                    showSceneTechniqueRow={showSceneTechniqueRow}
+                    showProsodyCurve={showProsodyCurve}
                     editable
-                    selectedTokenIndex={selection?.sentenceId === block.sentence.id ? selection.tokenIndex : undefined}
+                    selectedTokenIndex={selection?.blockId === block.id ? selection.tokenIndex : undefined}
                     onSelectToken={(token, anchor) => onSelectToken(block.sentence, token, anchor)}
                     onPointChange={(tokenIndex, visualLevel) => onPointChange(block.sentence, tokenIndex, visualLevel)}
                     key={block.id}
@@ -687,7 +891,7 @@ function FullA4Page({
             );
           })}
         </div>
-        <FullPageLegend />
+        <FullPageLegend items={legendItems} />
       </div>
       <div className="full-logo-footer" aria-hidden="true">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -709,6 +913,7 @@ export function FullA4Editor({
   work,
   saveState,
   onSentenceChange,
+  onLayoutRowsChange,
   onPinyinOverrideChange,
   onSave,
   onOpenLibrary,
@@ -717,32 +922,70 @@ export function FullA4Editor({
   work: RecitationWork;
   saveState: FullSaveState;
   onSentenceChange: (sentence: RecitationSentence) => void;
+  onLayoutRowsChange: (rows: EditionLayoutRow[]) => void;
   onPinyinOverrideChange: (tokenId: string, value: string) => void;
   onSave: () => void;
   onOpenLibrary: () => void;
   onSwitchCompact: () => void;
 }) {
   const spec = work.controlSpec;
-  const blocks = useMemo<FullBlock[]>(
-    () => (spec?.sentences ?? []).map((sentence) => ({
-      id: sentence.id,
-      sentence: applyPinyinOverrides(sentence, spec?.pinyinOverrides ?? {}),
-    })),
+  const chushibiaoVirtualVoiceSpacing = usesChushibiaoVirtualVoiceSpacing(work.id);
+  const springSceneTechniqueMode = isSpringSceneTechniqueWork(work.title);
+  const legendItems = useMemo(
+    () => usedCompactLegendItems(spec?.sentences ?? [], {
+      showProsodyCurve: true,
+    }),
+    [spec?.sentences],
+  );
+  const canonicalSentences = useMemo(
+    () => (spec?.sentences ?? []).map((sentence) => (
+      applyPinyinOverrides(sentence, spec?.pinyinOverrides ?? {})
+    )),
     [spec],
   );
+  const blocks = useMemo<FullBlock[]>(
+    () => {
+      if (!spec) return [];
+      const renderSpec = { ...spec, sentences: canonicalSentences };
+      return buildEditionSentenceRows(renderSpec, resolveFullLayoutRows(spec)).map((row) => ({
+        id: row.id,
+        sourceSentenceIds: row.sourceSentenceIds,
+        lineBreakAfterTokenIndexes: row.lineBreakAfterTokenIndexes,
+        sentence: row.sentence,
+      }));
+    },
+    [canonicalSentences, spec],
+  );
   const blocksById = useMemo(() => new Map(blocks.map((block) => [block.id, block])), [blocks]);
+  const sentenceOwners = useMemo(
+    () => sentenceOwnerByTokenIndex(canonicalSentences),
+    [canonicalSentences],
+  );
+  const endingToneByTokenIndex = useMemo(
+    () => endingTonesByTokenIndex(canonicalSentences),
+    [canonicalSentences],
+  );
   const sceneAssetsBySentenceId = useMemo(
     () => mapSceneAssetsToSentences(work.visuals, spec?.sentences ?? []),
     [work.visuals, spec],
   );
-  const sceneAssetsView = useMemo(
-    () => new Map([...sceneAssetsBySentenceId.entries()].map(([id, asset]) => [
-      id,
-      { url: asset.url, alt: asset.prompt },
-    ])),
-    [sceneAssetsBySentenceId],
+  const sceneAssetsByBlockId = useMemo(
+    () => new Map(blocks.flatMap((block) => {
+      const asset = block.sourceSentenceIds
+        .map((sentenceId) => sceneAssetsBySentenceId.get(sentenceId))
+        .find(Boolean);
+      return asset ? [[block.id, { url: asset.url, alt: asset.prompt }] as const] : [];
+    })),
+    [blocks, sceneAssetsBySentenceId],
   );
+  const sceneAssetsByLineId = useMemo(
+    () => mapActiveSceneAssetsBySceneId(work.visuals),
+    [work.visuals],
+  );
+  const measureRootRef = useRef<HTMLDivElement>(null);
   const pageStackRef = useRef<HTMLDivElement>(null);
+  const lineSignatureRef = useRef("");
+  const [lineBlocks, setLineBlocks] = useState<FullLineBlock[]>([]);
   const [selection, setSelection] = useState<FullSelection>();
   const [pinyinEditorOpen, setPinyinEditorOpen] = useState(false);
   const [pinyinDraft, setPinyinDraft] = useState("");
@@ -750,34 +993,88 @@ export function FullA4Editor({
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportError, setExportError] = useState<string>();
   const workspaceStyle = { "--full-a4-margin": `${FULL_MARGIN_MM}mm` } as CSSProperties;
+  const lineBlocksById = useMemo(
+    () => new Map(lineBlocks.map((lineBlock) => [lineBlock.id, lineBlock])),
+    [lineBlocks],
+  );
 
-  // Fixed four-slot layout: every page carries exactly four equal slots, each
-  // holding one sentence row vertically centered inside it. Pages are cut at
-  // 4 sentences/page; a final short page keeps its remaining slots empty
-  // instead of re-spreading content.
+  const calculateFullLines = useCallback(() => {
+    const root = measureRootRef.current;
+    if (!root || !blocks.length) {
+      lineSignatureRef.current = "";
+      setLineBlocks([]);
+      return;
+    }
+    const measuredLines = Array.from(root.querySelectorAll<HTMLElement>("[data-full-line-measure-id]"));
+    if (!measuredLines.length) return;
+    const nextLines = measuredLines.map((element, index) => ({
+      id: element.dataset.fullLineMeasureId ?? "",
+      blockId: element.dataset.fullLayoutBlockId ?? "",
+      tokenIndexes: (element.dataset.fullTokenIndexes ?? "")
+        .split(",")
+        .map((value) => Number.parseInt(value, 10))
+        .filter(Number.isFinite),
+      cropIndex: Number.parseInt(element.dataset.fullCropIndex ?? "0", 10) || 0,
+      displayOrder: index + 1,
+    }));
+    if (nextLines.some((line) => !line.id || !line.blockId || !line.tokenIndexes.length)) return;
+    const signature = nextLines.map((line) => (
+      `${line.id}:${line.blockId}:${line.tokenIndexes.join(",")}`
+    )).join("|");
+    if (lineSignatureRef.current !== signature) {
+      lineSignatureRef.current = signature;
+      setLineBlocks(nextLines);
+    }
+  }, [blocks]);
+
+  useLayoutEffect(() => {
+    const root = measureRootRef.current;
+    if (!root) return;
+    let frame = 0;
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => window.requestAnimationFrame(calculateFullLines));
+    };
+    schedule();
+    const observer = new ResizeObserver(schedule);
+    observer.observe(root);
+    root.querySelectorAll<HTMLElement>("[data-full-line-measure-id], .full-graph-track")
+      .forEach((element) => observer.observe(element));
+    document.fonts?.addEventListener("loadingdone", schedule);
+    void document.fonts?.ready.then(schedule);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      document.fonts?.removeEventListener("loadingdone", schedule);
+    };
+  }, [blocks, calculateFullLines]);
+
+  // Full owns its measured visual lines. Each physical slot receives exactly
+  // one line, so Compact row edits can never create overflowing Full cards.
   const pages = useMemo<PrintPagePlan[]>(() => {
-    const pageCount = Math.max(1, Math.ceil(blocks.length / 4));
+    if (!lineBlocks.length) return [];
+    const pageCount = Math.ceil(lineBlocks.length / 4);
     return Array.from({ length: pageCount }, (_, index) => ({
       index,
-      blockIds: blocks
+      blockIds: lineBlocks
         .slice(index * 4, index * 4 + 4)
-        .map((block) => block.id),
+        .map((line) => line.id),
       usedHeightPx: 0,
       capacityPx: 0,
       hasOversizedBlock: false,
     }));
-  }, [blocks]);
+  }, [lineBlocks]);
 
   const layoutMessage = exportStatus
-    || (blocks.length
-      ? `已按每页 4 句排成 ${pages.length} 页；每句在各自槽位垂直居中`
-      : "正在按每页 4 句排布 A4…");
+    || (lineBlocks.length
+      ? `完整版独立排成 ${lineBlocks.length} 行、${pages.length} 页；每页 4 行`
+      : "正在按完整版字宽独立分行…");
 
   const openSelection = (sentence: RecitationSentence, token: TimedToken, anchor: HTMLElement) => {
     const rect = anchor.getBoundingClientRect();
     const width = 386;
     setSelection({
-      sentenceId: sentence.id,
+      blockId: sentence.id,
       tokenIndex: token.index,
       x: Math.max(12, Math.min(window.innerWidth - width - 12, rect.left + rect.width / 2 - width / 2)),
       y: Math.max(80, Math.min(window.innerHeight - 238, rect.bottom + 10)),
@@ -786,27 +1083,58 @@ export function FullA4Editor({
     setPinyinDraft(token.displayPinyin ?? token.pinyin ?? "");
   };
 
-  const changePoint = (sentence: RecitationSentence, tokenIndex: number, visualLevel: number) => {
+  const changePoint = (_sentence: RecitationSentence, tokenIndex: number, visualLevel: number) => {
+    const owner = sentenceOwners.get(tokenIndex);
+    if (!owner) return;
     onSentenceChange({
-      ...sentence,
+      ...owner,
       prosodyPointOverrides: upsertProsodyPointOverride(
-        sentence.prosodyPointOverrides ?? [],
+        owner.prosodyPointOverrides ?? [],
         tokenIndex,
         visualLevel,
       ),
     });
   };
 
-  const selectedSentence = selection ? blocksById.get(selection.sentenceId)?.sentence : undefined;
+  const selectedSentence = selection ? sentenceOwners.get(selection.tokenIndex) : undefined;
   const selectedToken = selectedSentence?.tokens.find((token) => token.index === selection?.tokenIndex);
   const selectedPause = selectedSentence && selectedToken ? pauseAt(selectedSentence, selectedToken.index) : undefined;
   const selectedBreath = selectedSentence && selectedToken ? breathAt(selectedSentence, selectedToken.index) : undefined;
   const selectedFocused = Boolean(selectedSentence && selectedToken && focusIndexes(selectedSentence).has(selectedToken.index));
   const selectedProlong = Boolean(selectedSentence && selectedToken && prolongAt(selectedSentence, selectedToken.index));
+  const selectedVirtualVoice = Boolean(selectedSentence && selectedToken && (
+    deliveryTechniqueAt(selectedSentence, selectedToken.index, "virtual_voice")
+  ));
+  const selectedDistanceView = selectedSentence && selectedToken
+    ? distanceViewAt(selectedSentence, selectedToken.index)
+    : undefined;
+  const selectedLineBlockIndex = selectedToken
+    ? lineBlocks.findIndex((lineBlock) => lineBlock.tokenIndexes.includes(selectedToken.index))
+    : -1;
+  const canMergeIntoPreviousLine = selectedLineBlockIndex > 0;
+  const canMergeIntoNextLine = selectedLineBlockIndex >= 0
+    && selectedLineBlockIndex < lineBlocks.length - 1;
 
   const editSelected = (transform: (sentence: RecitationSentence, token: TimedToken) => RecitationSentence) => {
     if (!selectedSentence || !selectedToken) return;
     onSentenceChange(transform(selectedSentence, selectedToken));
+  };
+
+  const mergeSelectedIntoLine = (direction: "previous" | "next") => {
+    if (!spec || !selectedToken) return;
+    const nextRows = mergeFullLayoutRowsAtToken(
+      spec,
+      lineBlocks.map((lineBlock) => ({
+        rowId: lineBlock.blockId,
+        tokenIndexes: lineBlock.tokenIndexes,
+      })),
+      selectedToken.index,
+      direction,
+    );
+    if (!nextRows) return;
+    onLayoutRowsChange(nextRows);
+    setSelection(undefined);
+    setPinyinEditorOpen(false);
   };
 
   const saveSelectedPinyin = () => {
@@ -816,7 +1144,10 @@ export function FullA4Editor({
     setPinyinEditorOpen(false);
   };
 
-  const scenesIncomplete = blocks.some((block) => !sceneAssetsBySentenceId.get(block.id)?.url);
+  const scenesIncomplete = lineBlocks.some((lineBlock) => {
+    if (sceneAssetsByLineId.get(lineBlock.id)?.url) return false;
+    return !sceneAssetsByBlockId.get(lineBlock.blockId)?.url;
+  });
 
   const exportPdf = async () => {
     if (exportingPdf || !pages.length) return;
@@ -878,7 +1209,7 @@ export function FullA4Editor({
 
   return (
     <section
-      className={`full-editor-workspace ${exportingPdf ? "is-exporting" : ""}`}
+      className={`full-editor-workspace ${exportingPdf ? "is-exporting" : ""} ${springSceneTechniqueMode ? "is-spring-scene-technique" : ""} ${chushibiaoVirtualVoiceSpacing ? "is-chushibiao-virtual-spacing" : ""}`}
       style={workspaceStyle}
       aria-label="完整版 A4 朗诵谱编辑器"
     >
@@ -925,12 +1256,31 @@ export function FullA4Editor({
             work={work}
             plan={page}
             blocksById={blocksById}
-            sceneAssetsBySentenceId={sceneAssetsView}
+            lineBlocksById={lineBlocksById}
+            sceneAssetsByBlockId={sceneAssetsByBlockId}
+            sceneAssetsByLineId={sceneAssetsByLineId}
+            endingToneByTokenIndex={endingToneByTokenIndex}
+            legendItems={legendItems}
+            showSceneTechniqueRow={springSceneTechniqueMode}
+            showProsodyCurve
             total={pages.length}
             selection={selection}
             onSelectToken={openSelection}
             onPointChange={changePoint}
             key={`full-page-${page.index}-${page.blockIds.join("-")}`}
+          />
+        ))}
+      </div>
+
+      <div className="full-measure-layer" aria-hidden="true" ref={measureRootRef}>
+        {blocks.map((block) => (
+          <FullSentenceRow
+            block={block}
+            endingToneByTokenIndex={endingToneByTokenIndex}
+            showSceneTechniqueRow={springSceneTechniqueMode}
+            showProsodyCurve
+            measure
+            key={`full-measure-${block.id}`}
           />
         ))}
       </div>
@@ -959,7 +1309,7 @@ export function FullA4Editor({
                 type="button"
                 className={selectedPause?.type === "long" ? "active" : ""}
                 onClick={() => editSelected((sentence, token) => setPauseAt(sentence, token, "long"))}
-              >{"//"}</button>
+              >{"///"}</button>
             </div>
             <div>
               <small>换气</small>
@@ -988,6 +1338,21 @@ export function FullA4Editor({
               >拖音</button>
               <button
                 type="button"
+                className={`full-virtual-voice-button ${selectedVirtualVoice ? "active" : ""}`}
+                onClick={() => editSelected((sentence, token) => setDeliveryTechniqueAt(sentence, token, "virtual_voice"))}
+              ><span aria-hidden="true">声</span>虚声</button>
+              <button
+                type="button"
+                className={`full-distance-button ${selectedDistanceView?.type === "distant_view" ? "active" : ""}`}
+                onClick={() => editSelected((sentence, token) => setDeliveryTechniqueAt(sentence, token, "distant_view"))}
+              ><DistanceViewGlyph type="distant_view" />远景</button>
+              <button
+                type="button"
+                className={`full-distance-button ${selectedDistanceView?.type === "close_view" ? "active" : ""}`}
+                onClick={() => editSelected((sentence, token) => setDeliveryTechniqueAt(sentence, token, "close_view"))}
+              ><DistanceViewGlyph type="close_view" />近景</button>
+              <button
+                type="button"
                 className={selectedSentence.endingIntonation.type === "rising" ? "active" : ""}
                 onClick={() => editSelected((sentence) => setEndingTone(sentence, "rising"))}
               >↗</button>
@@ -1004,6 +1369,24 @@ export function FullA4Editor({
                   setPinyinEditorOpen((open) => !open);
                 }}
               >拼音</button>
+            </div>
+          </div>
+          <div className="full-line-break-editor">
+            <div className="full-line-break-copy">
+              <strong>调整行分界</strong>
+              <small>移动现有上下行的文字，不额外插入空行</small>
+            </div>
+            <div className="full-line-break-actions">
+              <button
+                type="button"
+                disabled={!canMergeIntoPreviousLine}
+                onClick={() => mergeSelectedIntoLine("previous")}
+              >并入上一行</button>
+              <button
+                type="button"
+                disabled={!canMergeIntoNextLine}
+                onClick={() => mergeSelectedIntoLine("next")}
+              >并入下一行</button>
             </div>
           </div>
           {pinyinEditorOpen ? (

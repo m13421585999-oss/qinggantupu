@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   findSceneAssetForSentence,
   findSceneSpecForSentence,
+  mapActiveSceneAssetsBySceneId,
   mapSceneAssetsToSentences,
 } from "../lib/visual-assets.ts";
 
@@ -115,6 +116,21 @@ test("explicit sentence ids still take precedence and hidden or failed assets st
     ],
   };
   assert.equal(findSceneAssetForSentence(visuals, { id: "sentence-2", text: "不匹配的文本" }), undefined);
+});
+
+test("compact visual lines can resolve different ready assets inside one sentence", () => {
+  const first = asset({ id: "line-1", sceneId: "sentence-1:line:0-8" });
+  const second = asset({ id: "line-2", sceneId: "sentence-1:line:9-18" });
+  const hidden = asset({ id: "hidden", sceneId: "sentence-1:line:19-22", isVisible: false });
+  const mapping = mapActiveSceneAssetsBySceneId({
+    sceneSpecs: [],
+    assets: [first, second, hidden],
+    sceneAssets: [first, second, hidden],
+  });
+
+  assert.equal(mapping.get("sentence-1:line:0-8")?.id, "line-1");
+  assert.equal(mapping.get("sentence-1:line:9-18")?.id, "line-2");
+  assert.equal(mapping.has("sentence-1:line:19-22"), false);
 });
 
 test("fresh visuals loaded by the editor sheet are propagated back to the manuscript", async () => {

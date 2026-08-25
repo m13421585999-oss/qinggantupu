@@ -5,7 +5,9 @@ import {
   applyProsodyPointOverrides,
   buildTeachingProsodyPoints,
   extendProsodyCurveToTokenEdges,
+  interpolateProsodyPointChanges,
   monotoneSplinePath,
+  nearestProsodyVisualLevelPosition,
   PROSODY_VISUAL_LEVEL_COUNT,
   PROSODY_SMOOTHING_WINDOW,
   prosodyVisualLevelFromPointerY,
@@ -115,7 +117,7 @@ test("upserting an override is sparse, sorted, deduplicated, and visually clampe
   ], "the sentence draft owns the returned override array");
 });
 
-test("pointer Y maps through a scaled SVG and clamps to the nine teaching levels", () => {
+test("pointer Y maps through a scaled SVG and supports both nine and five teaching levels", () => {
   const options = { rectTop: 100, rectHeight: 48, viewBoxHeight: 96 };
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 103.5 }), 8);
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 124 }), 4);
@@ -123,6 +125,38 @@ test("pointer Y maps through a scaled SVG and clamps to the nine teaching levels
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 70 }), 8);
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 180 }), 0);
   assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 124, rectHeight: 0 }), undefined);
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 103.5, visualLevelCount: 5 }), 4);
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 124, visualLevelCount: 5 }), 2);
+  assert.equal(prosodyVisualLevelFromPointerY({ ...options, clientY: 144.5, visualLevelCount: 5 }), 0);
+});
+
+test("compact five-level display quantizes old heights and fills tokens crossed by a fast paint move", () => {
+  const visualLevels = [0, 2, 4, 6, 8];
+
+  assert.equal(nearestProsodyVisualLevelPosition(0, visualLevels), 0);
+  assert.equal(nearestProsodyVisualLevelPosition(1, visualLevels), 1, "an old odd level rounds to the higher compact slot");
+  assert.equal(nearestProsodyVisualLevelPosition(7, visualLevels), 4);
+  assert.deepEqual(interpolateProsodyPointChanges({
+    tokenIndexes: [10, 11, 12, 13, 14],
+    visualLevels,
+    fromTokenPosition: 0,
+    toTokenPosition: 4,
+    fromLevelPosition: 0,
+    toLevelPosition: 4,
+  }), [
+    { tokenIndex: 11, visualLevel: 2 },
+    { tokenIndex: 12, visualLevel: 4 },
+    { tokenIndex: 13, visualLevel: 6 },
+    { tokenIndex: 14, visualLevel: 8 },
+  ]);
+  assert.deepEqual(interpolateProsodyPointChanges({
+    tokenIndexes: [10, 11, 12],
+    visualLevels,
+    fromTokenPosition: 1,
+    toTokenPosition: 1,
+    fromLevelPosition: 1,
+    toLevelPosition: 3,
+  }), [{ tokenIndex: 11, visualLevel: 6 }], "vertical drawing updates the current token");
 });
 
 test("paint-only curve endpoints follow the edge-anchor trend without creating editable tokens", () => {

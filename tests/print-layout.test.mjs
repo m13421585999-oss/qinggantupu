@@ -93,6 +93,7 @@ test("A4 export contract uses physical paper dimensions, structured pages and 2.
   assert.equal(DEFAULT_A4_PRINT_SETTINGS.widthMm, 210);
   assert.equal(DEFAULT_A4_PRINT_SETTINGS.heightMm, 297);
   assert.equal(DEFAULT_A4_PRINT_SETTINGS.renderDpr, 2.5);
+  assert.equal(DEFAULT_A4_PRINT_SETTINGS.compactLegendItems?.length, 6);
   assert.match(css, /\.a4-page\s*\{[\s\S]*?width:\s*210mm;[\s\S]*?height:\s*297mm;[\s\S]*?--a4-margin-top, 15mm/);
   assert.match(component, /data-print-measure-id/);
   assert.match(component, /paginateMeasuredPrintBlocks/);

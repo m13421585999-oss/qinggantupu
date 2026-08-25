@@ -13,13 +13,18 @@ test("compact and full both render the shared sentence rhythm label defensively"
   const schema = await readFile(new URL("lib/recitation-schema.ts", root), "utf8");
 
   // 两个 Renderer 都通过 rhythmLabel 读取 rhythm，不再直接索引 RHYTHM_LABELS
-  assert.match(compact, /rhythmLabel\(block\.sentence\.rhythm\)/);
+  assert.match(compact, /rhythm=\{sentence\.rhythm\}/);
+  assert.match(compact, /rhythmLabel\(rhythm\)/);
   assert.match(full, /rhythmLabel\(rhythm\)/);
 
   // Compact：编号区域竖排节奏（逐字竖排），未知节奏显示「未标」
   assert.match(compact, /compact-rhythm-label/);
-  assert.match(compact, /Array\.from\(label\)/);
+  assert.match(compact, /Array\.from\(label \?\? "未标"\)/);
   assert.match(compact, /"未标"/);
+  assert.match(compact, /COMPACT_RHYTHM_OPTIONS/);
+  assert.match(compact, /aria-label="六种节奏"/);
+  assert.match(compact, /onSelectRhythm/);
+  assert.match(compact, /onSentenceChange\(\{ \.\.\.selectedRhythmSentence, rhythm \}\)/);
 
   // Full：Scene Card 内节奏标签，未知节奏显示「未标」
   assert.match(full, /full-rhythm-label/);
@@ -30,6 +35,8 @@ test("compact and full both render the shared sentence rhythm label defensively"
 
   // CSS：Compact 竖排（flex column），Full 卡片内绝对定位
   assert.match(css, /\.compact-rhythm-label\s*\{[\s\S]*?flex-direction: column/);
+  assert.match(css, /\.compact-rhythm-label\s*\{[\s\S]*?cursor: pointer/);
+  assert.match(css, /\.compact-rhythm-option-grid\s*\{[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(css, /\.full-rhythm-label\s*\{[\s\S]*?position: absolute/);
 });
 

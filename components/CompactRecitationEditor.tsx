@@ -19,24 +19,67 @@ import {
   applyProsodyPointOverrides,
   buildTeachingProsodyPoints,
   upsertProsodyPointOverride,
+  type ProsodyPointChange,
   type TeachingProsodyPoint,
 } from "@/lib/prosody-visual";
-import { splitGraphUnitsByMeasuredWidth } from "@/lib/semantic-scene-lines";
+import {
+  adjustVisualLineBoundaries,
+  mergeAcrossCompactSentences,
+  splitGraphUnitsByMeasuredWidth,
+  type VisualLineMergeDirection,
+} from "@/lib/semantic-scene-lines";
 import { TeachingProsodyTrack } from "@/components/TeachingProsodyTrack";
-import { isRhythm, rhythmLabel } from "@/lib/recitation-schema";
+import { DistanceViewGlyph } from "@/components/RecitationTechniqueGlyphs";
+import { VirtualVoiceGroupOverlay } from "@/components/VirtualVoiceGroupOverlay";
+import { usesChushibiaoVirtualVoiceSpacing } from "@/lib/edition-layout";
+import {
+  deliveryTechniqueAt,
+  distanceViewAt,
+  setDeliveryTechniqueAt,
+} from "@/lib/delivery-technique";
+import {
+  COMPACT_LEGEND_OPTIONS,
+  type CompactLegendItemId,
+  usedCompactLegendItems,
+} from "@/lib/compact-legend";
+import { isRhythm, RHYTHM_LABELS, rhythmLabel } from "@/lib/recitation-schema";
+import {
+  mapActiveSceneAssetsBySceneId,
+  mapSceneAssetsToSentences,
+} from "@/lib/visual-assets";
 import type {
   BreathMark,
   EndingTone,
   PauseMark,
   RecitationSentence,
   RecitationWork,
+  Rhythm,
+  SceneTechniqueMark,
   TimedToken,
 } from "@/lib/recitation-schema";
 
-const COMPACT_MARGIN_MM = 11;
+const COMPACT_MARGIN_MM = 8.5;
 const COMPACT_RENDER_DPR = 2.5;
 const COMPACT_CURVE_HEIGHT = 34;
 const COMPACT_CURVE_PADDING = 4.5;
+const COMPACT_PROSODY_LEVELS = [0, 2, 4, 6, 8] as const;
+const COMPACT_RHYTHM_OPTIONS = (Object.keys(RHYTHM_LABELS) as Rhythm[]).map((value) => ({
+  value,
+  label: RHYTHM_LABELS[value],
+}));
+const COMPACT_WATERMARKS: Array<{ x: string; y: string }> = [
+  { x: "8%", y: "9%" },
+  { x: "62%", y: "11%" },
+  { x: "28%", y: "19%" },
+  { x: "86%", y: "26%" },
+  { x: "5%", y: "36%" },
+  { x: "48%", y: "42%" },
+  { x: "22%", y: "54%" },
+  { x: "74%", y: "61%" },
+  { x: "38%", y: "74%" },
+  { x: "12%", y: "84%" },
+  { x: "82%", y: "88%" },
+];
 
 type CompactSaveState = "unsaved" | "dirty" | "saving" | "saved" | "failed";
 
@@ -47,9 +90,28 @@ interface CompactSelection {
   y: number;
 }
 
+interface CompactRhythmSelection {
+  sentenceId: string;
+  x: number;
+  y: number;
+}
+
 interface CompactBlock {
   id: string;
   sentence: RecitationSentence;
+}
+
+interface CompactLineBlock {
+  id: string;
+  sentenceId: string;
+  tokenIndexes: number[];
+  cropIndex: number;
+  displayOrder: number;
+}
+
+interface CompactSentenceDraft {
+  source: RecitationSentence;
+  current: RecitationSentence;
 }
 
 function applyPinyinOverrides(sentence: RecitationSentence, overrides: Record<string, string>) {
@@ -71,6 +133,12 @@ function visibleSourceCharacter(value: string) {
 
 function lineSignature(lines: GraphTokenUnit[][]) {
   return lines.map((line) => line.map((unit) => unit.token.index).join(",")).join("|");
+}
+
+function compactLineId(sentenceId: string, line: GraphTokenUnit[]) {
+  const first = line[0]?.token.index ?? 0;
+  const last = line.at(-1)?.token.index ?? first;
+  return `${sentenceId}:line:${first}-${last}`;
 }
 
 function protectedSentenceBoundaries(sentence: RecitationSentence) {
@@ -100,6 +168,19 @@ function breathAt(sentence: RecitationSentence, tokenIndex: number) {
 
 function prolongAt(sentence: RecitationSentence, tokenIndex: number) {
   return sentence.prolongations.find((prolongation) => prolongation.tokenIndex === tokenIndex);
+}
+
+function sceneTechniqueAt(sentence: RecitationSentence, tokenIndex: number) {
+  return sentence.sceneTechniqueMarks?.find((mark) => mark.tokenIndex === tokenIndex);
+}
+
+function isSpringSceneTechniqueWork(title: string) {
+  return title
+    .normalize("NFKC")
+    .trim()
+    .replace(/^《+\s*/u, "")
+    .replace(/\s*》+$/u, "")
+    .replace(/\s+/gu, "") === "春";
 }
 
 function setPauseAt(
@@ -210,16 +291,69 @@ function toggleProlongation(sentence: RecitationSentence, token: TimedToken) {
   };
 }
 
-function setEndingTone(sentence: RecitationSentence, type: EndingTone) {
+function toggleStaccato(sentence: RecitationSentence, token: TimedToken) {
+  const focused = focusIndexes(sentence).has(token.index);
+  const shortPause = pauseAt(sentence, token.index)?.type === "short";
+  const active = focused && shortPause;
+  let next = sentence;
+  if (active || !focused) next = toggleFocus(next, token);
+  if (active || !shortPause) next = setPauseAt(next, token, "short");
+  return next;
+}
+
+function setSceneTechniqueAt(
+  sentence: RecitationSentence,
+  token: TimedToken,
+  type: SceneTechniqueMark["type"],
+) {
+  const current = sceneTechniqueAt(sentence, token.index);
+  const marks = (sentence.sceneTechniqueMarks ?? [])
+    .filter((mark) => mark.tokenIndex !== token.index);
+  if (current?.type === type) {
+    return { ...sentence, sceneTechniqueMarks: marks.length ? marks : undefined };
+  }
+  return {
+    ...sentence,
+    sceneTechniqueMarks: [...marks, {
+      id: current?.id ?? `${sentence.id}-scene-technique-${token.index}`,
+      tokenId: token.id,
+      tokenIndex: token.index,
+      type,
+      source: "human" as const,
+    }].sort((left, right) => left.tokenIndex - right.tokenIndex),
+  };
+}
+
+function toggleEndingTone(
+  sentence: RecitationSentence,
+  type: Exclude<EndingTone, "level">,
+): RecitationSentence {
+  const nextType: EndingTone = sentence.endingIntonation.type === type ? "level" : type;
   return {
     ...sentence,
     endingIntonation: {
       ...sentence.endingIntonation,
-      type,
+      type: nextType,
       confidence: 1,
       source: "human" as const,
     },
   };
+}
+
+function CompactSceneTechniqueGlyph({ type }: { type: SceneTechniqueMark["type"] }) {
+  if (type === "real") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M2.4 12s3.6-5.6 9.6-5.6 9.6 5.6 9.6 5.6-3.6 5.6-9.6 5.6S2.4 12 2.4 12Z" />
+        <circle cx="12" cy="12" r="2.8" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 20.2 4.5 13c-4.4-4.2 1.8-10.7 6.2-6.2L12 8.1l1.3-1.3c4.4-4.5 10.6 2 6.2 6.2L12 20.2Z" />
+    </svg>
+  );
 }
 
 function CompactTokenUnit({
@@ -228,6 +362,7 @@ function CompactTokenUnit({
   focused,
   editable,
   selected,
+  showSceneTechniqueRow,
   endingTokenIndex,
   characterRef,
   measureRef,
@@ -238,6 +373,7 @@ function CompactTokenUnit({
   focused: boolean;
   editable: boolean;
   selected: boolean;
+  showSceneTechniqueRow: boolean;
   endingTokenIndex?: number;
   characterRef?: (element: HTMLElement | null) => void;
   measureRef?: (element: HTMLSpanElement | null) => void;
@@ -246,6 +382,9 @@ function CompactTokenUnit({
   const pause = pauseAt(sentence, unit.token.index);
   const breath = breathAt(sentence, unit.token.index);
   const prolongation = prolongAt(sentence, unit.token.index);
+  const sceneTechnique = sceneTechniqueAt(sentence, unit.token.index);
+  const virtualVoice = deliveryTechniqueAt(sentence, unit.token.index, "virtual_voice");
+  const distanceView = distanceViewAt(sentence, unit.token.index);
   const isEndingHost = endingTokenIndex === unit.token.index;
   const tone = isEndingHost && sentence.endingIntonation.type !== "level"
     ? sentence.endingIntonation.type
@@ -263,6 +402,14 @@ function CompactTokenUnit({
             {visibleSourceCharacter(token.char)}
           </span>
         ))}
+        {distanceView ? (
+          <span
+            className={`compact-distance-marker is-${distanceView.type}`}
+            aria-label={distanceView.type === "distant_view" ? "远景" : "近景"}
+          >
+            <DistanceViewGlyph type={distanceView.type} />
+          </span>
+        ) : null}
         {breath ? (
           <span
             className={breath.type === "breath_major" ? "compact-breath-major" : "compact-breath-minor"}
@@ -271,14 +418,22 @@ function CompactTokenUnit({
             {breath.type === "breath_major" ? "V" : "v"}
           </span>
         ) : null}
-        <span className="compact-spoken-token">
+        <span className={`compact-spoken-token ${showSceneTechniqueRow ? "has-scene-technique-row" : ""}`}>
+          {showSceneTechniqueRow ? (
+            <span
+              className={`compact-scene-technique-slot ${sceneTechnique ? `is-${sceneTechnique.type}` : ""}`}
+              aria-label={sceneTechnique?.type === "real" ? "实景" : sceneTechnique?.type === "virtual" ? "虚景" : undefined}
+            >
+              {sceneTechnique ? <CompactSceneTechniqueGlyph type={sceneTechnique.type} /> : null}
+            </span>
+          ) : null}
           <span className="compact-token-pinyin" aria-hidden="true">
             {unit.token.displayPinyin ?? unit.token.pinyin ?? " "}
           </span>
           {editable ? (
             <button
               type="button"
-              className={`compact-token-char ${focused ? "is-focus" : ""} ${selected ? "is-selected" : ""}`}
+              className={`compact-token-char ${focused ? "is-focus" : ""} ${virtualVoice ? "is-virtual-voice" : ""} ${selected ? "is-selected" : ""}`}
               ref={characterRef as (element: HTMLButtonElement | null) => void}
               onClick={(event) => select(event.currentTarget)}
               aria-label={`编辑“${unit.token.char}”及其后方标识`}
@@ -287,7 +442,7 @@ function CompactTokenUnit({
             </button>
           ) : (
             <span
-              className={`compact-token-char ${focused ? "is-focus" : ""}`}
+              className={`compact-token-char ${focused ? "is-focus" : ""} ${virtualVoice ? "is-virtual-voice" : ""}`}
               ref={characterRef}
             >
               {unit.token.char}
@@ -332,7 +487,7 @@ function CompactProsodyCurve(props: {
   characterRefs: React.RefObject<Map<number, HTMLElement>>;
   rowElement: HTMLDivElement | null;
   editable: boolean;
-  onPointChange?: (tokenIndex: number, visualLevel: number) => void;
+  onPointsChange?: (changes: ProsodyPointChange[]) => void;
 }) {
   return (
     <TeachingProsodyTrack
@@ -340,6 +495,8 @@ function CompactProsodyCurve(props: {
       curveHeight={COMPACT_CURVE_HEIGHT}
       curvePadding={COMPACT_CURVE_PADDING}
       className="compact-prosody-curve"
+      visualLevels={COMPACT_PROSODY_LEVELS}
+      continuousDrawing
     />
   );
 }
@@ -351,25 +508,30 @@ function CompactGraphLine({
   focused,
   points,
   editable,
+  springSceneTechniqueMode,
   selectedTokenIndex,
   endingTokenIndex,
   onSelectToken,
-  onPointChange,
+  onPointsChange,
 }: {
   units: GraphTokenUnit[];
   sentence: RecitationSentence;
   focused: Set<number>;
   points: TeachingProsodyPoint[];
   editable: boolean;
+  springSceneTechniqueMode: boolean;
   selectedTokenIndex?: number;
   endingTokenIndex?: number;
   onSelectToken?: (token: TimedToken, anchor: HTMLElement) => void;
-  onPointChange?: (tokenIndex: number, visualLevel: number) => void;
+  onPointsChange?: (changes: ProsodyPointChange[]) => void;
 }) {
   const [rowElement, setRowElement] = useState<HTMLDivElement | null>(null);
   const characterRefs = useRef(new Map<number, HTMLElement>());
   return (
-    <div className="compact-graph-line" ref={setRowElement}>
+    <div
+      className={`compact-graph-line ${springSceneTechniqueMode ? "is-spring-scene-technique" : ""}`}
+      ref={setRowElement}
+    >
       <div className="compact-token-row">
         {units.map((unit) => (
           <CompactTokenUnit
@@ -378,6 +540,7 @@ function CompactGraphLine({
             focused={focused.has(unit.token.index)}
             editable={editable}
             selected={selectedTokenIndex === unit.token.index}
+            showSceneTechniqueRow={springSceneTechniqueMode}
             endingTokenIndex={endingTokenIndex}
             key={unit.key}
             characterRef={(element) => {
@@ -388,35 +551,66 @@ function CompactGraphLine({
           />
         ))}
       </div>
-      <CompactProsodyCurve
-        units={units}
-        points={points}
+      <VirtualVoiceGroupOverlay
+        sentence={sentence}
+        tokenIndexes={units.map((unit) => unit.token.index)}
         characterRefs={characterRefs}
         rowElement={rowElement}
-        editable={editable}
-        onPointChange={onPointChange}
       />
+      {springSceneTechniqueMode ? null : (
+        <CompactProsodyCurve
+          units={units}
+          points={points}
+          characterRefs={characterRefs}
+          rowElement={rowElement}
+          editable={editable}
+          onPointsChange={onPointsChange}
+        />
+      )}
     </div>
   );
 }
 
 function CompactGraphTrack({
   sentence,
+  sceneImageUrl,
+  sceneImageAlt,
+  measure,
+  lineTokenIndexes,
+  displayOrder,
+  cropIndex,
+  onSelectRhythm,
   editable,
+  springSceneTechniqueMode,
   selectedTokenIndex,
   onSelectToken,
-  onPointChange,
+  onPointsChange,
 }: {
   sentence: RecitationSentence;
+  sceneImageUrl?: string;
+  sceneImageAlt?: string;
+  measure?: boolean;
+  lineTokenIndexes?: readonly number[];
+  displayOrder?: number;
+  cropIndex?: number;
+  onSelectRhythm?: (anchor: HTMLElement) => void;
   editable: boolean;
+  springSceneTechniqueMode: boolean;
   selectedTokenIndex?: number;
   onSelectToken?: (token: TimedToken, anchor: HTMLElement) => void;
-  onPointChange?: (tokenIndex: number, visualLevel: number) => void;
+  onPointsChange?: (changes: ProsodyPointChange[]) => void;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
+  const textColumnRef = useRef<HTMLDivElement>(null);
   const probeRefs = useRef(new Map<number, HTMLSpanElement>());
   const units = useMemo(() => buildGraphTokenUnits(sentence), [sentence]);
   const [lines, setLines] = useState<GraphTokenUnit[][]>(() => units.length ? [units] : []);
+  const fixedLine = useMemo(() => {
+    if (!lineTokenIndexes) return undefined;
+    const included = new Set(lineTokenIndexes);
+    return units.filter((unit) => included.has(unit.token.index));
+  }, [lineTokenIndexes, units]);
+  const displayedLines = fixedLine ? [fixedLine] : lines;
   const endingTokenIndex = units.at(-1)?.token.index;
   const focused = useMemo(() => focusIndexes(sentence), [sentence]);
   const points = useMemo(
@@ -431,8 +625,11 @@ function CompactGraphTrack({
   );
 
   const fitLines = useCallback(() => {
+    if (lineTokenIndexes) return;
     const track = trackRef.current;
-    if (!track || !units.length || track.clientWidth <= 0) return;
+    const textColumn = textColumnRef.current;
+    const maxLineWidth = textColumn?.clientWidth ?? 0;
+    if (!track || !units.length || maxLineWidth <= 0) return;
     const styles = window.getComputedStyle(track);
     const unitGap = Number.parseFloat(styles.getPropertyValue("--compact-token-gap")) || 3;
     const widths = new Map(units.flatMap((unit) => {
@@ -441,14 +638,15 @@ function CompactGraphTrack({
     }));
     if (widths.size !== units.length) return;
     const nextLines = splitGraphUnitsByMeasuredWidth(units, {
-      maxLineWidth: track.clientWidth,
+      maxLineWidth,
       unitWidths: widths,
       unitGap,
       preferredBoundaryIndexes: sentence.prosody.map((event) => event.activeSpan.end),
       protectedBoundaryIndexes: protectedSentenceBoundaries(sentence),
+      forcedBoundaryIndexes: sentence.lineBreakAfterTokenIndexes,
     });
     setLines((current) => lineSignature(current) === lineSignature(nextLines) ? current : nextLines);
-  }, [sentence, units]);
+  }, [lineTokenIndexes, sentence, units]);
 
   useLayoutEffect(() => {
     const track = trackRef.current;
@@ -461,6 +659,7 @@ function CompactGraphTrack({
     schedule();
     const observer = new ResizeObserver(schedule);
     observer.observe(track);
+    if (textColumnRef.current) observer.observe(textColumnRef.current);
     for (const element of probeRefs.current.values()) observer.observe(element);
     document.fonts?.addEventListener("loadingdone", schedule);
     void document.fonts?.ready.then(schedule);
@@ -485,6 +684,7 @@ function CompactGraphTrack({
             focused={focused.has(unit.token.index)}
             editable={false}
             selected={false}
+            showSceneTechniqueRow={springSceneTechniqueMode}
             endingTokenIndex={endingTokenIndex}
             key={`probe-${unit.key}`}
             measureRef={(element) => {
@@ -495,20 +695,55 @@ function CompactGraphTrack({
         ))}
       </div>
       <div className="compact-graph-lines">
-        {lines.map((line, index) => (
-          <CompactGraphLine
-            units={line}
-            sentence={sentence}
-            focused={focused}
-            points={points}
-            editable={editable}
-            selectedTokenIndex={selectedTokenIndex}
-            endingTokenIndex={endingTokenIndex}
-            onSelectToken={onSelectToken}
-            onPointChange={onPointChange}
-            key={`${sentence.id}-compact-line-${index}-${line[0]?.token.index}`}
-          />
-        ))}
+        {displayedLines.map((line, index) => {
+          const sourceLineIndex = lineTokenIndexes ? (cropIndex ?? 0) : index;
+          const lineId = compactLineId(sentence.id, line);
+          const visualLine = (
+            <div
+            className="compact-visual-line"
+            key={measure ? undefined : lineId}
+          >
+            <CompactSceneThumbnail
+              imageUrl={measure ? undefined : sceneImageUrl}
+              imageAlt={sceneImageAlt}
+              order={displayOrder ?? sentence.order}
+              sourceOrder={sentence.order}
+              rhythm={sentence.rhythm}
+              cropIndex={sourceLineIndex}
+              onSelectRhythm={onSelectRhythm}
+            />
+            <div
+              className="compact-visual-graph-column"
+              ref={index === 0 ? textColumnRef : undefined}
+            >
+              <CompactGraphLine
+                units={line}
+                sentence={sentence}
+                focused={focused}
+                points={points}
+                editable={editable}
+                springSceneTechniqueMode={springSceneTechniqueMode}
+                selectedTokenIndex={selectedTokenIndex}
+                endingTokenIndex={endingTokenIndex}
+                onSelectToken={onSelectToken}
+                onPointsChange={onPointsChange}
+              />
+            </div>
+            </div>
+          );
+          return measure ? (
+            <div
+              className="compact-sentence-row compact-line-measure-row"
+              data-compact-measure-id={lineId}
+              data-compact-sentence-id={sentence.id}
+              data-compact-token-indexes={line.map((unit) => unit.token.index).join(",")}
+              data-compact-crop-index={sourceLineIndex}
+              key={lineId}
+            >
+              {visualLine}
+            </div>
+          ) : visualLine;
+        })}
       </div>
     </div>
   );
@@ -516,44 +751,111 @@ function CompactGraphTrack({
 
 function CompactSentenceRow({
   block,
+  sceneImageUrl,
+  sceneImageAlt,
+  lineBlock,
+  onSelectRhythm,
   measure = false,
   editable = false,
+  springSceneTechniqueMode = false,
   selectedTokenIndex,
   onSelectToken,
-  onPointChange,
+  onPointsChange,
 }: {
   block: CompactBlock;
+  sceneImageUrl?: string;
+  sceneImageAlt?: string;
+  lineBlock?: CompactLineBlock;
+  onSelectRhythm?: (anchor: HTMLElement) => void;
   measure?: boolean;
   editable?: boolean;
+  springSceneTechniqueMode?: boolean;
   selectedTokenIndex?: number;
   onSelectToken?: (token: TimedToken, anchor: HTMLElement) => void;
-  onPointChange?: (tokenIndex: number, visualLevel: number) => void;
+  onPointsChange?: (changes: ProsodyPointChange[]) => void;
 }) {
-  const label = rhythmLabel(block.sentence.rhythm);
   return (
     <section
-      className="compact-sentence-row"
-      data-compact-block-id={measure ? undefined : block.id}
-      data-compact-measure-id={measure ? block.id : undefined}
+      className={measure ? "compact-sentence-measure-group" : "compact-sentence-row"}
+      data-compact-block-id={measure ? undefined : (lineBlock?.id ?? block.id)}
     >
-      <div className="compact-sentence-rail">
-        <span className="compact-sentence-number">{String(block.sentence.order).padStart(2, "0")}</span>
-        <span className="compact-rhythm-label" aria-label={label ? `节奏：${label}` : "节奏未标注"}>
-          {label
-            ? Array.from(label).map((character, index) => (
-              <span key={index}>{character}</span>
-            ))
-            : "未标"}
-        </span>
-      </div>
       <CompactGraphTrack
         sentence={block.sentence}
+        sceneImageUrl={sceneImageUrl}
+        sceneImageAlt={sceneImageAlt}
+        measure={measure}
+        lineTokenIndexes={lineBlock?.tokenIndexes}
+        displayOrder={lineBlock?.displayOrder}
+        cropIndex={lineBlock?.cropIndex}
+        onSelectRhythm={onSelectRhythm}
         editable={editable}
+        springSceneTechniqueMode={springSceneTechniqueMode}
         selectedTokenIndex={selectedTokenIndex}
         onSelectToken={onSelectToken}
-        onPointChange={onPointChange}
+        onPointsChange={onPointsChange}
       />
     </section>
+  );
+}
+
+function CompactSceneThumbnail({
+  imageUrl,
+  imageAlt,
+  order,
+  sourceOrder,
+  rhythm,
+  cropIndex = 0,
+  showMeta = true,
+  onSelectRhythm,
+}: {
+  imageUrl?: string;
+  imageAlt?: string;
+  order: number;
+  sourceOrder?: number;
+  rhythm: RecitationSentence["rhythm"];
+  cropIndex?: number;
+  showMeta?: boolean;
+  onSelectRhythm?: (anchor: HTMLElement) => void;
+}) {
+  const [failed, setFailed] = useState<string>();
+  const available = Boolean(imageUrl && imageUrl !== failed);
+  const label = rhythmLabel(rhythm);
+  const orderLabel = String(order).padStart(2, "0");
+  const cropPositions = ["center 42%", "center 56%", "center 68%"] as const;
+  return (
+    <aside className="compact-scene-thumbnail" aria-label={imageAlt ?? `第 ${order} 段情景小图`}>
+      {available && imageUrl ? (
+        // Generated scene assets are same-origin persisted R2 objects.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={imageUrl}
+          alt={imageAlt ?? ""}
+          decoding="async"
+          style={{ objectPosition: cropPositions[((sourceOrder ?? order) - 1 + cropIndex) % cropPositions.length] }}
+          onError={() => setFailed(imageUrl)}
+        />
+      ) : (
+        <div className="compact-scene-placeholder" role="img" aria-label="情景图片生成中" />
+      )}
+      {showMeta ? <div className="compact-scene-meta">
+        <span className="compact-sentence-number" aria-label={`编号 ${orderLabel}`}>
+          {Array.from(orderLabel).map((character, index) => (
+            <span key={index}>{character}</span>
+          ))}
+        </span>
+        <button
+          type="button"
+          className="compact-rhythm-label"
+          aria-label={label ? `选择节奏，当前：${label}` : "选择节奏，当前未标注"}
+          disabled={!onSelectRhythm}
+          onClick={(event) => onSelectRhythm?.(event.currentTarget)}
+        >
+          {Array.from(label ?? "未标").map((character, index) => (
+            <span key={index}>{character}</span>
+          ))}
+        </button>
+      </div> : null}
+    </aside>
   );
 }
 
@@ -567,22 +869,80 @@ function CompactPageHeader({ work, page, total }: {
     .replace(/\s*》+$/, "");
   return (
     <header className="compact-page-header">
-      <strong>《{displayTitle}》</strong>
-      <span><span>朗诵情感图谱</span><span>（{page}/{total}）</span></span>
+      <strong>《{displayTitle}》情感图谱（{page}/{total}）</strong>
       {work.author ? <small>作者：{work.author}</small> : null}
     </header>
   );
 }
 
-function CompactPageLegend() {
+function CompactLegendGlyph({ id }: { id: CompactLegendItemId }) {
+  if (id === "breath-major") {
+    return <b className="compact-legend-major" aria-hidden="true">V</b>;
+  }
+  if (id === "breath-minor") {
+    return <b className="compact-legend-minor" aria-hidden="true">v</b>;
+  }
+  if (id === "pause-short") return <b aria-hidden="true">/</b>;
+  if (id === "pause-long") return <b aria-hidden="true">{"///"}</b>;
+  if (id === "focus") {
+    return <b className="compact-legend-focus" aria-hidden="true">红</b>;
+  }
+  if (id === "virtual-voice") {
+    return <b className="compact-legend-virtual-voice" aria-hidden="true">声</b>;
+  }
+  if (id === "distant-view") {
+    return <DistanceViewGlyph type="distant_view" />;
+  }
+  if (id === "close-view") {
+    return <DistanceViewGlyph type="close_view" />;
+  }
+  if (id === "prosody-curve") {
+    return <i className="compact-legend-curve" aria-hidden="true" />;
+  }
+  if (id === "intonation-rising") {
+    return <b className="compact-legend-arrow" aria-hidden="true">↗</b>;
+  }
+  if (id === "intonation-falling") {
+    return <b className="compact-legend-arrow" aria-hidden="true">↘</b>;
+  }
+  if (id === "prolong") {
+    return <b className="compact-legend-prolong" aria-hidden="true">—</b>;
+  }
+  if (id === "staccato") {
+    return <b className="compact-legend-staccato" aria-hidden="true">/红/红</b>;
+  }
+  if (id === "real-scene") {
+    return (
+      <svg className="compact-legend-icon compact-legend-real-scene" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M2.4 12s3.6-5.6 9.6-5.6 9.6 5.6 9.6 5.6-3.6 5.6-9.6 5.6S2.4 12 2.4 12Z" />
+        <circle cx="12" cy="12" r="2.8" />
+      </svg>
+    );
+  }
   return (
-    <footer className="compact-page-legend">
-      <span><b className="compact-legend-major">V</b> 换气</span>
-      <span><b className="compact-legend-minor">v</b> 偷气</span>
-      <span><b>/</b> 短停</span>
-      <span><b>{"///"}</b> 长停</span>
-      <span><b className="compact-legend-focus">红</b> 重音</span>
-      <span><i className="compact-legend-curve" aria-hidden="true" /> 语势曲线</span>
+    <svg className="compact-legend-icon compact-legend-virtual-scene" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 20.2 4.5 13c-4.4-4.2 1.8-10.7 6.2-6.2L12 8.1l1.3-1.3c4.4-4.5 10.6 2 6.2 6.2L12 20.2Z" />
+    </svg>
+  );
+}
+
+function CompactLegendItem({ id }: { id: CompactLegendItemId }) {
+  const option = COMPACT_LEGEND_OPTIONS.find((candidate) => candidate.id === id);
+  return (
+    <span className={`compact-legend-item compact-legend-item-${id}`}>
+      <CompactLegendGlyph id={id} />
+      {option?.label ?? id}
+    </span>
+  );
+}
+
+function CompactPageLegend({ items }: { items: readonly CompactLegendItemId[] }) {
+  return (
+    <footer
+      className={`compact-page-legend ${items.length ? "" : "is-empty"}`}
+      aria-label="朗诵标识图例"
+    >
+      {items.map((id) => <CompactLegendItem id={id} key={id} />)}
     </footer>
   );
 }
@@ -591,18 +951,30 @@ function CompactA4Page({
   work,
   plan,
   blocksById,
+  lineBlocksById,
+  sceneAssetsByLineId,
+  sceneAssetsBySentenceId,
+  legendItems,
+  springSceneTechniqueMode,
   total,
   selection,
   onSelectToken,
-  onPointChange,
+  onPointsChange,
+  onSelectRhythm,
 }: {
   work: RecitationWork;
   plan: PrintPagePlan;
   blocksById: ReadonlyMap<string, CompactBlock>;
+  lineBlocksById: ReadonlyMap<string, CompactLineBlock>;
+  sceneAssetsByLineId: ReadonlyMap<string, { url?: string; prompt?: string }>;
+  sceneAssetsBySentenceId: ReadonlyMap<string, { url?: string; prompt?: string }>;
+  legendItems: readonly CompactLegendItemId[];
+  springSceneTechniqueMode: boolean;
   total: number;
   selection?: CompactSelection;
   onSelectToken: (sentence: RecitationSentence, token: TimedToken, anchor: HTMLElement) => void;
-  onPointChange: (sentence: RecitationSentence, tokenIndex: number, visualLevel: number) => void;
+  onPointsChange: (sentence: RecitationSentence, changes: ProsodyPointChange[]) => void;
+  onSelectRhythm: (sentence: RecitationSentence, anchor: HTMLElement) => void;
 }) {
   return (
     <article
@@ -610,23 +982,52 @@ function CompactA4Page({
       data-compact-pdf-page={plan.index + 1}
       aria-label={`A4 第 ${plan.index + 1} 页，共 ${total} 页`}
     >
+      <div className="compact-watermark-layer" aria-hidden="true">
+        {COMPACT_WATERMARKS.map((position, index) => (
+          <span
+            className="compact-watermark"
+            style={{ left: position.x, top: position.y }}
+            key={index}
+          >
+            忆岁朗诵院
+          </span>
+        ))}
+      </div>
       <CompactPageHeader work={work} page={plan.index + 1} total={total} />
       <div className="compact-page-body">
-        {plan.blockIds.map((blockId) => {
-          const block = blocksById.get(blockId);
-          return block ? (
+        {plan.blockIds.map((lineBlockId) => {
+          const lineBlock = lineBlocksById.get(lineBlockId);
+          const block = lineBlock ? blocksById.get(lineBlock.sentenceId) : undefined;
+          const scene = lineBlock
+            ? sceneAssetsByLineId.get(lineBlock.id)
+              ?? sceneAssetsBySentenceId.get(lineBlock.sentenceId)
+            : undefined;
+          const compactSceneImageUrl = scene?.url
+            ?? (lineBlock
+              ? `/compact-scenes/${encodeURIComponent(work.id)}/${encodeURIComponent(lineBlock.id)}.jpg`
+              : undefined);
+          return block && lineBlock ? (
             <CompactSentenceRow
               block={block}
+              lineBlock={lineBlock}
+              sceneImageUrl={compactSceneImageUrl}
+              sceneImageAlt={scene?.prompt ?? `${block.sentence.text}的意境图`}
               editable
+              springSceneTechniqueMode={springSceneTechniqueMode}
               selectedTokenIndex={selection?.sentenceId === block.sentence.id ? selection.tokenIndex : undefined}
               onSelectToken={(token, anchor) => onSelectToken(block.sentence, token, anchor)}
-              onPointChange={(tokenIndex, visualLevel) => onPointChange(block.sentence, tokenIndex, visualLevel)}
-              key={block.id}
+              onPointsChange={(changes) => onPointsChange(block.sentence, changes)}
+              onSelectRhythm={(anchor) => onSelectRhythm(block.sentence, anchor)}
+              key={lineBlock.id}
             />
           ) : null;
         })}
       </div>
-      <CompactPageLegend />
+      <CompactPageLegend items={legendItems} />
+      <div className="compact-logo-footer" aria-hidden="true">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/full-logo.jpeg" alt="忆岁朗诵院" />
+      </div>
     </article>
   );
 }
@@ -650,6 +1051,7 @@ export function CompactRecitationEditor({
   work,
   saveState,
   onSentenceChange,
+  onSentencesChange,
   onPinyinOverrideChange,
   onSave,
   onOpenLibrary,
@@ -658,7 +1060,9 @@ export function CompactRecitationEditor({
   work: RecitationWork;
   saveState: CompactSaveState;
   onSentenceChange: (sentence: RecitationSentence) => void;
+  onSentencesChange: (sentences: RecitationSentence[]) => void;
   onPinyinOverrideChange: (tokenId: string, value: string) => void;
+  onLegendItemsChange: (items: CompactLegendItemId[]) => void;
   onSave: () => void;
   onOpenLibrary: () => void;
   onSwitchFull: () => void;
@@ -670,7 +1074,40 @@ export function CompactRecitationEditor({
     })),
     [work.controlSpec],
   );
+  const sentenceDraftsRef = useRef(new Map<string, CompactSentenceDraft>());
+  useLayoutEffect(() => {
+    const activeIds = new Set(blocks.map((block) => block.id));
+    for (const sentenceId of sentenceDraftsRef.current.keys()) {
+      if (!activeIds.has(sentenceId)) sentenceDraftsRef.current.delete(sentenceId);
+    }
+    for (const block of blocks) {
+      const draft = sentenceDraftsRef.current.get(block.id);
+      if (!draft || draft.source !== block.sentence) {
+        sentenceDraftsRef.current.set(block.id, {
+          source: block.sentence,
+          current: block.sentence,
+        });
+      }
+    }
+  }, [blocks]);
   const blocksById = useMemo(() => new Map(blocks.map((block) => [block.id, block])), [blocks]);
+  const springSceneTechniqueMode = isSpringSceneTechniqueWork(work.title);
+  const legendItems = useMemo(
+    () => usedCompactLegendItems(work.controlSpec?.sentences ?? [], {
+      showProsodyCurve: !springSceneTechniqueMode,
+    }),
+    [springSceneTechniqueMode, work.controlSpec?.sentences],
+  );
+  const legendSignature = legendItems.join("|");
+  const chushibiaoVirtualVoiceSpacing = usesChushibiaoVirtualVoiceSpacing(work.id);
+  const sceneAssetsBySentenceId = useMemo(
+    () => mapSceneAssetsToSentences(work.visuals, work.controlSpec?.sentences ?? []),
+    [work.visuals, work.controlSpec],
+  );
+  const sceneAssetsByLineId = useMemo(
+    () => mapActiveSceneAssetsBySceneId(work.visuals),
+    [work.visuals],
+  );
   const invalidRhythmBlocks = useMemo(
     () => blocks.filter((block) => !isRhythm(block.sentence.rhythm)),
     [blocks],
@@ -687,13 +1124,19 @@ export function CompactRecitationEditor({
   const pageStackRef = useRef<HTMLDivElement>(null);
   const pageSignatureRef = useRef("");
   const [pages, setPages] = useState<PrintPagePlan[]>([]);
+  const [lineBlocks, setLineBlocks] = useState<CompactLineBlock[]>([]);
   const [selection, setSelection] = useState<CompactSelection>();
-  const [pinyinEditorOpen, setPinyinEditorOpen] = useState(false);
+  const [rhythmSelection, setRhythmSelection] = useState<CompactRhythmSelection>();
   const [pinyinDraft, setPinyinDraft] = useState("");
+  const [pinyinDraftDirty, setPinyinDraftDirty] = useState(false);
   const [layoutRevision, setLayoutRevision] = useState(0);
-  const [layoutMessage, setLayoutMessage] = useState("正在按整句计算 A4 分页…");
+  const [layoutMessage, setLayoutMessage] = useState("正在按实际行高计算 A4 分页…");
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportError, setExportError] = useState<string>();
+  const lineBlocksById = useMemo(
+    () => new Map(lineBlocks.map((lineBlock) => [lineBlock.id, lineBlock])),
+    [lineBlocks],
+  );
   const workspaceStyle = {
     "--compact-a4-margin": `${COMPACT_MARGIN_MM}mm`,
   } as CSSProperties;
@@ -703,12 +1146,24 @@ export function CompactRecitationEditor({
     if (!root || !blocks.length) {
       pageSignatureRef.current = "";
       setPages([]);
+      setLineBlocks([]);
       return;
     }
     const firstBody = root.querySelector<HTMLElement>("[data-compact-measure-capacity='first']");
     const continuationBody = root.querySelector<HTMLElement>("[data-compact-measure-capacity='continuation']");
     const measuredElements = Array.from(root.querySelectorAll<HTMLElement>("[data-compact-measure-id]"));
-    if (!firstBody || !continuationBody || measuredElements.length !== blocks.length) return;
+    if (!firstBody || !continuationBody || !measuredElements.length) return;
+    const nextLineBlocks = measuredElements.map((element, index) => ({
+      id: element.dataset.compactMeasureId ?? "",
+      sentenceId: element.dataset.compactSentenceId ?? "",
+      tokenIndexes: (element.dataset.compactTokenIndexes ?? "")
+        .split(",")
+        .map((value) => Number.parseInt(value, 10))
+        .filter(Number.isFinite),
+      cropIndex: Number.parseInt(element.dataset.compactCropIndex ?? "0", 10) || 0,
+      displayOrder: index + 1,
+    }));
+    if (nextLineBlocks.some((line) => !line.id || !line.sentenceId || !line.tokenIndexes.length)) return;
     const measured = measuredElements.map((element) => ({
       id: element.dataset.compactMeasureId ?? "",
       heightPx: element.getBoundingClientRect().height,
@@ -720,19 +1175,22 @@ export function CompactRecitationEditor({
       firstPageCapacityPx: contentCapacity(firstBody),
       continuationPageCapacityPx: contentCapacity(continuationBody),
       blockGapPx,
-      protectSingleBlockPages: true,
+      protectSingleBlockPages: false,
     });
     const nextSignature = nextPages.map((page) => (
       `${page.blockIds.join(",")}:${Math.round(page.usedHeightPx)}:${page.hasOversizedBlock ? 1 : 0}`
-    )).join("|");
+    )).join("|") + `#${nextLineBlocks.map((line) => (
+      `${line.id}:${line.cropIndex}:${line.displayOrder}:${line.tokenIndexes.join(",")}`
+    )).join("|")}`;
     if (pageSignatureRef.current !== nextSignature) {
       pageSignatureRef.current = nextSignature;
+      setLineBlocks(nextLineBlocks);
       setPages(nextPages);
     }
     const oversized = nextPages.filter((page) => page.hasOversizedBlock).length;
     setLayoutMessage(oversized
-      ? `已按实际高度排成 ${nextPages.length} 页；${oversized} 个超长句单独占页`
-      : `已按实际高度排成 ${nextPages.length} 页；整句不会跨页`);
+      ? `已按实际行高排成 ${nextPages.length} 页；${oversized} 个超高行单独占页`
+      : `已按实际行高排成 ${nextPages.length} 页；共 ${nextLineBlocks.length} 行连续编号`);
   }, [blocks]);
 
   useLayoutEffect(() => {
@@ -755,55 +1213,145 @@ export function CompactRecitationEditor({
       observer.disconnect();
       document.fonts?.removeEventListener("loadingdone", schedule);
     };
-  }, [blocks, calculatePagination, layoutRevision]);
+  }, [blocks, calculatePagination, layoutRevision, legendSignature, springSceneTechniqueMode]);
 
   const openSelection = (sentence: RecitationSentence, token: TimedToken, anchor: HTMLElement) => {
     const rect = anchor.getBoundingClientRect();
-    const width = 386;
+    const width = 430;
+    setRhythmSelection(undefined);
     setSelection({
       sentenceId: sentence.id,
       tokenIndex: token.index,
       x: Math.max(12, Math.min(window.innerWidth - width - 12, rect.left + rect.width / 2 - width / 2)),
-      y: Math.max(80, Math.min(window.innerHeight - 238, rect.bottom + 10)),
+      y: Math.max(72, Math.min(window.innerHeight - 390, rect.bottom + 10)),
     });
-    setPinyinEditorOpen(false);
     setPinyinDraft(token.displayPinyin ?? token.pinyin ?? "");
+    setPinyinDraftDirty(false);
   };
 
-  const changePoint = (sentence: RecitationSentence, tokenIndex: number, visualLevel: number) => {
-    onSentenceChange({
-      ...sentence,
-      prosodyPointOverrides: upsertProsodyPointOverride(
-        sentence.prosodyPointOverrides ?? [],
-        tokenIndex,
-        visualLevel,
-      ),
+  const openRhythmSelection = (sentence: RecitationSentence, anchor: HTMLElement) => {
+    const rect = anchor.getBoundingClientRect();
+    const width = 236;
+    setSelection(undefined);
+    setRhythmSelection({
+      sentenceId: sentence.id,
+      x: Math.max(12, Math.min(window.innerWidth - width - 12, rect.right + 8)),
+      y: Math.max(72, Math.min(window.innerHeight - 230, rect.top - 8)),
     });
+  };
+
+  const changePoints = (sentence: RecitationSentence, changes: ProsodyPointChange[]) => {
+    if (!changes.length) return;
+    const draft = sentenceDraftsRef.current.get(sentence.id);
+    const current = draft?.current ?? sentence;
+    const prosodyPointOverrides = changes.reduce(
+      (overrides, change) => upsertProsodyPointOverride(
+        overrides,
+        change.tokenIndex,
+        change.visualLevel,
+      ),
+      current.prosodyPointOverrides ?? [],
+    );
+    const nextSentence = { ...current, prosodyPointOverrides };
+    sentenceDraftsRef.current.set(sentence.id, {
+      source: draft?.source ?? sentence,
+      current: nextSentence,
+    });
+    onSentenceChange(nextSentence);
   };
 
   const selectedSentence = selection ? blocksById.get(selection.sentenceId)?.sentence : undefined;
+  const selectedRhythmSentence = rhythmSelection
+    ? blocksById.get(rhythmSelection.sentenceId)?.sentence
+    : undefined;
   const selectedToken = selectedSentence?.tokens.find((token) => token.index === selection?.tokenIndex);
   const selectedPause = selectedSentence && selectedToken ? pauseAt(selectedSentence, selectedToken.index) : undefined;
   const selectedBreath = selectedSentence && selectedToken ? breathAt(selectedSentence, selectedToken.index) : undefined;
   const selectedFocused = Boolean(selectedSentence && selectedToken && focusIndexes(selectedSentence).has(selectedToken.index));
   const selectedProlong = Boolean(selectedSentence && selectedToken && prolongAt(selectedSentence, selectedToken.index));
+  const selectedStaccato = Boolean(selectedFocused && selectedPause?.type === "short");
+  const selectedSentenceLineBlocks = selectedSentence
+    ? lineBlocks.filter((lineBlock) => lineBlock.sentenceId === selectedSentence.id)
+    : [];
+  const selectedLineBlockIndex = selectedToken
+    ? selectedSentenceLineBlocks.findIndex((lineBlock) => lineBlock.tokenIndexes.includes(selectedToken.index))
+    : -1;
+  const selectedGlobalLineBlockIndex = selectedToken
+    ? lineBlocks.findIndex((lineBlock) => lineBlock.tokenIndexes.includes(selectedToken.index))
+    : -1;
+  const canMergeIntoPreviousLine = selectedGlobalLineBlockIndex > 0;
+  const canMergeIntoNextLine = selectedGlobalLineBlockIndex >= 0
+    && selectedGlobalLineBlockIndex < lineBlocks.length - 1;
+  const selectedSceneTechnique = selectedSentence && selectedToken
+    ? sceneTechniqueAt(selectedSentence, selectedToken.index)
+    : undefined;
+  const selectedVirtualVoice = Boolean(selectedSentence && selectedToken && (
+    deliveryTechniqueAt(selectedSentence, selectedToken.index, "virtual_voice")
+  ));
+  const selectedDistanceView = selectedSentence && selectedToken
+    ? distanceViewAt(selectedSentence, selectedToken.index)
+    : undefined;
 
   const editSelected = (transform: (sentence: RecitationSentence, token: TimedToken) => RecitationSentence) => {
     if (!selectedSentence || !selectedToken) return;
     onSentenceChange(transform(selectedSentence, selectedToken));
   };
 
+  const mergeSelectedIntoLine = (direction: VisualLineMergeDirection) => {
+    if (!selectedSentence || !selectedToken || selectedLineBlockIndex < 0 || selectedGlobalLineBlockIndex < 0) return;
+    const adjacentLineBlock = lineBlocks[selectedGlobalLineBlockIndex + (direction === "previous" ? -1 : 1)];
+    if (!adjacentLineBlock) return;
+    if (adjacentLineBlock.sentenceId !== selectedSentence.id) {
+      const adjacentSentence = blocksById.get(adjacentLineBlock.sentenceId)?.sentence;
+      if (!adjacentSentence) return;
+      const result = mergeAcrossCompactSentences(
+        selectedSentence,
+        adjacentSentence,
+        selectedToken.index,
+        direction,
+      );
+      if (!result || !work.controlSpec) return;
+      onSentencesChange(work.controlSpec.sentences.flatMap((sentence) => {
+        if (sentence.id === selectedSentence.id) return result.selected ? [result.selected] : [];
+        if (sentence.id === adjacentSentence.id) return [result.adjacent];
+        return [sentence];
+      }));
+      setSelection(undefined);
+      return;
+    }
+    const lineBreakAfterTokenIndexes = adjustVisualLineBoundaries(
+      selectedSentenceLineBlocks.map((lineBlock) => lineBlock.tokenIndexes),
+      selectedLineBlockIndex,
+      selectedToken.index,
+      direction,
+    );
+    if (!lineBreakAfterTokenIndexes) return;
+    onSentenceChange({
+      ...selectedSentence,
+      lineBreakAfterTokenIndexes: lineBreakAfterTokenIndexes.length
+        ? lineBreakAfterTokenIndexes
+        : undefined,
+    });
+  };
+
+  const selectRhythm = (rhythm: Rhythm) => {
+    if (!selectedRhythmSentence) return;
+    onSentenceChange({ ...selectedRhythmSentence, rhythm });
+    setRhythmSelection(undefined);
+  };
+
   const saveSelectedPinyin = () => {
     const value = pinyinDraft.trim();
-    if (!selectedToken) return;
+    if (!selectedToken || !pinyinDraftDirty) return;
     onPinyinOverrideChange(selectedToken.id, value);
-    setPinyinEditorOpen(false);
+    setPinyinDraftDirty(false);
   };
 
   const exportPdf = async () => {
     if (exportingPdf || !pages.length) return;
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setSelection(undefined);
+    setRhythmSelection(undefined);
     setExportingPdf(true);
     setExportError(undefined);
     setLayoutMessage(`正在生成 ${pages.length} 页 PDF…`);
@@ -869,7 +1417,7 @@ export function CompactRecitationEditor({
 
   return (
     <section
-      className={`compact-editor-workspace ${exportingPdf ? "is-exporting" : ""}`}
+      className={`compact-editor-workspace ${exportingPdf ? "is-exporting" : ""} ${springSceneTechniqueMode ? "is-spring-scene-technique" : ""} ${chushibiaoVirtualVoiceSpacing ? "is-chushibiao-virtual-spacing" : ""}`}
       style={workspaceStyle}
       aria-label="紧凑版 A4 朗诵谱编辑器"
     >
@@ -881,11 +1429,14 @@ export function CompactRecitationEditor({
         </div>
         <div className="compact-toolbar-status" aria-live="polite">
           <span className={`compact-save-state state-${saveState}`}>{saveStateLabel(saveState)}</span>
+          {springSceneTechniqueMode ? <span className="compact-spring-technique-badge">《春》实景 / 虚景版</span> : null}
+          {!springSceneTechniqueMode ? <span className="compact-curve-edit-hint">语势：按住曲线绘制 · 5 档</span> : null}
           <span>A4 纵向</span>
           <span>{pages.length || "计算中"} 页</span>
         </div>
         <div className="compact-toolbar-actions">
           <button type="button" className="text-button" onClick={onOpenLibrary}>作品库</button>
+          <span className="compact-auto-legend-status">自动图例：{legendItems.length} 项</span>
           <button
             type="button"
             className="secondary-button"
@@ -921,14 +1472,52 @@ export function CompactRecitationEditor({
             work={work}
             plan={page}
             blocksById={blocksById}
+            lineBlocksById={lineBlocksById}
+            sceneAssetsByLineId={sceneAssetsByLineId}
+            sceneAssetsBySentenceId={sceneAssetsBySentenceId}
+            legendItems={legendItems}
+            springSceneTechniqueMode={springSceneTechniqueMode}
             total={pages.length}
             selection={selection}
             onSelectToken={openSelection}
-            onPointChange={changePoint}
+            onPointsChange={changePoints}
+            onSelectRhythm={openRhythmSelection}
             key={`compact-page-${page.index}-${page.blockIds.join("-")}`}
           />
         ))}
       </div>
+
+      {selectedRhythmSentence && rhythmSelection ? (
+        <aside
+          className="compact-rhythm-popover"
+          data-export-exclude="true"
+          style={{ left: rhythmSelection.x, top: rhythmSelection.y }}
+          role="dialog"
+          aria-label="选择节奏"
+        >
+          <div className="compact-rhythm-popover-heading">
+            <div>
+              <strong>选择节奏</strong>
+              <small>同一原句的所有分行会同步更新</small>
+            </div>
+            <button type="button" onClick={() => setRhythmSelection(undefined)} aria-label="关闭节奏选择">×</button>
+          </div>
+          <div className="compact-rhythm-option-grid" role="group" aria-label="六种节奏">
+            {COMPACT_RHYTHM_OPTIONS.map((option) => {
+              const selected = selectedRhythmSentence.rhythm === option.value;
+              return (
+                <button
+                  type="button"
+                  className={selected ? "active" : ""}
+                  aria-pressed={selected}
+                  onClick={() => selectRhythm(option.value)}
+                  key={option.value}
+                >{option.label}</button>
+              );
+            })}
+          </div>
+        </aside>
+      ) : null}
 
       {selectedSentence && selectedToken && selection ? (
         <aside
@@ -936,14 +1525,14 @@ export function CompactRecitationEditor({
           data-export-exclude="true"
           style={{ left: selection.x, top: selection.y }}
           role="dialog"
-          aria-label={`编辑“${selectedToken.char}”的朗诵标识`}
+          aria-label={`编辑“${selectedToken.char}”的朗诵标识与排版`}
         >
           <div className="compact-popover-heading">
-            <span>“{selectedToken.char}”及字后位置</span>
-            <button type="button" onClick={() => { setSelection(undefined); setPinyinEditorOpen(false); }} aria-label="关闭标识工具">×</button>
+            <span>“{selectedToken.char}”的朗诵与排版</span>
+            <button type="button" onClick={() => setSelection(undefined)} aria-label="关闭标识工具">×</button>
           </div>
           <div className="compact-marker-groups">
-            <div>
+            <div className="compact-line-break-copy">
               <small>停顿</small>
               <button
                 type="button"
@@ -954,7 +1543,7 @@ export function CompactRecitationEditor({
                 type="button"
                 className={selectedPause?.type === "long" ? "active" : ""}
                 onClick={() => editSelected((sentence, token) => setPauseAt(sentence, token, "long"))}
-              >{"//"}</button>
+              >{"///"}</button>
             </div>
             <div>
               <small>换气</small>
@@ -983,39 +1572,94 @@ export function CompactRecitationEditor({
               >拖音</button>
               <button
                 type="button"
+                className={`compact-staccato-button ${selectedStaccato ? "active" : ""}`}
+                onClick={() => editSelected(toggleStaccato)}
+              >一字一顿</button>
+              <button
+                type="button"
+                className={`compact-virtual-voice-button ${selectedVirtualVoice ? "active" : ""}`}
+                onClick={() => editSelected((sentence, token) => setDeliveryTechniqueAt(sentence, token, "virtual_voice"))}
+              ><span aria-hidden="true">声</span>虚声</button>
+              <button
+                type="button"
+                className={`compact-distance-button ${selectedDistanceView?.type === "distant_view" ? "active" : ""}`}
+                onClick={() => editSelected((sentence, token) => setDeliveryTechniqueAt(sentence, token, "distant_view"))}
+              ><DistanceViewGlyph type="distant_view" />远景</button>
+              <button
+                type="button"
+                className={`compact-distance-button ${selectedDistanceView?.type === "close_view" ? "active" : ""}`}
+                onClick={() => editSelected((sentence, token) => setDeliveryTechniqueAt(sentence, token, "close_view"))}
+              ><DistanceViewGlyph type="close_view" />近景</button>
+              <button
+                type="button"
                 className={selectedSentence.endingIntonation.type === "rising" ? "active" : ""}
-                onClick={() => editSelected((sentence) => setEndingTone(sentence, "rising"))}
+                onClick={() => editSelected((sentence) => toggleEndingTone(sentence, "rising"))}
+                aria-label={selectedSentence.endingIntonation.type === "rising" ? "取消上扬语调" : "设置上扬语调"}
+                aria-pressed={selectedSentence.endingIntonation.type === "rising"}
+                title={selectedSentence.endingIntonation.type === "rising" ? "再次点击取消上扬" : "设置句尾上扬"}
               >↗</button>
               <button
                 type="button"
                 className={selectedSentence.endingIntonation.type === "falling" ? "active" : ""}
-                onClick={() => editSelected((sentence) => setEndingTone(sentence, "falling"))}
+                onClick={() => editSelected((sentence) => toggleEndingTone(sentence, "falling"))}
+                aria-label={selectedSentence.endingIntonation.type === "falling" ? "取消下降语调" : "设置下降语调"}
+                aria-pressed={selectedSentence.endingIntonation.type === "falling"}
+                title={selectedSentence.endingIntonation.type === "falling" ? "再次点击取消下降" : "设置句尾下降"}
               >↘</button>
-              <button
-                type="button"
-                className={pinyinEditorOpen ? "active" : ""}
-                onClick={() => {
-                  setPinyinDraft(selectedToken.displayPinyin ?? selectedToken.pinyin ?? "");
-                  setPinyinEditorOpen((open) => !open);
-                }}
-              >拼音</button>
+              {springSceneTechniqueMode ? (
+                <>
+                  <button
+                    type="button"
+                    className={`compact-scene-marker-button is-real ${selectedSceneTechnique?.type === "real" ? "active" : ""}`}
+                    onClick={() => editSelected((sentence, token) => setSceneTechniqueAt(sentence, token, "real"))}
+                  >眼睛·实景</button>
+                  <button
+                    type="button"
+                    className={`compact-scene-marker-button is-virtual ${selectedSceneTechnique?.type === "virtual" ? "active" : ""}`}
+                    onClick={() => editSelected((sentence, token) => setSceneTechniqueAt(sentence, token, "virtual"))}
+                  >心形·虚景</button>
+                </>
+              ) : null}
             </div>
           </div>
-          {pinyinEditorOpen ? (
-            <div className="compact-pinyin-editor">
-              <label>拼音
-                <input
-                  value={pinyinDraft}
-                  onChange={(event) => setPinyinDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") saveSelectedPinyin();
-                  }}
-                  aria-label={`修改“${selectedToken.char}”的拼音`}
-                />
-              </label>
-              <button type="button" onClick={saveSelectedPinyin}>保存</button>
+          <div className="compact-line-break-editor">
+            <div>
+              <strong>调整行分界</strong>
+              <small>移动现有上下行的文字，不额外插入空行</small>
             </div>
-          ) : null}
+            <div className="compact-line-break-actions">
+              <button
+                type="button"
+                disabled={!canMergeIntoPreviousLine}
+                onClick={() => mergeSelectedIntoLine("previous")}
+              >并入上一行</button>
+              <button
+                type="button"
+                disabled={!canMergeIntoNextLine}
+                onClick={() => mergeSelectedIntoLine("next")}
+              >并入下一行</button>
+            </div>
+          </div>
+          <div className="compact-pinyin-editor">
+            <label>拼音
+              <input
+                value={pinyinDraft}
+                onChange={(event) => {
+                  setPinyinDraft(event.target.value);
+                  setPinyinDraftDirty(true);
+                }}
+                onBlur={saveSelectedPinyin}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    saveSelectedPinyin();
+                  }
+                }}
+                aria-label={`修改“${selectedToken.char}”的拼音`}
+              />
+            </label>
+            <button type="button" onClick={saveSelectedPinyin} disabled={!pinyinDraftDirty}>保存</button>
+          </div>
         </aside>
       ) : null}
 
@@ -1023,16 +1667,21 @@ export function CompactRecitationEditor({
         <article className="compact-a4-page compact-measure-page">
           <CompactPageHeader work={work} page={1} total={1} />
           <div className="compact-page-body" data-compact-measure-capacity="first" />
-          <CompactPageLegend />
+          <CompactPageLegend items={legendItems} />
         </article>
         <article className="compact-a4-page compact-measure-page">
           <CompactPageHeader work={work} page={2} total={2} />
           <div className="compact-page-body" data-compact-measure-capacity="continuation" />
-          <CompactPageLegend />
+          <CompactPageLegend items={legendItems} />
         </article>
         <div className="compact-block-measure-list">
           {blocks.map((block) => (
-            <CompactSentenceRow block={block} measure key={`compact-measure-${block.id}`} />
+            <CompactSentenceRow
+              block={block}
+              measure
+              springSceneTechniqueMode={springSceneTechniqueMode}
+              key={`compact-measure-${block.id}`}
+            />
           ))}
         </div>
       </div>

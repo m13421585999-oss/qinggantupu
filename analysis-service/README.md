@@ -1,13 +1,14 @@
-# 声图云端朗诵分析服务
+# 声图朗诵分析服务（本地优先）
 
-这个 FastAPI 服务处理两项彼此独立的能力：
+这个 FastAPI 服务处理三项彼此独立的能力：
 
 - `tts-director-knowledge`：作品正文 → GPT-5.6 Sol 朗诵导演方案与 Eleven v3 执行脚本；
+- `text-recitation-knowledge`：作品正文 → 持久化后台任务 → 可编辑 `control_spec`；
 - `acoustic-analysis-knowledge`：R2 中最终真实 `analysisAudio` → Forced Alignment → FFmpeg/Praat-Parselmouth 声学证据 → DeepSeek 结构化解释 → 当前作品 `control_spec`。
 
 GPT-5.6 Sol 只设计朗诵，不直接生成图谱。真人原始参考音频只作为来源证据保留，不进入标准声音任务的对齐或声学分析。
 
-任何步骤失败都会通过回调把任务标为 `failed`，绝不返回 Demo 控制谱。
+任何步骤失败都会写入真实失败状态；音频路径同时通过回调收敛网站任务。服务绝不返回 Demo 控制谱。
 
 ## 接口与执行方式
 
@@ -15,19 +16,24 @@ GPT-5.6 Sol 只设计朗诵，不直接生成图谱。真人原始参考音频�
 - `POST /v1/tts-director`：使用通用 GPT 配置生成结构化 `performancePlan` 与 `ttsText`；程序删除 Audio Tags 和控制标点后与原文逐字比对，不一致时只自动修复一次。
 - `POST /v1/jobs`：由网站 Worker 使用 `ANALYSIS_SERVICE_TOKEN` 调用。请求只包含 `job_id`、签名的 `input_url`、签名的 `audio_url` 和 `callback_url`，音频不会进入 Vercel 请求体。
 - `POST /v1/interpretation-jobs`：复用上次已经保存的 `analysis_package`，只重新执行图谱 Interpretation，不重新对齐、分析或生成 TTS。
+- `POST /v1/text-recitation-tasks`：持久化文稿分析请求并立即返回 `202` 与任务编号。
+- `GET /v1/text-recitation-tasks/{task_id}`：查询 `queued`、`running`、`completed` 或 `failed`，完成时返回控制谱。
+- `POST /v1/text-recitation`：同步兼容接口；网站正式文稿流程不依赖它。
 - `POST /v1/visual-director`：独立生成作品视觉方案，不修改朗诵 control_spec。
 - `POST /v1/image-generation`：受同一 Bearer token 保护的图片生成代理，只转发生成请求并返回 `b64_json` 或临时 URL；不处理 R2/D1。
 - `POST /v1/hero-text-validation`：受同一 Bearer token 保护的 Hero 标题/作者 OCR 核对，只返回 `matched`、`mismatch` 或 `failed` 安全结果。
 
-Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `BackgroundTasks`。因此 `/v1/jobs` 会保持请求，直到分析完成并把 `succeeded` 或 `failed` 终态回调给网站；网站 Worker 也会在同一次创建任务请求中等待这一终态，不再依赖只有短暂续命窗口的 `waitUntil`。`vercel.json` 把函数最长执行时间设为 300 秒。
+文稿分析不让浏览器或网站 Worker 持有一个长 HTTP 请求。任务、长文分块结果和图片任务共用 `analysis-service/data/image_tasks.sqlite3`；FastAPI lifespan worker 领取队列，进程重启时把遗留的 `running` 文稿任务重新排队。超过 12 个 Sentence 的正文按每块最多 10 句处理，缓存键同时包含正文、模型、规则与人工拼音，因此只复用完全匹配且已校验的结果。
+
+音频 `/v1/jobs` 与 `/v1/interpretation-jobs` 仍使用认证回调并在当前请求内收敛终态。若网络边缘返回 502、503 或 524，网站保留任务与已完成结果，并通过后续查询继续收口，而不是自动重建同一任务。
 
 如果分析服务返回时网站仍未收到终态回调，任务会明确标为 `failed`；超过 12 分钟仍停留在 `queued` / `processing` 的中断任务，也会在下一次读取或重试时自动收敛为失败，避免永久卡住。
 
 所有中间音频只写入系统临时目录，函数结束后自动删除。运行时优先使用系统 `ffmpeg`，找不到时自动使用 `imageio-ffmpeg` 随包二进制。
 
-## Vercel 配置
+## 可选 Vercel 配置
 
-将 Vercel 项目的 Root Directory 设为本目录 `analysis-service`。Vercel 会通过根目录的 `server.py` 自动识别 FastAPI，并原样保留 `/health` 和 `/v1/jobs` 请求路径。
+将 Vercel 项目的 Root Directory 设为本目录 `analysis-service`。Vercel 会通过根目录的 `server.py` 自动识别 FastAPI。文稿任务依赖本地 SQLite 与持续运行的 worker；部署到无持久卷或会冻结后台进程的环境前，必须另外验证任务文件和 worker 生命周期。当前推荐在本机长期运行该服务。
 
 在 Vercel 项目中配置：
 
@@ -42,6 +48,7 @@ Vercel Python Function 不能依赖发送响应后继续运行的 FastAPI `Backg
 - `LLM_REASONING_EFFORT`：可选，默认 `high`，复杂作品可临时改为 `max` 后重新分析。
 - `VISUAL_REASONING_EFFORT`：仅用于视觉导演，默认 `low`；长作品会按最多 8 个 Scene 分批规划，单批超时会使用安全的本地视觉方案，不再让整次生图因 524 失败。
 - `TTS_DIRECTOR_REASONING_EFFORT`：仅用于 TTS 朗诵导演，默认 `medium`；
+- `IMAGE_TASKS_DB_PATH`：可选；文稿任务、分块缓存和图片任务的 SQLite 路径，默认 `analysis-service/data/image_tasks.sqlite3`；
 - `RECITATION_LLM_PROVIDER / BASE_URL / MODEL`：仅用于朗诵解释，默认恢复为 DeepSeek 官方 API、`deepseek-v4-pro`；Visual Director 继续使用通用 LLM 配置。
 - `RECITATION_LLM_API_KEY`：可选；未设置时优先复用旧 `LLM_API_KEY`，用于保留原 DeepSeek Key。
 - `RECITATION_REASONING_EFFORT`：仅用于完整朗诵解释请求，默认 `high`。

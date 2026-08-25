@@ -1,4 +1,5 @@
 import type { PrintSettings, RecitationSentence } from "./recitation-schema";
+import { DEFAULT_COMPACT_LEGEND_ITEMS } from "./compact-legend.ts";
 
 export const CSS_PIXELS_PER_MM = 96 / 25.4;
 
@@ -12,6 +13,7 @@ export const DEFAULT_A4_PRINT_SETTINGS: PrintSettings = {
   marginLeftMm: 15,
   marginRightMm: 15,
   renderDpr: 2.5,
+  compactLegendItems: [...DEFAULT_COMPACT_LEGEND_ITEMS],
 };
 
 export interface SentencePrintBlock {

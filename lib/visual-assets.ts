@@ -346,6 +346,38 @@ export function mapSceneAssetsToSentences(
   return result;
 }
 
+/**
+ * Index reviewed Scene assets by their persisted Scene id.
+ *
+ * Compact pages may split one control sentence into multiple visual lines. A
+ * line-level Scene uses that stable compact line id as its sceneId, allowing
+ * every rendered line to own a different image without changing the control
+ * sentence or the full-edition attachment rules.
+ */
+export function mapActiveSceneAssetsBySceneId(
+  visuals: WorkVisualBundle | undefined,
+) {
+  const result = new Map<string, VisualAsset>();
+  if (!visuals) return result;
+  const candidates = [...(visuals.sceneAssets?.length
+    ? visuals.sceneAssets
+    : visuals.assets.filter((asset) => asset.kind === "scene"))]
+    .filter((asset) => (
+      Boolean(asset.sceneId)
+      && Boolean(asset.url)
+      && asset.status === "ready"
+      && asset.isVisible !== false
+      && asset.isActive !== false
+    ))
+    .sort((left, right) => right.version - left.version);
+  for (const asset of candidates) {
+    if (asset.sceneId && !result.has(asset.sceneId)) {
+      result.set(asset.sceneId, asset);
+    }
+  }
+  return result;
+}
+
 export function findSceneAssetForSentence(
   visuals: WorkVisualBundle | undefined,
   sentence: VisualSentenceReference,

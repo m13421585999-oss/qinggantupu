@@ -17,6 +17,10 @@ import { withDynamicTimingProfile } from "@/lib/timing-profile";
 import { requestVisualDirection, VisualDirectorRequestError } from "@/lib/visual-director";
 import { sameVisualGenerationTarget } from "@/lib/visual-job-target";
 import {
+  DEFAULT_COMPACT_LEGEND_ITEMS,
+  normalizeCompactLegendItems,
+} from "@/lib/compact-legend";
+import {
   buildSceneUnits,
   summarizeControlSpec,
   type SceneGroupingVersion,
@@ -65,6 +69,7 @@ const DEFAULT_PRINT_SETTINGS = {
   marginLeftMm: 15,
   marginRightMm: 15,
   renderDpr: 2.5,
+  compactLegendItems: [...DEFAULT_COMPACT_LEGEND_ITEMS],
 } as const;
 
 type AudioSourceType = "human_reference" | "ai_tts";
@@ -156,6 +161,7 @@ function normalizePrintSettings(value: unknown) {
     marginLeftMm: margin("marginLeftMm"),
     marginRightMm: margin("marginRightMm"),
     renderDpr: Number.isFinite(renderDpr) ? Math.max(2, Math.min(3, renderDpr)) : 2.5,
+    compactLegendItems: normalizeCompactLegendItems(source.compactLegendItems),
   };
 }
 
@@ -2728,6 +2734,62 @@ function validateControlSpec(spec: Record<string, unknown>, sourceText: string) 
         throw new Error(`第 ${sentencePosition + 1} 句的换气标识与 token id 不一致。`);
       }
     });
+    const sceneTechniqueMarks = sentence.sceneTechniqueMarks;
+    if (sceneTechniqueMarks !== undefined && !Array.isArray(sceneTechniqueMarks)) {
+      throw new Error(`第 ${sentencePosition + 1} 句的实景/虚景标识必须是数组。`);
+    }
+    const sceneTechniqueTokens = new Set<number>();
+    (Array.isArray(sceneTechniqueMarks) ? sceneTechniqueMarks : []).forEach((markValue) => {
+      const mark = markValue && typeof markValue === "object" && !Array.isArray(markValue)
+        ? markValue as Record<string, unknown>
+        : {};
+      const tokenIndex = Number(mark.tokenIndex);
+      const token = sentenceTokensByIndex.get(tokenIndex);
+      if (!Number.isInteger(tokenIndex) || !token) {
+        throw new Error(`第 ${sentencePosition + 1} 句的实景/虚景标识引用了无效 token index。`);
+      }
+      if (sceneTechniqueTokens.has(tokenIndex)) {
+        throw new Error(`第 ${sentencePosition + 1} 句的同一文字不能保存多个实景/虚景标识。`);
+      }
+      sceneTechniqueTokens.add(tokenIndex);
+      if (mark.type !== "real" && mark.type !== "virtual") {
+        throw new Error(`第 ${sentencePosition + 1} 句包含不支持的实景/虚景类型。`);
+      }
+      if (String(mark.tokenId ?? "") !== String(token.id ?? "")) {
+        throw new Error(`第 ${sentencePosition + 1} 句的实景/虚景标识与 token id 不一致。`);
+      }
+    });
+    const deliveryTechniqueMarks = sentence.deliveryTechniqueMarks;
+    if (deliveryTechniqueMarks !== undefined && !Array.isArray(deliveryTechniqueMarks)) {
+      throw new Error(`第 ${sentencePosition + 1} 句的虚声/远近景标识必须是数组。`);
+    }
+    const deliveryTechniqueGroups = new Set<string>();
+    (Array.isArray(deliveryTechniqueMarks) ? deliveryTechniqueMarks : []).forEach((markValue) => {
+      const mark = markValue && typeof markValue === "object" && !Array.isArray(markValue)
+        ? markValue as Record<string, unknown>
+        : {};
+      const tokenIndex = Number(mark.tokenIndex);
+      const token = sentenceTokensByIndex.get(tokenIndex);
+      if (!Number.isInteger(tokenIndex) || !token) {
+        throw new Error(`第 ${sentencePosition + 1} 句的虚声/远近景标识引用了无效 token index。`);
+      }
+      if (
+        mark.type !== "virtual_voice"
+        && mark.type !== "distant_view"
+        && mark.type !== "close_view"
+      ) {
+        throw new Error(`第 ${sentencePosition + 1} 句包含不支持的虚声/远近景类型。`);
+      }
+      const group = mark.type === "virtual_voice" ? "voice" : "distance";
+      const groupKey = `${tokenIndex}:${group}`;
+      if (deliveryTechniqueGroups.has(groupKey)) {
+        throw new Error(`第 ${sentencePosition + 1} 句的同一文字不能保存多个同类虚声/远近景标识。`);
+      }
+      deliveryTechniqueGroups.add(groupKey);
+      if (String(mark.tokenId ?? "") !== String(token.id ?? "")) {
+        throw new Error(`第 ${sentencePosition + 1} 句的虚声/远近景标识与 token id 不一致。`);
+      }
+    });
     const overrides = sentence.prosodyPointOverrides;
     if (overrides !== undefined && !Array.isArray(overrides)) {
       throw new Error(`第 ${sentencePosition + 1} 句的语势节点调整必须是数组。`);
@@ -2751,6 +2813,61 @@ function validateControlSpec(spec: Record<string, unknown>, sourceText: string) 
       }
     });
   });
+  const editionLayouts = spec.editionLayouts;
+  if (editionLayouts !== undefined) {
+    if (!editionLayouts || typeof editionLayouts !== "object" || Array.isArray(editionLayouts)) {
+      throw new Error("控制谱 editionLayouts 必须是对象。");
+    }
+    for (const edition of ["compact", "full"] as const) {
+      const layout = (editionLayouts as Record<string, unknown>)[edition];
+      if (layout === undefined) continue;
+      if (!layout || typeof layout !== "object" || Array.isArray(layout)) {
+        throw new Error(`${edition} 版分行方案必须是对象。`);
+      }
+      const rows = (layout as Record<string, unknown>).rows;
+      if (!Array.isArray(rows) || !rows.length) {
+        throw new Error(`${edition} 版分行方案缺少 rows。`);
+      }
+      const seen = new Set<number>();
+      rows.forEach((rowValue, rowPosition) => {
+        const row = rowValue && typeof rowValue === "object" && !Array.isArray(rowValue)
+          ? rowValue as Record<string, unknown>
+          : {};
+        if (!String(row.id ?? "").trim()) {
+          throw new Error(`${edition} 版第 ${rowPosition + 1} 行缺少 id。`);
+        }
+        const tokenIndexes = row.tokenIndexes;
+        if (!Array.isArray(tokenIndexes) || !tokenIndexes.length) {
+          throw new Error(`${edition} 版第 ${rowPosition + 1} 行缺少 tokenIndexes。`);
+        }
+        const included = new Set<number>();
+        tokenIndexes.forEach((value) => {
+          const tokenIndex = Number(value);
+          if (!Number.isInteger(tokenIndex) || tokenIndex < 0 || tokenIndex >= tokens.length) {
+            throw new Error(`${edition} 版第 ${rowPosition + 1} 行引用了无效 token index。`);
+          }
+          if (seen.has(tokenIndex) || included.has(tokenIndex)) {
+            throw new Error(`${edition} 版分行方案重复引用了 token ${tokenIndex}。`);
+          }
+          included.add(tokenIndex);
+          seen.add(tokenIndex);
+        });
+        const lineBreaks = row.lineBreakAfterTokenIndexes;
+        if (lineBreaks !== undefined && !Array.isArray(lineBreaks)) {
+          throw new Error(`${edition} 版第 ${rowPosition + 1} 行的手动换行点必须是数组。`);
+        }
+        (Array.isArray(lineBreaks) ? lineBreaks : []).forEach((value) => {
+          const tokenIndex = Number(value);
+          if (!Number.isInteger(tokenIndex) || !included.has(tokenIndex)) {
+            throw new Error(`${edition} 版第 ${rowPosition + 1} 行包含无效手动换行点。`);
+          }
+        });
+      });
+      if (seen.size !== tokens.length) {
+        throw new Error(`${edition} 版分行方案没有完整覆盖正文。`);
+      }
+    }
+  }
 }
 
 async function saveControlSpec(request: Request, env: Env, workId: string) {

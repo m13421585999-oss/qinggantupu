@@ -38,6 +38,9 @@ import { A4PrintPreview } from "@/components/A4PrintPreview";
 import { CompactRecitationEditor } from "@/components/CompactRecitationEditor";
 import { FullA4Editor } from "@/components/FullA4Editor";
 import { buildCompactControlSpec } from "@/lib/compact-control-spec";
+import { withCompactSentences, withFullLayoutRows } from "@/lib/edition-layout";
+import { DEFAULT_A4_PRINT_SETTINGS } from "@/lib/print-layout";
+import type { CompactLegendItemId } from "@/lib/compact-legend";
 import {
   ENDING_LABELS,
   PROSODY_LABELS,
@@ -48,6 +51,7 @@ import {
   type AudioSourceType,
   type ControlSpec,
   type EndingTone,
+  EditionLayoutRow,
   type RecitationSentence,
   type RecitationWork,
   type TimedToken,
@@ -374,15 +378,8 @@ function createEmptyWork(): RecitationWork {
     status: "draft",
     audioSyncStatus: "pending",
     printSettings: {
-      paper: "A4",
-      orientation: "portrait",
-      widthMm: 210,
-      heightMm: 297,
-      marginTopMm: 15,
-      marginBottomMm: 15,
-      marginLeftMm: 15,
-      marginRightMm: 15,
-      renderDpr: 2.5,
+      ...DEFAULT_A4_PRINT_SETTINGS,
+      compactLegendItems: [...(DEFAULT_A4_PRINT_SETTINGS.compactLegendItems ?? [])],
     },
     createdAt,
     updatedAt: createdAt,
@@ -2608,6 +2605,7 @@ export function RecitationStudio() {
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [isWorkDirty, setIsWorkDirty] = useState(true);
   const [controlSpecDirty, setControlSpecDirty] = useState(false);
+  const [printSettingsDirty, setPrintSettingsDirty] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("unsaved");
   const [lastSavedAt, setLastSavedAt] = useState<string>();
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -2647,6 +2645,7 @@ export function RecitationStudio() {
   );
   const hasUnsavedChanges = Boolean(referenceFile)
     || controlSpecDirty
+    || printSettingsDirty
     || (isWorkDirty && (!work.id.startsWith("draft-") || hasDraftContent));
 
   const showToast = useCallback((message: string) => {
@@ -2670,6 +2669,7 @@ export function RecitationStudio() {
     setReferenceFile(null);
     setIsWorkDirty(false);
     setControlSpecDirty(false);
+    setPrintSettingsDirty(false);
     setSaveState("saved");
     setLastSavedAt(stored.updatedAt);
     savedSourceTextRef.current = stored.sourceText;
@@ -3026,6 +3026,7 @@ export function RecitationStudio() {
       aiTts: result.work.aiTts,
     }));
     setIsWorkDirty(false);
+    setPrintSettingsDirty(false);
     savedUpdatedAtRef.current = result.work.updatedAt;
     savedSourceTextRef.current = result.work.sourceText;
     const url = new URL(window.location.href);
@@ -3056,6 +3057,7 @@ export function RecitationStudio() {
       const metadataDirty = work.id.startsWith("draft-")
         || work.title.trim() !== work.title
         || savedSourceTextRef.current !== work.sourceText
+        || printSettingsDirty
         || isWorkDirty && !controlSpecDirty;
       let saved = metadataDirty
         ? await persistWorkRecord()
@@ -3095,6 +3097,7 @@ export function RecitationStudio() {
       );
       removeSavedReferenceRef.current = false;
       setControlSpecDirty(false);
+      setPrintSettingsDirty(false);
       setSourceChangeConfirmOpen(false);
       setLibraryItems((items) => items.filter((item) => item.id !== saved.id));
       showToast("作品已完整保存到云端");
@@ -3170,6 +3173,7 @@ export function RecitationStudio() {
       setWork(result.work);
       setIsWorkDirty(false);
       setControlSpecDirty(false);
+      setPrintSettingsDirty(false);
       setSaveState("saved");
       setLastSavedAt(result.work.updatedAt);
       savedSourceTextRef.current = result.work.sourceText;
@@ -3190,16 +3194,51 @@ export function RecitationStudio() {
   const updateCompactSentence = (nextSentence: RecitationSentence) => {
     setWork((current) => {
       if (!current.controlSpec) return current;
+      const nextSentences = current.controlSpec.sentences.map((sentence) => (
+        sentence.id === nextSentence.id ? nextSentence : sentence
+      ));
       return {
         ...current,
         status: "review",
         audioSyncStatus: current.standardAiAudio ? "modified" : "pending",
         controlSpec: {
-          ...current.controlSpec,
+          ...withCompactSentences(current.controlSpec, nextSentences),
           source: "hybrid",
-          sentences: current.controlSpec.sentences.map((sentence) => (
-            sentence.id === nextSentence.id ? nextSentence : sentence
-          )),
+        },
+      };
+    });
+    setIsWorkDirty(true);
+    setControlSpecDirty(true);
+    setSaveState("dirty");
+  };
+
+  const updateCompactSentences = (nextSentences: RecitationSentence[]) => {
+    setWork((current) => {
+      if (!current.controlSpec) return current;
+      return {
+        ...current,
+        status: "review",
+        audioSyncStatus: current.standardAiAudio ? "modified" : "pending",
+        controlSpec: {
+          ...withCompactSentences(current.controlSpec, nextSentences),
+          source: "hybrid",
+        },
+      };
+    });
+    setIsWorkDirty(true);
+    setControlSpecDirty(true);
+    setSaveState("dirty");
+  };
+
+  const updateFullLayoutRows = (rows: EditionLayoutRow[]) => {
+    setWork((current) => {
+      if (!current.controlSpec) return current;
+      return {
+        ...current,
+        status: "review",
+        controlSpec: {
+          ...withFullLayoutRows(current.controlSpec, rows),
+          source: "hybrid",
         },
       };
     });
@@ -3227,6 +3266,19 @@ export function RecitationStudio() {
     });
     setIsWorkDirty(true);
     setControlSpecDirty(true);
+    setSaveState("dirty");
+  };
+
+  const updateCompactLegendItems = (items: CompactLegendItemId[]) => {
+    setWork((current) => ({
+      ...current,
+      printSettings: {
+        ...(current.printSettings ?? DEFAULT_A4_PRINT_SETTINGS),
+        compactLegendItems: [...items],
+      },
+    }));
+    setIsWorkDirty(true);
+    setPrintSettingsDirty(true);
     setSaveState("dirty");
   };
 
@@ -3670,6 +3722,7 @@ export function RecitationStudio() {
     setWork(empty);
     setReferenceFile(null);
     setIsWorkDirty(true);
+    setPrintSettingsDirty(false);
     setSaveState("unsaved");
     setLastSavedAt(undefined);
     savedSourceTextRef.current = "";
@@ -3863,6 +3916,7 @@ export function RecitationStudio() {
             work={work}
             saveState={saveState}
             onSentenceChange={updateCompactSentence}
+            onLayoutRowsChange={updateFullLayoutRows}
             onPinyinOverrideChange={updateCompactPinyinOverride}
             onSave={() => void performSaveCurrentWork()}
             onOpenLibrary={() => setLibraryOpen(true)}
@@ -3908,7 +3962,9 @@ export function RecitationStudio() {
           work={work}
           saveState={saveState}
           onSentenceChange={updateCompactSentence}
+          onSentencesChange={updateCompactSentences}
           onPinyinOverrideChange={updateCompactPinyinOverride}
+          onLegendItemsChange={updateCompactLegendItems}
           onSave={() => void performSaveCurrentWork()}
           onOpenLibrary={() => setLibraryOpen(true)}
           onSwitchFull={() => void switchStudioEdition("full")}

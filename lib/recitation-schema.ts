@@ -1,3 +1,5 @@
+import type { CompactLegendItemId } from "./compact-legend";
+
 export type WorkStatus =
   | "draft"
   | "analyzing"
@@ -216,6 +218,25 @@ export interface ProsodyPointOverride {
   source: "human";
 }
 
+export interface SceneTechniqueMark {
+  id: string;
+  tokenId: string;
+  tokenIndex: number;
+  type: "real" | "virtual";
+  source: "human";
+}
+
+export type DeliveryTechniqueType = "virtual_voice" | "distant_view" | "close_view";
+
+/** Creator-authored vocal/shot-distance cues shared by Compact and Full. */
+export interface DeliveryTechniqueMark {
+  id: string;
+  tokenId: string;
+  tokenIndex: number;
+  type: DeliveryTechniqueType;
+  source: "human";
+}
+
 export interface RecitationSentence {
   id: string;
   order: number;
@@ -227,6 +248,12 @@ export interface RecitationSentence {
   performanceProfile?: HiddenPerformanceProfile;
   macroProsodyPath?: MacroProsodyPath;
   prosodyPointOverrides?: ProsodyPointOverride[];
+  /** Creator-authored Compact-only line breaks; Compact assigns numbers to the resulting visual lines. */
+  lineBreakAfterTokenIndexes?: number[];
+  /** Compact-only imagery cues. They are rendered only by the special 《春》 layout. */
+  sceneTechniqueMarks?: SceneTechniqueMark[];
+  /** Shared 虚声、远景、近景 cues attached to stable token indexes. */
+  deliveryTechniqueMarks?: DeliveryTechniqueMark[];
   prosody: ProsodyEvent[];
   endingIntonation: {
     sourceControlRef?: string;
@@ -250,6 +277,26 @@ export interface RecitationSentence {
   avoid: string[];
   confidence: number;
   timeRange: { startMs: number; endMs: number };
+}
+
+/**
+ * One edition-owned manuscript row. Token indexes keep the layout independent
+ * from RecitationSentence boundaries, while all recitation marks remain on the
+ * shared sentences and are resolved by token index at render time.
+ */
+export interface EditionLayoutRow {
+  id: string;
+  tokenIndexes: number[];
+  lineBreakAfterTokenIndexes?: number[];
+}
+
+export interface EditionLayout {
+  rows: EditionLayoutRow[];
+}
+
+export interface RecitationEditionLayouts {
+  compact?: EditionLayout;
+  full?: EditionLayout;
 }
 
 export interface DocumentProfile {
@@ -280,6 +327,8 @@ export interface ControlSpec {
   documentProfile: DocumentProfile;
   tokens: TimedToken[];
   sentences: RecitationSentence[];
+  /** Compact and Full own their row boundaries; recitation marks stay shared. */
+  editionLayouts?: RecitationEditionLayouts;
   /** Creator-authored readings keyed by stable token id; they override generated pinyin in every compact rendering. */
   pinyinOverrides?: Record<string, string>;
   analysisProvenance: {
@@ -394,6 +443,8 @@ export interface PrintSettings {
   marginLeftMm: number;
   marginRightMm: number;
   renderDpr: number;
+  /** Compact-only footer legend selection; omitted by works saved before this feature. */
+  compactLegendItems?: CompactLegendItemId[];
 }
 
 export interface RecitationWork {

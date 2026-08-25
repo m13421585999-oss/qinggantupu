@@ -4,6 +4,7 @@ import type {
   TimedToken,
 } from "./recitation-schema";
 import { pinyin } from "pinyin-pro";
+import { layoutRowsFromSentences } from "./edition-layout.ts";
 
 export interface CompactSentenceRange {
   startIndex: number;
@@ -157,6 +158,8 @@ export function buildCompactControlSpec(workId: string, sourceText: string): Con
   const tokens = buildCompactTokens(sourceText);
   const ranges = splitCompactSentenceRanges(sourceText);
   if (!ranges.length) throw new Error("紧凑版正文没有可排版的朗诵内容。");
+  const sentences = ranges.map((range, position) => buildCompactSentence(range, position, tokens));
+  const initialRows = layoutRowsFromSentences(sentences, tokens);
 
   const generatedAt = new Date().toISOString();
   return {
@@ -177,7 +180,11 @@ export function buildCompactControlSpec(workId: string, sourceText: string): Con
       globalArc: [],
     },
     tokens,
-    sentences: ranges.map((range, position) => buildCompactSentence(range, position, tokens)),
+    sentences,
+    editionLayouts: {
+      compact: { rows: initialRows },
+      full: { rows: initialRows },
+    },
     analysisProvenance: {
       knowledgeAssetIds: [],
       pipelineVersion: "compact-manual-1.0",

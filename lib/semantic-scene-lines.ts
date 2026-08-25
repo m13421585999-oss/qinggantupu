@@ -1,4 +1,5 @@
 import type { GraphTokenUnit } from "./graph-track";
+import type { RecitationSentence, TimedToken, TokenSpan } from "./recitation-schema";
 
 export interface SemanticSceneLineOptions {
   /** One-line reading stays preferable until this approximate visual width is exceeded. */
@@ -17,6 +18,207 @@ export interface MeasuredSceneBlockOptions {
   protectedBoundaryIndexes?: number[];
   /** Useful teaching boundaries, such as the end of a prosody event. */
   preferredBoundaryIndexes?: number[];
+  /** Hard line ends requested by the creator. */
+  forcedBoundaryIndexes?: number[];
+}
+
+export type VisualLineMergeDirection = "previous" | "next";
+
+function isCompactBoundaryPunctuation(char: string) {
+  return /\p{P}|\s/u.test(char);
+}
+
+export function adjustVisualLineBoundaries(
+  lines: readonly (readonly number[])[],
+  lineIndex: number,
+  tokenIndex: number,
+  direction: VisualLineMergeDirection,
+) {
+  const line = lines[lineIndex];
+  const tokenPosition = line?.indexOf(tokenIndex) ?? -1;
+  if (!line || tokenPosition < 0) return undefined;
+  if (direction === "previous" && lineIndex === 0) return undefined;
+  if (direction === "next" && lineIndex >= lines.length - 1) return undefined;
+
+  const boundaries = lines.slice(0, -1).flatMap((candidate) => {
+    const last = candidate.at(-1);
+    return last === undefined ? [] : [last];
+  });
+  if (direction === "next") {
+    if (tokenPosition === 0) boundaries.splice(lineIndex, 1);
+    else boundaries[lineIndex] = line[tokenPosition - 1];
+  } else {
+    boundaries[lineIndex - 1] = tokenIndex;
+  }
+
+  const finalTokenIndex = lines.at(-1)?.at(-1);
+  return [...new Set(boundaries)]
+    .filter((boundary) => boundary !== finalTokenIndex)
+    .sort((left, right) => left - right);
+}
+
+function clippedSpan(span: TokenSpan, tokenIndexes: readonly number[]) {
+  const included = tokenIndexes.filter((index) => index >= span.start && index <= span.end);
+  return included.length ? { start: included[0], end: included.at(-1) ?? included[0] } : undefined;
+}
+
+export function rebuildSentenceFromTokens(
+  base: RecitationSentence,
+  originals: readonly RecitationSentence[],
+  tokens: readonly TimedToken[],
+  options: {
+    id?: string;
+    order?: number;
+    lineBreakAfterTokenIndexes?: readonly number[];
+    preserveCompactLineBreaks?: boolean;
+  } = {},
+): RecitationSentence {
+  const sortedTokens = [...tokens].sort((left, right) => left.index - right.index);
+  const tokenIndexes = sortedTokens.map((token) => token.index);
+  const tokenIndexSet = new Set(tokenIndexes);
+  const finalTokenIndex = tokenIndexes.at(-1);
+  const endingOwner = originals.find((sentence) => sentence.tokens.at(-1)?.index === finalTokenIndex);
+  const focuses = originals.flatMap((sentence) => sentence.focus).flatMap((focus) => {
+    const kept = focus.tokenIndexes.flatMap((index, position) => (
+      tokenIndexSet.has(index) ? [{ index, id: focus.tokenIds[position] }] : []
+    ));
+    if (!kept.length) return [];
+    const keptCore = (focus.coreTokenIndexes ?? []).flatMap((index, position) => (
+      tokenIndexSet.has(index) ? [{ index, id: focus.coreTokenIds?.[position] }] : []
+    ));
+    return [{
+      ...focus,
+      tokenIndexes: kept.map((item) => item.index),
+      tokenIds: kept.map((item) => item.id).filter((id): id is string => Boolean(id)),
+      coreTokenIndexes: keptCore.length ? keptCore.map((item) => item.index) : undefined,
+      coreTokenIds: keptCore.length
+        ? keptCore.map((item) => item.id).filter((id): id is string => Boolean(id))
+        : undefined,
+    }];
+  });
+  const prosody = originals.flatMap((sentence) => sentence.prosody).flatMap((event) => {
+    const activeSpan = clippedSpan(event.activeSpan, tokenIndexes);
+    if (!activeSpan) return [];
+    return [{
+      ...event,
+      activeSpan,
+      coreZone: clippedSpan(event.coreZone, tokenIndexes) ?? activeSpan,
+    }];
+  });
+  const macroPaths = originals.flatMap((sentence) => sentence.macroProsodyPath ?? []);
+  const macroPoints = [...new Map(macroPaths.flatMap((path) => path.points)
+    .filter((point) => tokenIndexSet.has(point.tokenIndex))
+    .map((point) => [point.tokenIndex, point] as const)).values()]
+    .sort((left, right) => left.tokenIndex - right.tokenIndex);
+  const macroSegments = macroPaths.flatMap((path) => path.segments).flatMap((segment) => {
+    const span = clippedSpan({ start: segment.startIndex, end: segment.endIndex }, tokenIndexes);
+    return span ? [{ ...segment, startIndex: span.start, endIndex: span.end }] : [];
+  });
+  const inheritedLineBreaks = options.preserveCompactLineBreaks
+    ? originals.flatMap((sentence) => sentence.lineBreakAfterTokenIndexes ?? [])
+    : [];
+  const lineBreakAfterTokenIndexes = [...new Set([
+    ...inheritedLineBreaks,
+    ...(options.lineBreakAfterTokenIndexes ?? []),
+  ])].filter((index) => tokenIndexSet.has(index) && index !== finalTokenIndex)
+    .sort((left, right) => left - right);
+
+  const byTokenIndex = <T>(
+    select: (sentence: RecitationSentence) => readonly T[] | undefined,
+    tokenIndex: (item: T) => number,
+  ) => originals.flatMap((sentence) => select(sentence) ?? [])
+    .filter((item) => tokenIndexSet.has(tokenIndex(item)));
+
+  return {
+    ...base,
+    id: options.id ?? base.id,
+    order: options.order ?? base.order,
+    text: sortedTokens.map((token) => token.char).join(""),
+    tokens: sortedTokens,
+    lineBreakAfterTokenIndexes: lineBreakAfterTokenIndexes.length
+      ? lineBreakAfterTokenIndexes
+      : undefined,
+    macroProsodyPath: macroPoints.length || macroSegments.length ? {
+      points: macroPoints,
+      segments: macroSegments,
+      source: base.macroProsodyPath?.source ?? macroPaths[0]?.source ?? "text_llm",
+    } : undefined,
+    prosodyPointOverrides: byTokenIndex(
+      (sentence) => sentence.prosodyPointOverrides,
+      (item) => item.tokenIndex,
+    ),
+    sceneTechniqueMarks: byTokenIndex(
+      (sentence) => sentence.sceneTechniqueMarks,
+      (item) => item.tokenIndex,
+    ),
+    deliveryTechniqueMarks: byTokenIndex(
+      (sentence) => sentence.deliveryTechniqueMarks,
+      (item) => item.tokenIndex,
+    ),
+    prosody,
+    focus: focuses,
+    endingIntonation: endingOwner?.endingIntonation ?? {
+      ...base.endingIntonation,
+      type: "level",
+      source: "human",
+    },
+    pauses: byTokenIndex((sentence) => sentence.pauses, (item) => item.afterTokenIndex),
+    breaths: byTokenIndex((sentence) => sentence.breaths, (item) => item.afterTokenIndex),
+    prolongations: byTokenIndex((sentence) => sentence.prolongations, (item) => item.tokenIndex),
+    timeRange: {
+      startMs: Math.min(...sortedTokens.map((token) => token.startMs)),
+      endMs: Math.max(...sortedTokens.map((token) => token.endMs)),
+    },
+  };
+}
+
+function rebuiltCompactSentence(
+  base: RecitationSentence,
+  originals: readonly RecitationSentence[],
+  tokens: readonly TimedToken[],
+) {
+  return rebuildSentenceFromTokens(base, originals, tokens, {
+    preserveCompactLineBreaks: true,
+  });
+}
+
+export function mergeAcrossCompactSentences(
+  selected: RecitationSentence,
+  adjacent: RecitationSentence,
+  tokenIndex: number,
+  direction: VisualLineMergeDirection,
+) {
+  const tokenPosition = selected.tokens.findIndex((token) => token.index === tokenIndex);
+  if (tokenPosition < 0 || !selected.tokens.length || !adjacent.tokens.length) return undefined;
+  const selectedFirst = selected.tokens[0].index;
+  const selectedLast = selected.tokens.at(-1)?.index ?? selectedFirst;
+  const adjacentFirst = adjacent.tokens[0].index;
+  const adjacentLast = adjacent.tokens.at(-1)?.index ?? adjacentFirst;
+  if (direction === "next" && selectedLast >= adjacentFirst) return undefined;
+  if (direction === "previous" && adjacentLast >= selectedFirst) return undefined;
+
+  let moveThroughPosition = tokenPosition;
+  if (direction === "previous") {
+    while (
+      moveThroughPosition + 1 < selected.tokens.length
+      && isCompactBoundaryPunctuation(selected.tokens[moveThroughPosition + 1].char)
+    ) moveThroughPosition += 1;
+  }
+  const moved = direction === "next"
+    ? selected.tokens.slice(tokenPosition)
+    : selected.tokens.slice(0, moveThroughPosition + 1);
+  const remaining = direction === "next"
+    ? selected.tokens.slice(0, tokenPosition)
+    : selected.tokens.slice(moveThroughPosition + 1);
+  const destinationTokens = direction === "next"
+    ? [...moved, ...adjacent.tokens]
+    : [...adjacent.tokens, ...moved];
+  const originals = [selected, adjacent];
+
+  return {
+    selected: remaining.length ? rebuiltCompactSentence(selected, originals, remaining) : undefined,
+    adjacent: rebuiltCompactSentence(adjacent, originals, destinationTokens),
+  };
 }
 
 function punctuationStrength(unit: GraphTokenUnit) {
@@ -57,8 +259,26 @@ function betterLayout(
 export function splitGraphUnitsByMeasuredWidth(
   units: GraphTokenUnit[],
   options: MeasuredSceneBlockOptions,
-) {
+): GraphTokenUnit[][] {
   if (units.length <= 1) return units.length ? [units] : [];
+
+  const forced = new Set(options.forcedBoundaryIndexes ?? []);
+  const forcedEnds = units.flatMap((unit, position) => (
+    forced.has(unit.token.index) && position < units.length - 1 ? [position + 1] : []
+  ));
+  if (forcedEnds.length) {
+    const segments: GraphTokenUnit[][] = [];
+    let segmentStart = 0;
+    for (const segmentEnd of forcedEnds) {
+      segments.push(units.slice(segmentStart, segmentEnd));
+      segmentStart = segmentEnd;
+    }
+    segments.push(units.slice(segmentStart));
+    return segments.flatMap((segment) => splitGraphUnitsByMeasuredWidth(segment, {
+      ...options,
+      forcedBoundaryIndexes: [],
+    }));
+  }
 
   const maxWidth = Math.max(1, options.maxLineWidth);
   const gap = Math.max(0, options.unitGap ?? 0);

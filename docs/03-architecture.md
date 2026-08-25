@@ -1,34 +1,34 @@
-# 产品一 · 正式技术架构
+# 声图 · 当前技术架构
 
-## 完整链路
+## 两条图谱入口
 
 ```text
-浏览器创作端
-  正文 + 参考朗诵
-      ↓
-Sites Worker
-  D1：作品 / 素材元数据 / processing_job / control_spec / 发布
-  R2：真人参考朗诵 / standard_ai_audio
-      ↓ Eleven Voice Changer
-  standard_ai_audio
-      ↓ 短时签名输入 URL
-Python FastAPI 分析服务
-  ElevenLabs Forced Alignment
-  FFmpeg + Praat-Parselmouth
-  声音事实摘要
-  朗诵表达规则 v1.0 + LLM 结构化解释
-      ↓ 认证回调
-Worker 保存当前作品 control_spec
-      ↓
-现有图谱编辑器人工修正
-      ↓
-发布并逐字同步播放同一 standard_ai_audio
+正文入口（默认、本地优先）
+  浏览器保存作品 → Worker 创建 processing_job
+  → FastAPI /v1/text-recitation-tasks 返回持久化任务编号
+  → 浏览器轮询 Worker，Worker 轮询分析服务
+  → 长文分块分析 / 缓存 / 断点恢复
+  → Worker 校验并保存 control_spec
+  → 场景图片任务独立生成
+
+音频入口（可选）
+  正文 + 真人参考朗诵或 AI 参考朗诵
+  → standard_ai_audio
+  → Forced Alignment + FFmpeg/Praat-Parselmouth
+  → 声音事实摘要 + 朗诵表达规则 + 结构化解释
+  → 认证回调保存 control_spec 与同源时间轴
+
+共同出口
+  → 完整版或紧凑版人工修正
+  → A4 / 多页 PDF / 可选发布与同步播放
 ```
 
 ## 数据边界
 
-- D1 是作品正文、任务状态、素材元数据、控制谱版本、标准音频时间轴、同步状态与发布状态的权威来源。
-- R2 同时保存真人原始参考朗诵和 Voice Changer 生成的标准 AI 音频；D1 保存两者的来源关系。
+- D1 是作品正文、任务状态、素材元数据、控制谱版本、打印设置、视觉版本、标准音频时间轴、同步状态与发布状态的权威来源。
+- R2 保存真人原始参考朗诵、标准 AI 音频和正式视觉资产；D1 保存对象键、版本与作品关系。
+- 本地 `.wrangler/state/v3` 中的 D1 与 R2 是一套状态，备份和恢复都必须成套进行。
+- 分析服务的文稿任务、分块缓存与图片任务使用本机 `analysis-service/data/image_tasks.sqlite3`，该运行数据不进入 Git。
 - Python 服务只通过短时签名 URL 读取当前任务的正文和音频，通过带服务端 token 的回调写回结果。
 - Eleven、LLM 和回调 Secret 只存在于服务端环境变量。
 - 正文改变后，旧控制谱和发布关联立即失效；不会伪装成新作品的分析结果。
@@ -37,14 +37,16 @@ Worker 保存当前作品 control_spec
 
 Eleven 提供字符/词时间戳；Parselmouth 按时间窗提取时长、局部时值比、F0、归一化音高、强度、归一化能量、前后间隔、voiced ratio，以及句段语速和宏观音高轮廓。逐帧数据不发送给 LLM。
 
-LLM 只解释当前正文、上下文、声音摘要与内置规则，输出 `focus`、`pauses`、`prolongations`、`prosody`、`ending_intonation`、`rhythm`。服务端重新注入真实 tokens 并校验正文和索引，模型不能改写正文。
+LLM 只解释当前正文、上下文、声音摘要与内置规则，输出 `focus`、`pauses`、`prolongations`、`prosody`、`ending_intonation`、`rhythm`。服务端重新注入真实 tokens 并校验正文和索引，模型不能改写正文。文稿直出路径同样执行严格正文和索引校验，并保证一个完整语义句最多一个重音词组。
 
 ## 图谱与播放对齐
 
-每个字符拥有全文唯一 index。拼音、正文和语势共享这一 index。语势只保存 `active_span` 与 `core_zone`，浏览器根据对应文字真实 DOM 边界生成 SVG，不保存固定像素。
+每个字符拥有全文唯一 index。拼音、正文、Marker 和语势共享这一 index。语势保存分析区间、基础路径和稀疏人工高度，浏览器根据每个正文文字的真实 DOM 边界生成 SVG，不保存固定像素。
+
+完整版和紧凑版读取同一 ControlSpec，但属于并列渲染器：完整版维持稳定的九档节点编辑；紧凑版使用五个显示档位并支持按住左键连续绘制。紧凑版人工换行仍保留一个编号卡片；人工拼音覆盖自动拼音并进入页面和 PDF。
 
 `standard_ai_audio` 使用 Forced Alignment 得到字符/词时间轴。Parselmouth、DeepSeek 控制谱解释和播放器都引用这套标准音频时间轴，因此图谱分析对象与用户听到的声音天然同源。人工改谱后保留原音频，但把 `audio_sync_status` 标为 `modified`。
 
 ## 失败原则
 
-任务状态只有 `queued`、`processing`、`succeeded`、`failed`。Voice Changer、对齐、声学分析、LLM 或回调失败时保留错误状态并允许重新发起；生产代码没有 Demo fallback。
+网站任务对外统一收敛为 `queued`、`processing`、`succeeded`、`failed`；分析服务文稿任务内部使用 `queued`、`running`、`completed`、`failed`。Voice Changer、对齐、声学分析、LLM、图片或回调失败时保留错误状态和已完成成果，允许显式重试；生产代码没有 Demo fallback。
