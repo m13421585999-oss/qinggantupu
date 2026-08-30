@@ -67,19 +67,6 @@ const COMPACT_RHYTHM_OPTIONS = (Object.keys(RHYTHM_LABELS) as Rhythm[]).map((val
   value,
   label: RHYTHM_LABELS[value],
 }));
-const COMPACT_WATERMARKS: Array<{ x: string; y: string }> = [
-  { x: "8%", y: "9%" },
-  { x: "62%", y: "11%" },
-  { x: "28%", y: "19%" },
-  { x: "86%", y: "26%" },
-  { x: "5%", y: "36%" },
-  { x: "48%", y: "42%" },
-  { x: "22%", y: "54%" },
-  { x: "74%", y: "61%" },
-  { x: "38%", y: "74%" },
-  { x: "12%", y: "84%" },
-  { x: "82%", y: "88%" },
-];
 
 type CompactSaveState = "unsaved" | "dirty" | "saving" | "saved" | "failed";
 
@@ -982,17 +969,6 @@ function CompactA4Page({
       data-compact-pdf-page={plan.index + 1}
       aria-label={`A4 第 ${plan.index + 1} 页，共 ${total} 页`}
     >
-      <div className="compact-watermark-layer" aria-hidden="true">
-        {COMPACT_WATERMARKS.map((position, index) => (
-          <span
-            className="compact-watermark"
-            style={{ left: position.x, top: position.y }}
-            key={index}
-          >
-            忆岁朗诵院
-          </span>
-        ))}
-      </div>
       <CompactPageHeader work={work} page={plan.index + 1} total={total} />
       <div className="compact-page-body">
         {plan.blockIds.map((lineBlockId) => {

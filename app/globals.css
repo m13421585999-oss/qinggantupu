@@ -5906,7 +5906,7 @@ button.compact-legend-option.is-selected {
   overflow: hidden;
   padding: var(--compact-a4-margin, 8.5mm);
   isolation: isolate;
-  background: #fffdf8 url("/full-a4-background.jpg") center / 100% 100% no-repeat;
+  background: #fff;
   color: #292722;
   font-family: "Songti SC", STSong, SimSun, serif;
   box-shadow: 0 15px 38px rgba(42, 34, 27, 0.2);
@@ -5918,12 +5918,7 @@ button.compact-legend-option.is-selected {
   inset: 4.5mm 4.5mm 4mm;
   border: 0.2mm solid rgba(255, 255, 255, 0.68);
   border-radius: 2.4mm;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.82) 0%,
-    rgba(255, 255, 255, 0.86) 48%,
-    rgba(255, 255, 255, 0.9) 100%
-  );
+  background: #fff;
   box-shadow: 0 1.2mm 5mm rgba(38, 91, 111, 0.08);
   content: "";
   pointer-events: none;
@@ -6430,29 +6425,6 @@ button.compact-token-char.is-selected {
   font-family: system-ui, sans-serif;
   font-size: 8.25pt;
   white-space: nowrap;
-}
-
-/* Compact reuses the Full edition's scattered brand watermark treatment. */
-.compact-watermark-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.compact-watermark {
-  position: absolute;
-  transform: rotate(-42deg);
-  transform-origin: 0 0;
-  color: rgba(110, 95, 80, 0.25);
-  font-family: "Songti SC", STSong, SimSun, serif;
-  font-size: 17pt;
-  font-weight: 700;
-  letter-spacing: 0.45em;
-  white-space: nowrap;
-  user-select: none;
-  pointer-events: none;
 }
 
 /* Same lower-right white brand plate and asset as the Full edition. */

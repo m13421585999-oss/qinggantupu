@@ -180,10 +180,10 @@ test("compact editor paginates measured visual lines with continuous line number
   assert.match(css, /\.compact-legend-option-grid\s*\{[\s\S]*?repeat\(6, minmax\(0, 1fr\)\)/);
   assert.match(css, /\.compact-page-header\s*\{[\s\S]*?align-items: baseline/);
   assert.match(css, /\.compact-page-header strong\s*\{[\s\S]*?font-size: 15pt;[\s\S]*?font-weight: 800/);
-  assert.match(component, /COMPACT_WATERMARKS\.map/);
+  assert.doesNotMatch(component, /COMPACT_WATERMARKS\.map/);
   assert.match(component, /className="compact-logo-footer"/);
   assert.match(component, /src="\/full-logo\.jpeg"/);
-  assert.match(css, /\.compact-watermark\s*\{[\s\S]*?rotate\(-42deg\)[\s\S]*?font-size: 17pt/);
+  assert.doesNotMatch(css, /\.compact-watermark\s*\{/);
   assert.match(css, /\.compact-logo-footer\s*\{[\s\S]*?width: 48mm;[\s\S]*?height: 18mm/);
 });
 
