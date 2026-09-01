@@ -118,7 +118,7 @@ test("A4 export contract uses physical paper dimensions, structured pages and 2.
 test("print settings persist with the work while page screenshots remain derived", async () => {
   const [schema, worker, migration] = await Promise.all([
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
-    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/api.ts", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0005_flaky_white_tiger.sql", import.meta.url), "utf8"),
   ]);
   assert.match(schema, /printSettingsJson:\s*text\("print_settings_json"\)/);

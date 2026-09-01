@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { sameVisualGenerationTarget } from "../lib/visual-job-target.ts";
 
-const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+const worker = await readFile(new URL("../worker/api.ts", import.meta.url), "utf8");
 
 test("an active visual job is reused when only includePlan changed", () => {
   assert.equal(

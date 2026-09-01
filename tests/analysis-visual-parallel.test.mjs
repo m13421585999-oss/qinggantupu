@@ -6,7 +6,7 @@ const studio = await readFile(
   new URL("../components/RecitationStudio.tsx", import.meta.url),
   "utf8",
 );
-const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+const worker = await readFile(new URL("../worker/api.ts", import.meta.url), "utf8");
 
 test("manuscript analysis polls its task, then starts scene visuals without audio prerequisites", () => {
   const handleAnalyze = studio.slice(

@@ -54,7 +54,7 @@ test("keeps one control schema and removes starter preview residue", async () =>
     readFile(new URL("../../lib/recitation-schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../../package.json", import.meta.url), "utf8"),
     readFile(new URL("../../components/RecitationStudio.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../worker/api.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /RecitationStudio/);

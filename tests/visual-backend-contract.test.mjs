@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+const worker = await readFile(new URL("../worker/api.ts", import.meta.url), "utf8");
 const schema = await readFile(new URL("../db/schema.ts", import.meta.url), "utf8");
 const migration = await readFile(new URL("../drizzle/0003_overjoyed_sersi.sql", import.meta.url), "utf8");
 const provider = await readFile(new URL("../lib/image-generation-provider.ts", import.meta.url), "utf8");

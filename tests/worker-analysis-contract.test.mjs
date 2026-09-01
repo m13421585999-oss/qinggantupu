@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const workerUrl = new URL("../worker/index.ts", import.meta.url);
+const workerUrl = new URL("../worker/api.ts", import.meta.url);
 const schemaUrl = new URL("../db/schema.ts", import.meta.url);
 const migrationUrl = new URL("../drizzle/0000_unusual_wendell_rand.sql", import.meta.url);
 const promptTraceMigrationUrl = new URL("../drizzle/0001_long_agent_brand.sql", import.meta.url);

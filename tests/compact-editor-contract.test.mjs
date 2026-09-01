@@ -55,7 +55,7 @@ test("compact marker popover supports all applied marks and isolates the Spring 
   const [component, schema, worker, css] = await Promise.all([
     readFile(new URL("components/CompactRecitationEditor.tsx", root), "utf8"),
     readFile(new URL("lib/recitation-schema.ts", root), "utf8"),
-    readFile(new URL("worker/index.ts", root), "utf8"),
+    readFile(new URL("worker/api.ts", root), "utf8"),
     readFile(new URL("app/globals.css", root), "utf8"),
   ]);
   assert.match(component, /function toggleStaccato/);
@@ -191,7 +191,7 @@ test("legacy compact legend settings remain storage-compatible without replacing
   const [studio, schema, worker] = await Promise.all([
     readFile(new URL("components/RecitationStudio.tsx", root), "utf8"),
     readFile(new URL("lib/recitation-schema.ts", root), "utf8"),
-    readFile(new URL("worker/index.ts", root), "utf8"),
+    readFile(new URL("worker/api.ts", root), "utf8"),
   ]);
   assert.match(schema, /compactLegendItems\?: CompactLegendItemId\[\]/);
   assert.match(studio, /const \[printSettingsDirty, setPrintSettingsDirty\]/);

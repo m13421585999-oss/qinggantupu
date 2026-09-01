@@ -1,7 +1,3 @@
-export function GET() {
-  return Response.json({
-    ok: true,
-    runtime: "vercel",
-    storage: { configured: false },
-  });
-}
+import { handleVercelApi } from "@/lib/vercel-runtime";
+
+export const GET = handleVercelApi;
