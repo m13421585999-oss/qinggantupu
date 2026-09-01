@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 DB_ENV = "IMAGE_TASKS_DB_PATH"
+VERCEL_DB_PATH = "/tmp/qinggantupu-analysis/image_tasks.sqlite3"
 
 # status values
 STATUS_QUEUED = "queued"
@@ -43,6 +44,11 @@ def default_db_path() -> str:
     configured = os.getenv(DB_ENV, "").strip()
     if configured:
         return configured
+    # Vercel function bundles are read-only at runtime. The task database is
+    # transient coordination state, so keep it in the platform's writable
+    # /tmp directory when no persistent path has been explicitly configured.
+    if os.getenv("VERCEL", "").strip():
+        return VERCEL_DB_PATH
     return str(Path(__file__).resolve().parent.parent / "data" / "image_tasks.sqlite3")
 
 

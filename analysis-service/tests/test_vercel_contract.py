@@ -16,6 +16,7 @@ from app.interpretation.llm_interpreter import (
     _response_format_for_provider,
     interpret_control_spec,
 )
+from app.image_tasks import DB_ENV, VERCEL_DB_PATH, default_db_path
 from app.main import _callback, _run_job, app, create_job, health
 from app.pipeline import PipelineStageError, _sites_headers
 from app.schemas.control_spec import JobRequest
@@ -59,6 +60,26 @@ def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_vercel_entrypoint_exports_the_fastapi_app() -> None:
     assert vercel_app is app
+
+
+def test_image_task_database_uses_writable_vercel_tmp_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(DB_ENV, raising=False)
+    monkeypatch.setenv("VERCEL", "1")
+
+    assert default_db_path() == VERCEL_DB_PATH
+
+
+def test_explicit_image_task_database_path_overrides_vercel_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    configured = tmp_path / "configured.sqlite3"
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setenv(DB_ENV, str(configured))
+
+    assert default_db_path() == str(configured)
 
 
 def test_vercel_configuration_targets_entrypoint_and_portable_duration() -> None:

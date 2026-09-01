@@ -3851,8 +3851,10 @@ async function regenerateVisualAsset(
 async function serveAsset(request: Request, env: Env, assetId: string) {
   const asset = await first<Row>(env.DB.prepare("SELECT * FROM assets WHERE id = ?").bind(assetId));
   if (!asset) return apiError(404, "ASSET_NOT_FOUND", "找不到素材。");
-  const total = Number(asset.byte_size);
+  const storageKey = String(asset.storage_key);
   const rangeHeader = request.headers.get("range");
+  const storedMetadata = rangeHeader ? await env.AUDIO_BUCKET.head(storageKey) : null;
+  const total = Number(storedMetadata?.size ?? asset.byte_size);
   let object: R2ObjectBody | null;
   let status = 200;
   const headers = new Headers({
@@ -3866,15 +3868,16 @@ async function serveAsset(request: Request, env: Env, assetId: string) {
     const start = Number(match[1]);
     const end = match[2] ? Math.min(Number(match[2]), total - 1) : total - 1;
     if (start >= total || end < start) return new Response(null, { status: 416, headers: { "content-range": `bytes */${total}` } });
-    object = await env.AUDIO_BUCKET.get(String(asset.storage_key), { range: { offset: start, length: end - start + 1 } });
+    object = await env.AUDIO_BUCKET.get(storageKey, { range: { offset: start, length: end - start + 1 } });
     headers.set("content-range", `bytes ${start}-${end}/${total}`);
     headers.set("content-length", String(end - start + 1));
     status = 206;
   } else {
-    object = await env.AUDIO_BUCKET.get(String(asset.storage_key));
-    headers.set("content-length", String(total));
+    object = await env.AUDIO_BUCKET.get(storageKey);
   }
   if (!object) return apiError(404, "ASSET_OBJECT_NOT_FOUND", "素材记录存在，但 R2 文件缺失。");
+  headers.set("content-type", object.httpMetadata?.contentType || String(asset.mime_type));
+  if (!rangeHeader) headers.set("content-length", String(object.size));
   return new Response(object.body, { status, headers });
 }
 

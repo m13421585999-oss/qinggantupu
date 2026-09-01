@@ -1,10 +1,11 @@
 import { createTursoD1 } from "@/lib/turso-d1";
+import { createVercelBlobBucket } from "@/lib/vercel-blob-r2";
 import { handleApiRequest } from "@/worker/api";
 
 function runtimeEnv(): Env {
   return {
     DB: createTursoD1(),
-    AUDIO_BUCKET: undefined,
+    AUDIO_BUCKET: createVercelBlobBucket(),
     ASSETS: undefined,
     IMAGES: undefined,
     ANALYSIS_SERVICE_URL: process.env.ANALYSIS_SERVICE_URL,

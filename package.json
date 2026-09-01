@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@libsql/client": "0.17.0",
+    "@vercel/blob": "^2.3.0",
     "drizzle-orm": "0.45.2",
     "html-to-image": "^1.11.13",
     "jspdf": "^3.0.4",
