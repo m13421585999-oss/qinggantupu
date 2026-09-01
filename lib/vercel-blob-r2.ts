@@ -66,11 +66,7 @@ export function createVercelBlobBucket(): R2Bucket | undefined {
         access: "public",
         headers,
       });
-      if (
-        !result
-        || (result.statusCode !== 200 && result.statusCode !== 206)
-        || !result.stream
-      ) return null;
+      if (!result || result.statusCode !== 200 || !result.stream) return null;
       return new VercelBlobObjectBody(
         result.stream,
         result.blob.size,
