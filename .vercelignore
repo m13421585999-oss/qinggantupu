@@ -1,0 +1,15 @@
+.git/
+.next/
+.wrangler/
+dist/
+node_modules/
+output/
+outputs/
+tmp/
+work/
+.playwright-cli/
+public/*-scenes/
+public/compact-scenes/
+public/close-view-reference.png
+public/distant-view-reference.png
+public/compact-a4-background-v2.png

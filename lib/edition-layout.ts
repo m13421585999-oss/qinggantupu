@@ -183,7 +183,7 @@ export function mergeFullLayoutRowsAtToken(
   if (!adjacentLine) return undefined;
 
   const frozen = ensureEditionLayouts(spec);
-  const rows = resolveFullLayoutRows(frozen).map((row) => ({
+  const rows: EditionLayoutRow[] = resolveFullLayoutRows(frozen).map((row) => ({
     ...row,
     tokenIndexes: [...row.tokenIndexes],
     lineBreakAfterTokenIndexes: row.lineBreakAfterTokenIndexes
